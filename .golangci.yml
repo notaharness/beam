@@ -13,6 +13,8 @@ linters:
           arguments:
             - max: 300
   exclusions:
+    presets:
+      - std-error-handling
     rules:
       - path: _test\.go
         linters: [gocyclo, revive]
