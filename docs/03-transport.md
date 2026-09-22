@@ -64,11 +64,14 @@ the dialer opens a `hello` stream ([04](04-streams.md)) and the acceptor checks:
    already received on this or other tunnels have been applied.
 
 Pass: bind `C → E.peerId` for this tunnel, pin `E` if new (and schedule a dial back),
-answer `ok`. Fail: answer `refused` with a reason and close. Any other first stream from
-an unbound `C`, or any stream after a failed hello, is closed unread. Budgets: 16
-concurrent unbound tunnels in hello, 5 s each; beyond that the oldest is closed. tailcat
-keeps its own per-peer state for a client that handshook; beam cannot evict it and does
-not claim to.
+answer `ok`. A new binding for a peer replaces its older one: a peer dials us from one
+`Client` per process, so the older tunnel belongs to a process that is gone. Fail: answer
+`refused` with a reason, close, and remember `C` as failed. Any other first stream from
+an unbound `C` is answered `unauthenticated` and closed; any stream after a failed hello
+is closed unread. Budgets: 16 concurrent unbound tunnels in hello, 5 s each, counted
+from the stream's arrival; beyond that the oldest is closed. Every stream's header must
+arrive within 5 s. tailcat keeps its own per-peer state for a client that handshook;
+beam cannot evict it and does not claim to.
 
 The acceptor learns the peer behind a TCP connection from `Server.PeerEnv(local,
 remote)` (`TAILCAT_PEER_KEY=nodekey:…`), failing closed when absent, until upstream
@@ -109,8 +112,23 @@ Default map `https://tailcat.dev/derpmap.json` (Tailscale's tailcat fleet: rate-
 metadata-logged, no SLA). Cached in `derpmap.json`. `beam daemon --derp-map URL` for a
 self-hosted `derper`. Tests use an in-process relay ([10](10-testing.md)).
 
-## Footprint (measured, one Server and one Client, Go 1.27.1, linux/amd64)
+## Footprint (measured, Go 1.27.1, linux/amd64)
 
 Binary 15–16.4 MB stripped across five targets; cold build 21.5 s; warm 0.14 s; module
-cache 479 MB; `CGO_ENABLED=0`; ~26 MB RSS. Per-peer client stacks add to that; the
-milestone-1 spike measures a five-peer fleet.
+cache 479 MB; `CGO_ENABLED=0`.
+
+The milestone-1 spike (`TestFootprint` in `internal/transport`, without `-race`) runs
+one process per machine on the dev DERP, each with one `Server` and a `Client` per peer,
+every pair connected both ways. Three runs, 2026-09-22:
+
+| Fleet | UDP | RSS per machine | Dial through hello, median (max) |
+|---|---|---|---|
+| 2 machines: 1 Server + 1 Client each | blocked | 27–28 MB | 4.0 s (4.0 s) |
+| 5 machines: 1 Server + 4 Clients each | blocked | 32–34 MB | 3.02 s (3.03 s) |
+| 5 machines: 1 Server + 4 Clients each | allowed, loopback | 37–39 MB | 47 ms (1.0 s) |
+
+Relayed, each extra `Client` costs about 1.7 MB; with UDP allowed the five-machine fleet
+uses about 5 MB more per machine. With UDP blocked a new `Client` waits out netcheck's
+3 s UDP timeout before it picks its home relay, then its next 1 s meow retry completes;
+that, not beam, is the dial time (traced in tailcat's logs). The 1.0 s outlier with UDP
+is the same meow retry after a lost first ping.

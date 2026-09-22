@@ -37,6 +37,14 @@ measuring a five-peer fleet's RSS and connection times. If it fails, the fallbac
 single stack per machine with an upstream `Server.Dial` contribution, or one tunnel per
 pair with a multiplexer. Do not build on the topology until the spike passes.
 
+**Passed 2026-09-22** (`internal/transport`, `TestTopology`, `TestFootprint`). Three
+machines on one dev relay with UDP blocked, each one `Server` on its node key plus a
+`Client` per peer on a fresh key, dial all six directed tunnels before using any, then
+complete one round trip on each; the acceptor attributes every stream to the right
+dialer. The same holds for five machines in five processes (20 tunnels). No DERP
+collision appears. The possession MAC refuses a wrong MAC and a hello replayed from
+another tunnel. Footprint numbers are in [03](03-transport.md).
+
 ## Open questions
 
 1. **Possession proof via X25519 MAC.** (D6) Sound in principle (static-static DH with

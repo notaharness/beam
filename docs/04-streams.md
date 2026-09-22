@@ -35,7 +35,8 @@ payload
 
 The first stream on every tunnel. One data frame from the dialer:
 `{ "entry": <member entry>, "nonce": "…", "mac": "…" }` ([03](03-transport.md),
-Admission). One data frame back: `{ "ok": true }` or `{ "ok": false, "reason":
+Admission), `nonce` 32 random bytes and `mac` 32 bytes, both unpadded base64url like
+every binary field. One data frame back: `{ "ok": true }` or `{ "ok": false, "reason":
 "bad-entry" | "wrong-passkey" | "bad-assertion" | "revoked" | "possession" }`, then close.
 
 ## `sync`

@@ -24,7 +24,10 @@ counterexamples become fixed cases.
 `httptest` TLS server, loopback STUN) and reproduces the test-network isolation from
 tailcat's own `TestMain`, not only its environment variable. The harness starts one relay
 and passes its map to every daemon via `--derp-map`. Forced relay paths are tested by
-blocking UDP between daemons.
+blocking UDP between daemons: `devderp.ForceRelay` sets tailscale's
+`TS_DEBUG_ALWAYS_USE_DERP`, which gives every engine in the process no UDP socket and
+is inherited by child processes. Each new `Client` then spends netcheck's 3 s UDP
+timeout before it connects ([03](03-transport.md), Footprint).
 
 ## Test authenticator
 
