@@ -24,8 +24,12 @@ merge until they pass. Lint budgets: cyclomatic complexity 12 per function and 3
 lines per file, tests excluded. A `//nolint` carries its reason. `make crap` fails any
 function whose CRAP score (`complexity² × (1 − coverage)³ + complexity`) exceeds 30.
 
-Test first: write the failing test, then the code. Every table in the spec has a table
-test. When you add a test, break the behaviour it covers, watch it fail, then restore it.
+Test first, and prefer the failing integration scenario (the `docs/10` list: real daemons
+on the dev DERP and the fake worker) over unit tests; keep table and property tests for
+boundaries such as codecs and canonical JSON. No tautological tests: a test that
+restates the implementation, asserts a constant, or passes with the behaviour broken is
+deleted. Every table in the spec has a table test. When you add a test, break the
+behaviour it covers, watch it fail, then restore it.
 
 ## Commits
 
