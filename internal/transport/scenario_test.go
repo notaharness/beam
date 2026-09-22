@@ -1,0 +1,331 @@
+package transport
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"os"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/notaharness/beam/internal/devderp"
+	"github.com/notaharness/beam/internal/stream"
+	"github.com/tailscale/tailcat"
+	"tailscale.com/types/logger"
+)
+
+var relay *devderp.Relay
+
+func TestMain(m *testing.M) {
+	if footprintChild() {
+		return
+	}
+	devderp.Isolate()
+	devderp.ForceRelay()
+	var err error
+	if relay, err = devderp.Start(logger.Discard); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	code := m.Run()
+	relay.Close()
+	os.Exit(code)
+}
+
+// fakeEntry stands in for the signed membership entry until identity exists:
+// it names the machine's node key, and admitFake believes it.
+type fakeEntry struct {
+	PeerID     string `json:"peerId"`
+	NodePublic string `json:"nodePublic"`
+}
+
+func admitFake(entry json.RawMessage) (string, [32]byte, string) {
+	var e fakeEntry
+	if err := json.Unmarshal(entry, &e); err != nil {
+		return "", [32]byte{}, "bad-entry"
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(e.NodePublic)
+	if err != nil || len(raw) != 32 {
+		return "", [32]byte{}, "bad-entry"
+	}
+	return e.PeerID, [32]byte(raw), ""
+}
+
+func entryFor(k *Key) (string, json.RawMessage) {
+	pub := k.NodePublic()
+	sum := sha256.Sum256(pub[:])
+	id := hex.EncodeToString(sum[:16])
+	b, _ := json.Marshal(fakeEntry{id, base64.RawURLEncoding.EncodeToString(pub[:])})
+	return id, b
+}
+
+// echoCaller answers any stream with the peer id admission bound to it,
+// followed by the first frame it received.
+func echoCaller(peerID string, _ stream.Header, c *stream.Conn) {
+	defer c.Close()
+	if c.WriteLine(stream.Response{OK: true}) != nil {
+		return
+	}
+	if _, p, err := c.ReadFrame(); err == nil {
+		c.WriteFrame(stream.Data, []byte(peerID+" "+string(p)))
+	}
+}
+
+type machine struct {
+	key    *Key
+	node   *Node
+	peerID string
+	entry  json.RawMessage
+}
+
+func startMachine(t testing.TB) *machine {
+	t.Helper()
+	k := NewKey(relay.Region)
+	id, entry := entryFor(k)
+	n, err := Start(Config{Key: k, Entry: entry, Admit: admitFake, Handle: echoCaller, Logf: logger.Discard})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { n.Close() })
+	if got := string(n.srv.TailcatAddr()); got != k.Address() {
+		t.Fatalf("server address %s, key address %s", got, k.Address())
+	}
+	return &machine{k, n, id, entry}
+}
+
+// roundTrip opens a stream on tun and checks that the far side attributes it
+// to caller.
+func roundTrip(ctx context.Context, tun *Tunnel, caller string) error {
+	c, err := tun.Open(ctx, stream.Header{V: 1, Kind: "sync"})
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+	if err := c.WriteFrame(stream.Data, []byte("ping")); err != nil {
+		return err
+	}
+	_, p, err := c.ReadFrame()
+	if err != nil {
+		return err
+	}
+	if want := caller + " ping"; string(p) != want {
+		return fmt.Errorf("echo %q, want %q", p, want)
+	}
+	return nil
+}
+
+// The milestone gate (docs/11): one Server per machine with its node key, one
+// Client per peer with an ephemeral key, all through one relay with UDP
+// blocked. Every tunnel is dialed before any is used, so a DERP collision
+// between a machine's stacks would lose traffic in the second phase.
+func TestTopology(t *testing.T) {
+	ms := []*machine{startMachine(t), startMachine(t), startMachine(t)}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	type pair struct{ from, to *machine }
+	tunnels := map[pair]*Tunnel{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, a := range ms {
+		for _, b := range ms {
+			if a == b {
+				continue
+			}
+			wg.Go(func() {
+				tun, err := a.node.Dial(ctx, b.key.Address())
+				if err != nil {
+					t.Errorf("%s dial %s: %v", a.peerID[:4], b.peerID[:4], err)
+					return
+				}
+				mu.Lock()
+				tunnels[pair{a, b}] = tun
+				mu.Unlock()
+			})
+		}
+	}
+	wg.Wait()
+	if t.Failed() {
+		return
+	}
+	for p, tun := range tunnels {
+		wg.Go(func() {
+			if err := roundTrip(ctx, tun, p.from.peerID); err != nil {
+				t.Errorf("%s → %s: %v", p.from.peerID[:4], p.to.peerID[:4], err)
+			}
+		})
+	}
+	wg.Wait()
+}
+
+// rawClient is an adversary holding an address: its own tailcat stack, no beam.
+func rawClient(t *testing.T, address string) *tailcat.Client {
+	t.Helper()
+	c := &tailcat.Client{Server: tailcat.Addr(address), Logf: logger.Discard}
+	t.Cleanup(func() { c.Close() })
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if _, err := c.Ping(ctx); err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func rawStream(t *testing.T, c *tailcat.Client) *stream.Conn {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	conn, err := c.DialTCPPort(ctx, Port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	sc := stream.NewConn(conn)
+	sc.SetDeadline(time.Now().Add(15 * time.Second))
+	return sc
+}
+
+// sendHello runs the dialer's half of hello by hand and returns the result.
+func sendHello(t *testing.T, c *tailcat.Client, f helloFrame) stream.Response {
+	t.Helper()
+	sc := rawStream(t, c)
+	var r stream.Response
+	if err := sc.WriteLine(stream.Header{V: 1, Kind: "hello"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sc.ReadLine(&r); err != nil || !r.OK {
+		t.Fatalf("hello header: %+v, %v", r, err)
+	}
+	b, _ := json.Marshal(f)
+	if err := sc.WriteFrame(stream.Data, b); err != nil {
+		t.Fatal(err)
+	}
+	_, p, err := sc.ReadFrame()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(p, &r); err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+func TestPossession(t *testing.T) {
+	b := startMachine(t)
+	a := NewKey(relay.Region) // a member's real key, held by whoever runs these clients
+	_, entry := entryFor(a)
+	c1, c2, c3 := rawClient(t, b.key.Address()), rawClient(t, b.key.Address()), rawClient(t, b.key.Address())
+
+	bad := newHello(a, raw(c1.PublicKey()), b.key.NodePublic(), entry)
+	bad.MAC[0] ^= 1
+	if r := sendHello(t, c1, bad); r.OK || r.Reason != "possession" {
+		t.Errorf("wrong MAC: %+v, want refused possession", r)
+	}
+
+	good := newHello(a, raw(c3.PublicKey()), b.key.NodePublic(), entry)
+	if r := sendHello(t, c2, good); r.OK || r.Reason != "possession" {
+		t.Errorf("hello replayed from another tunnel: %+v, want refused possession", r)
+	}
+	if r := sendHello(t, c3, good); !r.OK {
+		t.Errorf("the same hello on its own tunnel: %+v, want ok", r)
+	}
+}
+
+func TestBadEntry(t *testing.T) {
+	b := startMachine(t)
+	c := rawClient(t, b.key.Address())
+	if r := sendHello(t, c, helloFrame{Entry: json.RawMessage(`"junk"`)}); r.OK || r.Reason != "bad-entry" {
+		t.Errorf("junk entry: %+v, want refused bad-entry", r)
+	}
+}
+
+// expectClosedUnread checks that the far side closed the stream: a clean EOF,
+// or a reset when it closed with our bytes unread.
+func expectClosedUnread(t *testing.T, sc *stream.Conn) {
+	t.Helper()
+	var ne net.Error
+	_, err := sc.Read(make([]byte, 1))
+	if err == nil || errors.As(err, &ne) && ne.Timeout() {
+		t.Errorf("read: %v, want the stream closed", err)
+	}
+}
+
+func TestUnboundStreams(t *testing.T) {
+	b := startMachine(t)
+
+	t.Run("first stream is not hello", func(t *testing.T) {
+		sc := rawStream(t, rawClient(t, b.key.Address()))
+		sc.WriteLine(stream.Header{V: 1, Kind: "sync"})
+		var r stream.Response
+		if err := sc.ReadLine(&r); err != nil || r.OK || r.Reason != "unauthenticated" {
+			t.Fatalf("got %+v, %v; want refused unauthenticated", r, err)
+		}
+		expectClosedUnread(t, sc)
+	})
+
+	t.Run("wrong version", func(t *testing.T) {
+		sc := rawStream(t, rawClient(t, b.key.Address()))
+		sc.WriteLine(stream.Header{V: 2, Kind: "hello"})
+		var r stream.Response
+		if err := sc.ReadLine(&r); err != nil || r.OK || r.Reason != "version" {
+			t.Fatalf("got %+v, %v; want refused version", r, err)
+		}
+	})
+
+	t.Run("after a failed hello", func(t *testing.T) {
+		c := rawClient(t, b.key.Address())
+		sendHello(t, c, helloFrame{Entry: json.RawMessage(`{}`)})
+		sc := rawStream(t, c)
+		sc.WriteLine(stream.Header{V: 1, Kind: "hello"})
+		expectClosedUnread(t, sc)
+	})
+}
+
+// A leaked address: the handshake completes but hello never comes.
+func TestHelloDeadline(t *testing.T) {
+	b := startMachine(t)
+	sc := rawStream(t, rawClient(t, b.key.Address()))
+	start := time.Now()
+	expectClosedUnread(t, sc)
+	if d := time.Since(start); d < helloTimeout-time.Second || d > helloTimeout+2*time.Second {
+		t.Errorf("closed after %v, want about %v", d, helloTimeout)
+	}
+}
+
+func TestHelloBudget(t *testing.T) {
+	b := startMachine(t)
+	clients := make([]*tailcat.Client, maxUnbound+1)
+	var wg sync.WaitGroup
+	for i := range clients {
+		wg.Go(func() { clients[i] = rawClient(t, b.key.Address()) })
+	}
+	wg.Wait()
+	if t.Failed() {
+		return
+	}
+	// Each open is acknowledged before the next, so the order is known.
+	open := make([]*stream.Conn, len(clients))
+	for i, c := range clients {
+		open[i] = rawStream(t, c)
+		open[i].WriteLine(stream.Header{V: 1, Kind: "hello"})
+		var r stream.Response
+		if err := open[i].ReadLine(&r); err != nil || !r.OK {
+			t.Fatalf("client %d: %+v, %v", i, r, err)
+		}
+	}
+	open[0].SetReadDeadline(time.Now().Add(2 * time.Second))
+	expectClosedUnread(t, open[0])
+	for i := 1; i < len(open); i++ {
+		open[i].SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		var ne net.Error
+		if _, err := open[i].Read(make([]byte, 1)); !errors.As(err, &ne) || !ne.Timeout() {
+			t.Errorf("client %d: %v, want still open", i, err)
+		}
+	}
+}
