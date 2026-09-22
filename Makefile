@@ -11,9 +11,12 @@ dist:
 	done
 
 test:
-	go test -race -tags "$(TAGS)" ./...
+	go test -race -tags "$(TAGS)" -coverpkg=./... -coverprofile=cover.out ./...
+
+crap: test
+	go run ./tools/crap cover.out
 
 lint:
 	go run $(LINT) run --build-tags "$(TAGS)"
 
-.PHONY: dist test lint
+.PHONY: dist test crap lint
