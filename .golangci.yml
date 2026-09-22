@@ -5,6 +5,12 @@ linters:
     - gocyclo
     - revive
   settings:
+    errcheck:
+      # A deadline fails only on a closed conn, which the next read reports.
+      exclude-functions:
+        - (net.Conn).SetDeadline
+        - (net.Conn).SetReadDeadline
+        - (net.Conn).SetWriteDeadline
     gocyclo:
       min-complexity: 12
     revive:
@@ -18,6 +24,9 @@ linters:
     rules:
       - path: _test\.go
         linters: [gocyclo, revive]
+      # Tests fail on the observable outcome, not on an unchecked write.
+      - path: _test\.go
+        linters: [errcheck]
 
 formatters:
   enable:
