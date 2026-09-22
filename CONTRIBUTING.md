@@ -1,0 +1,32 @@
+# Contributing
+
+The spec in `docs/` is the contract. Code follows it; where they drift, one of them is
+fixed in the same PR, and the PR says which. A choice the spec is silent on is recorded
+in `docs/11-decisions.md`.
+
+## No clutter
+
+One way to do each thing. No flag nobody sets, no abstraction with one implementation,
+no code kept "in case", no fallback behind a switch. When something is replaced, the old
+thing is deleted in the same change. Delete rather than layer.
+
+## Milestones
+
+Work lands in milestone branches (`impl/m0-…`, `impl/m1-…`), each ending in one PR
+against `main`. The next milestone branches from the previous one, so work never waits
+on a merge; the owner reviews and merges in order.
+
+## Checks
+
+`make lint`, `make test` and `make dist` are what CI runs on every push, and a PR cannot
+merge until they pass. Lint budgets: cyclomatic complexity 12 per function and 300
+lines per file, tests excluded. A `//nolint` carries its reason.
+
+Every table in the spec has a table test. When you add a test, break the behaviour it
+covers, watch it fail, then restore it.
+
+## Commits
+
+Conventional Commits with a scope: `feat(transport):`, `test(identity):`,
+`chore(ci):`, `docs(spec):`. Small commits. Dependency additions are committed apart
+from the code that uses them.

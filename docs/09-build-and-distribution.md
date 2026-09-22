@@ -5,6 +5,8 @@
 ```
 beam/
   go.mod                    module github.com/notaharness/beam; go 1.27.1
+  build-tags.txt            tailcat's release build tags
+  Makefile                  dist, test, lint
   cmd/beam/                 main; subcommand dispatch
   internal/
     identity/               peerId, canonical JSON, entry/revocation build and verify, fleet.json
@@ -33,13 +35,14 @@ only ones speaking HTTP.
 ## Build
 
 ```
-CGO_ENABLED=0 go build -trimpath -buildvcs=false -tags "$(tr '\n' ',' < build-tags.txt)" \
+CGO_ENABLED=0 go build -trimpath -buildvcs=false -tags "$(cat build-tags.txt)" \
   -ldflags "-s -w -X main.version=$VERSION" -o dist/beam-$GOOS-$GOARCH ./cmd/beam
 ```
 
-`build-tags.txt` copied from tailcat. SQLite via `modernc.org/sqlite` (pure Go). Targets
-in the first release: `darwin/arm64`, `darwin/amd64`, `linux/amd64`, `linux/arm64`.
-Windows follows when a Windows runner exists. Measured on linux/amd64: 15–16.4 MB per
+`make dist` runs this for each target. `build-tags.txt` is copied from tailcat: one
+comma-separated line; tests and lint use the same tags. SQLite via `modernc.org/sqlite`
+(pure Go). Targets in the first release: `darwin/arm64`, `darwin/amd64`, `linux/amd64`,
+`linux/arm64`. Windows follows when a Windows runner exists. Measured on linux/amd64: 15–16.4 MB per
 binary stripped, 21.5 s cold build with warm module cache, 0.14 s warm rebuild.
 
 ## Versioning
@@ -113,11 +116,13 @@ worker.
 
 ## Lint
 
-`gofmt`, `go vet`, `staticcheck`, `golangci-lint` with `gocyclo` 12 and a 300-line file
-budget excluding tests. Suppressions carry a reason.
+`make lint`: `golangci-lint` (pinned in the `Makefile`), which runs `gofmt`, `go vet` and
+`staticcheck` among its defaults, plus `gocyclo` at 12 and `revive`'s `file-length-limit`
+at 300 lines, both excluding tests. Suppressions carry a reason.
 
 ## CI
 
-Push: vet, staticcheck, `go test -race ./...`, cross-compile four targets, worker vitest
+Push (`.github/workflows/ci.yml`, one job `ci`, required on `main`): `make lint`,
+`make test` (`go test -race`), `make dist` (cross-compile four targets), worker vitest
 under miniflare, the Go directory client's contract test against miniflare, CSP hash
 check. Tag: build, GitHub release with binaries, publish the five npm packages.
