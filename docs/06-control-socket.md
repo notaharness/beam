@@ -83,27 +83,32 @@ scopes, revokedAt }` where `state ∈ connected | offline | revoked` and
 | `peer.rename` | `{ peer, label }` | `{ label }` (as resolved after collision suffixing) |
 | `peer.forget` | `{ peer }` | `{}` |
 | `peer.grant` | `{ peer, scopes: ["msg"] \| null }` | `{}` |
-| `peer.revoke` | `{ peer }` | `{}`; the tunnel is terminated before the response |
 
 `peer` accepts a `peerId` or a label; a label that matches nothing or more than one
 record is `unknown-peer` / `ambiguous-peer`.
 
-### Enrolment
+### Ceremonies
 
-The daemon owns keys and verification; the client owns the screen and the browser.
+The daemon owns keys, derivation and signing; the client owns the screen and the
+browser. Every ceremony op returns a `ceremonyUrl` the client opens (or prints), then a
+`*.wait` blocks until the loopback redirect arrives and the work is done.
 
 | op | request | result |
 |---|---|---|
-| `init.start` | `{ label }` | `{ ceremonyUrl }`; the client opens it. The daemon has opened the loopback listener. |
-| `init.wait` | | blocks until the `create` result arrives and is verified, then runs the attestation `get` (returns a second `ceremonyUrl` as an event `ceremony`), then `{ peerId, address }` |
-| `join.start` | `{ label }` | `{ joinAddress, peerId }` |
-| `join.wait` | | blocks until the exchange completes; `{ introducer: { peerId, label }, pinned: n }` or an error naming the failed check |
-| `add.start` | `{ address }` | `{ peerId, label, fingerprint }` of the newcomer, after the tunnel and its self-description arrive; nothing is signed yet |
-| `add.confirm` | `{ peerId }` | `{ ceremonyUrl }`; then event `added { peer }` when done, or error |
-| `add.cancel` | `{ peerId }` | `{}`; closes the join tunnel |
+| `init.start` | `{ label }` | `{ ceremonyUrl }` |
+| `init.wait` | | `{ peerId, fleetId, address }` once the passkey is created, keys derived, this machine's entry signed and appended |
+| `join.start` | `{ label }` | `{ ceremonyUrl }` |
+| `join.wait` | | `{ peerId, fleetId, pinned: n }` once keys are derived, the directory read, this machine's entry signed and appended |
+| `revoke.start` | `{ peer }` | `{ ceremonyUrl }` |
+| `revoke.wait` | | `{}` once the revocation is signed, applied locally and appended |
+| `ceremony.cancel` | | `{}`; closes the loopback listener |
 
-`init.wait`, `join.wait` and `add.confirm` are long-running; the client may set a
-deadline and `cancel`.
+One ceremony at a time per daemon; a second `*.start` is `busy`. Every `*.wait` fails
+with `ceremony-timeout` after five minutes, `ceremony-state` on a redirect with the
+wrong state, `prf-unsupported` when the authenticator returned no PRF output,
+`directory-unavailable` when the worker cannot be reached (for `join`, fatal; for `init`
+and `revoke`, the entry is queued in `$BEAM_DIR/pending/` and appended on the next
+daemon start).
 
 ### Messages
 
@@ -134,17 +139,14 @@ Resize and stdin-eof travel as control frames on the attach connection, not as o
 | `peer` | a `PeerView`, on any change: state, path, label, scopes, revoked, queue depth |
 | `mail` | `{ envelope }` to a subscribed connection |
 | `stream.closed` | `{ streamId, reason, exitCode?, signal? }` |
-| `ceremony` | `{ ceremonyUrl }` during `init.wait` for the second ceremony |
-| `added` | `{ peer }` after `add.confirm` completes |
-| `trust-root-mismatch` | `{ peer }` when a peer's `sync` shows it holds a different passkey public key |
+| `peer.new` | `{ peer }` when an unknown key was admitted with a valid entry |
 
 ## Errors
 
 `error` is a stable token, not prose: `unknown-peer`, `ambiguous-peer`, `revoked-peer`,
 `not-enrolled`, `already-enrolled`, `scope`, `limit`, `params`, `offline`, `spawn`,
-`attestation:wrong-passkey`, `attestation:bad-peer-id`, `attestation:bad-assertion`,
-`ceremony-timeout`, `ceremony-state`, `queue-full`, `storage-failure`, `busy` (an
-enrolment already in progress), `internal`. A human-readable `detail` may accompany it.
+`bad-entry`, `wrong-fleet`, `ceremony-timeout`, `ceremony-state`, `prf-unsupported`,
+`directory-unavailable`, `queue-full`, `storage-failure`, `busy`, `internal`. A human-readable `detail` may accompany it.
 Clients switch on `error`, never on `detail`.
 
 ## What is not on the socket

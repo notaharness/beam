@@ -37,20 +37,15 @@ interface MachineView {
 ```
 
 
-Adding a machine:
+First run with no `fleet.json`: one card with two buttons, **Create a fleet** (`init`)
+and **Join my fleet** (`join`). Either opens the ceremony URL in the system browser via
+`shell.openExternal`, shows "waiting for your passkey…", and resolves on the `*.wait`
+result or shows the error token's text. A machine that joins appears in every other
+desktop's list as it connects, via the `peer.new` event; nothing has to be done on the
+other desktops.
 
-1. **Add a machine** button → text field for a join address (paste or QR image drop).
-2. `add.start` → shows `label` and fingerprint with **Add** / **Cancel**.
-3. **Add** → `add.confirm` → the app opens `ceremonyUrl` in the system browser
-   (`shell.openExternal`), shows "waiting for your passkey…", and closes on the `added`
-   event or shows the error token's text.
-4. **This machine** row gets **Show join address** for the case where *this* desktop is
-   the newcomer: `join.start` → address and QR shown → `join.wait`.
-5. First run with no `fleet.json`: a single **Set up beam** card that runs `init.start` /
-   `init.wait` with the same browser hand-off.
-
-The row menu keeps rename, grant, forget, revoke, mapped one to one onto `peer.*` ops.
-A `trust-root-mismatch` event renders as a warning on that row.
+The row menu has rename, grant, forget and revoke. Revoke opens the browser for one tap
+(`revoke.start` / `revoke.wait`) and shows the same waiting state.
 
 ## Remote sessions
 

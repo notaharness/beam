@@ -7,9 +7,8 @@ result verbatim. Exit codes: `0` success, `1` a beam error (the token from the s
 on stderr), `2` usage, and for `exec` the remote exit code.
 
 ```
-beam init [--label NAME] [--replace-root]
+beam init [--label NAME]
 beam join [--label NAME]
-beam add <join-address>
 
 beam daemon [--detach] [--derp-map URL]
 beam status [--json]
@@ -17,7 +16,7 @@ beam peers [--json]
 beam peer rename <peer> <label>
 beam peer forget <peer>
 beam peer grant <peer> <pty,exec,msg | all | none>
-beam revoke <peer>
+beam revoke <peer>                      one passkey tap
 
 beam connect <peer> [--cwd PATH] [-- argv...]
 beam exec <peer> [--cwd PATH] [--env K=V]... -- argv...
@@ -30,41 +29,34 @@ beam version
 
 ## Enrolment
 
-**`beam init`** creates this machine's key, registers the passkey, attests this machine.
-Prints the ceremony URL and tries to open it. Ends with:
+**`beam init`** creates this machine's key, creates the passkey, derives the fleet keys,
+signs this machine's entry and appends it to the directory. Prints the ceremony URL and
+tries to open it. Ends with:
 
 ```
-registered passkey for this fleet
+created fleet 3f9a…
 this machine: laptop (b7f3 9a21 0c4e 55d1)
-address: tc…
 ```
 
-`--replace-root` is refused unless `fleet.json` exists and the user confirms; it keeps
-`key.json`, `peers.json`, `revocations.json` and writes a new `fleet.json`.
+Refuses with `already in a fleet — wipe $BEAM_DIR/fleet.json to start another` if
+`fleet.json` exists.
 
-**`beam join`** prints:
+**`beam join`** derives the fleet keys from the existing passkey, reads the directory,
+signs this machine's entry and appends it:
 
 ```
-this machine: buildbox (c5aa 18e0 77b2 0d31)
+open this in a browser that has your passkey (or forward the port):
 
-on a machine that has your passkey, run:
+  https://pair.n10.is/#…
 
-  beam add tc…
-
-or scan:
-  <QR code>
-
-waiting (expires in 10:00)…
+waiting…
+joined fleet 3f9a…; 3 machines known
 ```
 
-then, on success, `joined: added by laptop; 3 machines pinned`. On failure, the failed
-check by name and exit 1.
+Then the daemon starts and each known machine admits this one as it is reached.
 
-**`beam add <address>`** connects, prints
-`add "buildbox" (c5aa 18e0 77b2 0d31) to your fleet? [y/N]`, on `y` runs the ceremony
-(prints and opens the URL), and ends with `added "buildbox"; connected (direct)`.
-Refuses with `not enrolled — run "beam init" first` or `"…" was revoked; wipe its
-$BEAM_DIR to give it a new identity`.
+**`beam revoke <peer>`** opens a ceremony showing "Remove oldlaptop from your fleet",
+and ends with `revoked "oldlaptop"; other machines will refuse it as they next connect`.
 
 ## Daemon
 
@@ -94,9 +86,6 @@ oldlaptop  a3…                  revoked    -           -        0
 ```
 
 `beam peer grant` takes a comma list, `all` (clears the field) or `none` (`[]`).
-
-**`beam revoke <peer>`** prints `revoked "oldlaptop"; it will be dropped by other
-machines as they next connect`.
 
 ## Streams
 
@@ -134,8 +123,8 @@ ambiguous prefix or label is an error naming the candidates.
 
 ## What the CLI does not have
 
-- `serve`, `pair`, `--hostname`, `--tailscale-serve`, `node`: the daemon is implicit and
-  there is nothing to bind.
-- `enroll`: replaced by `init` / `join` / `add`.
+- Anything to bind, serve or pair. The daemon is implicit; joining is a tap.
+- An `add` on an existing machine. Membership is minted by the passkey, on the machine
+  joining.
 - Any command that edits `$BEAM_DIR` files when the daemon is not running. Everything
   goes through the socket, which spawns the daemon.

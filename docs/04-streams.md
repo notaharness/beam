@@ -7,9 +7,9 @@ answered by a one-line response, and then carries frames until either side close
 ## Admission, before the header
 
 On accept, the daemon resolves the connection's remote tunnel address to a node key
-(see [03-transport](03-transport.md)) and looks it up in the peer table. Not found, or
-`Revoked`: close without reading. The check is independent of tailcat's allowlist and
-stays even when upstream gains per-connection admission.
+and looks it up in the peer table ([03-transport](03-transport.md), "Admission").
+Revoked: close without reading. Unknown: only a `sync` open whose first frame carries a
+valid membership entry for that key is accepted; anything else closes. Pinned: proceed.
 
 ## Open header
 
@@ -100,10 +100,16 @@ the daemon opens one per connected peer.
 
 ## `sync`
 
-Opened by each side once per tunnel establishment. One data frame each way carrying the
-sync document from [02-identity](02-identity.md) (label, directory, revocations), then
-`close`. During `join` and `add` the same kind carries the enrolment exchange instead;
-the acceptor knows which by whether it is a join server.
+Opened by each side once per tunnel establishment, and the only kind an unknown key may
+open. One data frame each way:
+
+```json
+{ "v": 1, "self": <member entry>, "members": [ <member entry>, … ], "revocations": [ <revocation>, … ] }
+```
+
+`self` is the sender's own signed entry and is what admits an unknown key. `members` and
+`revocations` are everything the sender holds; the receiver verifies each and stores
+what it lacks ([02-identity](02-identity.md), "Sync and gossip"). Then `close`.
 
 ## Scopes
 
@@ -117,7 +123,7 @@ A peer record carries which kinds that peer may open here.
 | anything unparseable | nothing. A field that exists but cannot be read is not a reason to hand over a shell. |
 
 Read per open, so `beam peer grant` takes effect on a live tunnel without a reconnect.
-`sync` is never subject to scopes: a peer with `[]` still exchanges directory and
+`sync` is never subject to scopes: a peer with `[]` still exchanges entries and
 revocations, because that is how it learns it has been revoked.
 
 There are three names and nothing else: no roles, no wildcards, no filtering of what an

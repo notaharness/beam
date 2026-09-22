@@ -1,8 +1,9 @@
 # 10 · Testing
 
-Everything is testable without a network, a browser or a passkey. Three pieces make that
-true: an in-process DERP, a software authenticator behind a build tag, and daemons that
-take their `$BEAM_DIR` and listen address from flags.
+Everything is testable without a network, a browser, a passkey or Cloudflare. Four
+pieces make that true: an in-process DERP, a software authenticator behind a build tag,
+an in-process fake of the worker API, and daemons that take their `$BEAM_DIR` and
+endpoints from flags.
 
 ## Unit tests
 
@@ -10,10 +11,12 @@ Plain `go test ./...`, one `_test.go` beside each file. Table tests for everythi
 a table in this specification: peerId derivation, label and topic validation, scopes,
 open-header refusal reasons, frame encoding, ack reasons, send outcomes.
 
-**Attestation vectors.** `internal/identity/testdata/` holds fixed node keys, a fixed
-ES256 passkey keypair, and pre-computed assertions: one valid, one with the wrong
-challenge, one with the wrong origin, one from a different credential, one with UV
-unset. Every verifier check has a vector that fails only that check.
+**Entry vectors.** `internal/identity/testdata/` holds fixed PRF outputs, the keys they
+derive to, fixed node keys, and signed entries and revocations: one valid each, one with
+a mismatched `nodePublic`, one whose address embeds a different key, one signed under a
+different `MPK`, one for a revoked id. Every verifier check has a vector that fails only
+that check. Derivation is checked against the vectors so a change to salts or HKDF info
+strings cannot go unnoticed.
 
 **Frames and headers** get property tests (`pgregory.net/rapid`): encode/decode
 round-trip, arbitrary byte splits across reads, header lines at and over the cap. Any
@@ -38,13 +41,18 @@ relay fallback (force it by blocking UDP between them in the test).
 ## The software authenticator
 
 The `beamtest` build tag compiles in `internal/ceremony/software.go`: when
-`BEAM_TEST_AUTHENTICATOR=<path to an ES256 private key PEM>` is set, `init.start` and
-`add.confirm` skip the browser, produce a WebAuthn-shaped registration or assertion
-locally (correct `clientDataJSON` with origin `https://pair.n10.is`, correct
-`authenticatorData` with `rpIdHash` and UV set), and deliver it to the loopback listener
-themselves. The verifier is not bypassed; it verifies a real assertion signed by a key
-under test control. Release builds do not include the tag, so the environment variable
-does nothing there.
+`BEAM_TEST_AUTHENTICATOR=<path to a JSON file holding a credential id and a 32-byte PRF
+secret>` is set, ceremony ops skip the browser, compute the two PRF outputs as
+`HMAC-SHA256(secret, salt)` exactly as an authenticator would, and deliver them to the
+loopback listener themselves. Derivation and signing are not bypassed. Release builds do
+not include the tag.
+
+## The fake worker
+
+`internal/fakeworker` implements the two routes and the HMAC check in-process with an
+in-memory map, and is started by tests on a loopback port passed to daemons as
+`--directory-url`. A contract test runs the same Go client against the real worker under
+miniflare in CI, so the fake cannot drift.
 
 ## Integration tests (Go)
 
@@ -53,16 +61,18 @@ authenticator, `t.TempDir()` for each `$BEAM_DIR`:
 
 | Test | Proves |
 |---|---|
-| init → join → add | `fleet.json`, pins and allowlists on both sides; the join address is spent |
-| add a third, then reconnect the second | gossip: the second learns the third from the first without any server |
+| init → join | both machines hold `fleet.json`; the second is admitted by the first on its dial, pinned, dialed back |
+| join a third while the second is offline, then bring the second back | the second admits the third on first contact, and also learns of it via `sync` from the first; both paths produce one record |
+| worker down after join | existing machines keep connecting; a `join` fails with `directory-unavailable`; a `revoke` queues in `pending/` and appends at next start |
 | exec round trip | argv, stdin, stdout, stderr, exit code, `cwd` `~/` expansion, injected env |
 | pty round trip | resize, exit, process-group kill on close |
 | scopes | `grant msg` refuses `pty` on a live tunnel |
-| revoke | tunnel terminated, streams gone, propagated to the third machine, re-add refused |
+| revoke | tunnel terminated, streams gone, the third machine refuses the revoked key at admission after `sync`; a `join` by the revoked id is refused |
+| junk in the log | an entry appended with a wrong signature is fetched, fails verification, is ignored, and the daemon proceeds |
 | mailbox across restart | queued while offline, delivered on reconnect, subscriber ack semantics |
 | relay path | UDP blocked → `path: relay:dev`, streams still work |
-| wrong page | assertion over a different challenge is refused with `bad-assertion` |
-| wrong root | second daemon given a different passkey key refuses the fleet and emits `trust-root-mismatch` |
+| wrong root | a daemon with PRF secrets from a different credential derives a different `MPK`, cannot verify any entry, and reports `wrong-fleet` |
+| leaked address | a client with a valid address but no entry completes the handshake and is closed at admission within 5 s |
 | daemon lock | second daemon on the same dir exits 1 |
 
 Each test that adds an assertion first breaks the behaviour and confirms the test
@@ -81,14 +91,15 @@ the feature is proved and not the mock. The fixture:
 4. Launches the app with `BEAM_CONFIG_DIR` pointing at the local dir; the app spawns its
    own daemon through the bridge as in production.
 
-The add flow is exercised end to end with the software authenticator, so the browser
-hand-off is the one thing the e2e does not click through. `cli-e2e` gains no beam
+The join flow is exercised end to end with the software authenticator and the fake
+worker, so the browser hand-off is the one thing the e2e does not click through. `cli-e2e` gains no beam
 coverage; the TUI does not expose beam directly.
 
 ## What is not tested automatically
 
 - Real NAT traversal on the public internet. Manual QA: two machines on different
   networks, `beam peers` shows `direct` or `relay:<region>`.
-- A real passkey ceremony in a real browser. Manual QA once per release on macOS Safari,
-  Chrome on Linux, Edge on Windows: `beam init` on a fresh dir.
+- A real passkey ceremony with PRF in a real browser. Manual QA once per release on
+  macOS Safari, Chrome on Linux, Edge on Windows, and phone-via-QR: `beam init` on a
+  fresh dir, then `beam join` on a second.
 - Windows ConPTY and the named pipe, until a Windows CI runner is added.
