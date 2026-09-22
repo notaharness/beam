@@ -12,18 +12,20 @@ thing is deleted in the same change. Delete rather than layer.
 
 ## Milestones
 
-Work lands in milestone branches (`impl/m0-…`, `impl/m1-…`), each ending in one PR
-against `main`. The next milestone branches from the previous one, so work never waits
-on a merge; the owner reviews and merges in order.
+Work lands in milestone branches (`impl/m1-…`, `impl/m2-…`) published as one GitHub
+stack with `gh stack` (github/gh-stack): each milestone's PR is based on the previous
+milestone's branch, so work never waits on a merge. No standalone PRs against `main`.
+The owner reviews and merges the stack bottom-up.
 
 ## Checks
 
-`make lint`, `make test` and `make dist` are what CI runs on every push, and a PR cannot
+`make lint`, `make crap` and `make dist` are what CI runs on every push, and a PR cannot
 merge until they pass. Lint budgets: cyclomatic complexity 12 per function and 300
-lines per file, tests excluded. A `//nolint` carries its reason.
+lines per file, tests excluded. A `//nolint` carries its reason. `make crap` fails any
+function whose CRAP score (`complexity² × (1 − coverage)³ + complexity`) exceeds 30.
 
-Every table in the spec has a table test. When you add a test, break the behaviour it
-covers, watch it fail, then restore it.
+Test first: write the failing test, then the code. Every table in the spec has a table
+test. When you add a test, break the behaviour it covers, watch it fail, then restore it.
 
 ## Commits
 

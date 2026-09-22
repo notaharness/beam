@@ -6,7 +6,7 @@
 beam/
   go.mod                    module github.com/notaharness/beam; go 1.27.1
   build-tags.txt            tailcat's release build tags
-  Makefile                  dist, test, lint
+  Makefile                  dist, test, crap, lint
   cmd/beam/                 main; subcommand dispatch
   internal/
     identity/               peerId, canonical JSON, entry/revocation build and verify, fleet.json
@@ -26,6 +26,7 @@ beam/
     schema.sql
     test/                   vitest under miniflare
   npm/                      shim and platform package templates
+  tools/crap/               the CRAP gate over the coverage profile
   docs/
 ```
 
@@ -120,9 +121,17 @@ worker.
 `staticcheck` among its defaults, plus `gocyclo` at 12 and `revive`'s `file-length-limit`
 at 300 lines, both excluding tests. Suppressions carry a reason.
 
+`make crap`: runs `make test`, which writes `cover.out` over the whole module
+(`-coverpkg=./...`), then scores every non-test function with Savoia's CRAP metric,
+`complexity² × (1 − coverage)³ + complexity`, complexity counted as `gocyclo` counts it.
+Any function above 30 (crap4j's threshold) fails the build. A complexity-12 function
+therefore needs at least half its statements covered; an untested one must stay at
+complexity 4 or below.
+
 ## CI
 
 Push (`.github/workflows/ci.yml`, one job `ci`, required on `main`): `make lint`,
-`make test` (`go test -race`), `make dist` (cross-compile four targets), worker vitest
+`make crap` (`go test -race` with coverage, then the CRAP gate), `make dist`
+(cross-compile four targets), worker vitest
 under miniflare, the Go directory client's contract test against miniflare, CSP hash
 check. Tag: build, GitHub release with binaries, publish the five npm packages.
