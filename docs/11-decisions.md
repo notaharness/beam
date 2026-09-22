@@ -26,6 +26,7 @@
 | D20 | Lost passkey or compromised fleet → `fleet reset` and a new fleet. | No root migration path that a peer could abuse. | 02 |
 | D21 | Public tailcat DERP by default; own relay via flag; relay change is a re-join. | Zero infrastructure; signed addresses need a signed update. | 03 |
 | D22 | Domain `beam.n10.is` for the relying party and the worker. | One name for the one hosted thing. | 01, 09 |
+| D23 | A `Makefile` with `dist`, `test`, `lint` is the one entry point for local and CI builds; `golangci-lint` is the one linter and is run by `go run` at a pinned version. | Three shell lines do not need a Go build tool; `go run` needs no install step and builds the linter with the module's Go. | 09 |
 
 ## Milestone gate
 
