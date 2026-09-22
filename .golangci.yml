@@ -1,0 +1,22 @@
+version: "2"
+
+linters:
+  enable:
+    - gocyclo
+    - revive
+  settings:
+    gocyclo:
+      min-complexity: 12
+    revive:
+      rules:
+        - name: file-length-limit
+          arguments:
+            - max: 300
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [gocyclo, revive]
+
+formatters:
+  enable:
+    - gofmt
