@@ -1,124 +1,116 @@
 # 03 · Transport: tailcat
 
-beam links `github.com/tailscale/tailcat` as a Go library. tailcat is Tailscale's data
-plane (wireguard-go, magicsock, gVisor netstack, DERP client) with no control plane:
-point-to-point WireGuard tunnels, NAT traversal via STUN and disco, DERP as the
-rendezvous side channel and the relay of last resort. Who may connect to whom is beam's
-problem, answered by [02-identity](02-identity.md) and enforced in "Admission" below.
-
-API names are tailcat v0.7.0. The library declares no stability promise; the version is
+beam links `github.com/tailscale/tailcat` as a Go library: wireguard-go, magicsock, gVisor
+netstack and the DERP client, with no control plane. API names are v0.7.0; the version is
 pinned and each bump is reviewed against this document.
 
-## Two roles per machine
+## The constraint that shapes the topology
 
-tailcat's `Server` accepts; its `Client` dials; a `Server` cannot dial its clients. So
-every machine runs:
+Every tailcat `Server` and every tailcat `Client` is its own networking stack with its
+own WireGuard identity, and each registers that identity with DERP. DERP delivers
+packets for a key to one connection, the most recent writer. Two stacks on one machine
+with the same key therefore steal each other's inbound traffic. **One key, one stack.**
 
-- **One `Server`**, bound to this machine's node key, disco key and pre-shared key from
-  `key.json`, accepting any client that holds the address. Its `TailcatAddr()` is the
-  **address** that appears in this machine's signed membership entry.
-- **One `Client` per pinned peer**, dialling that peer's address with this machine's
-  node key. The tunnel is brought up lazily by the first `Dial` and shared thereafter.
+So a machine runs:
 
-A pair of machines therefore has two tunnels, one per direction; a stream is opened over
-the tunnel whose `Client` end the opener owns. One extra WireGuard session per pair,
-which at fleet size is nothing.
+- **One `Server`** with the machine's node key from `key.json`. Its `TailcatAddr()` is
+  the address in the machine's signed entry. It accepts any client that holds the
+  address (allow-any; `AllowedClients` is never set, since setting it once turns the
+  server restrictive).
+- **One `Client` per peer it dials**, each with a **fresh random node key for this
+  process lifetime** (`key.NewNode()`), dialling the peer's address. Distinct keys,
+  distinct stacks, no DERP collision. The peer sees an unknown key, which is why
+  admission below exists.
+
+Each pair therefore has two tunnels, one per direction, and every stream travels on the
+tunnel its opener dialed. Streams are directional: the acceptor never opens anything on
+a tunnel it did not dial. This is what makes ownership unambiguous: `A→B` mail is
+flushed on A's client tunnel to B by one flusher; `B→A` on B's.
+
+`tailcat.Server` lacks an outbound dial. If upstream adds one, a machine collapses to a
+single stack and the possession proof below becomes unnecessary; the signed entry and
+admission stay as they are.
 
 ## Addresses
 
-A tailcat address (`tc…`, ~150 characters) encodes `ServerPublic`, `ServerDiscoPublic`,
-`PresharedKey` and `RegionID`. Holding it is necessary to complete a handshake with that
-server: the PSK is mixed into the Noise handshake, so a DERP operator who observes the
-public keys still cannot. It contains no IP; the server is found through DERP.
+A tailcat address (`tc…`, unpadded base64url CBOR, variable length) carries the server's
+node key, disco key, pre-shared key and DERP region details including relay hostnames.
+Holding it is necessary to complete a handshake; the PSK is mixed into Noise, so a relay
+that observes public keys cannot. It contains no endpoint IP of the machine.
 
-An address is not a secret in beam's model. It lives encrypted in the directory and in
-plaintext on every fleet machine, so a revoked machine holds every address. What the
-holder of an address gets is a completed WireGuard handshake and a TCP connection to
-port 7000 that beam closes at admission. That is the trade for admitting on first
-contact, and it is bounded to nuisance.
+In beam an address is not a secret: it lives encrypted in the directory and in plaintext
+on every member. A revoked machine holds every address and can complete handshakes; it
+is closed at admission. That is accepted, with the transport-level resource exposure it
+implies ([01](01-model.md), threat model).
+
+Relay coordinates are inside the signed entry. A machine that moves to another DERP map
+re-runs `beam join` (one tap) and the new entry supersedes the old.
 
 ## Admission
 
-tailcat's `AllowedClients` is **not used**; the `Server` accepts any client. beam decides
-who is a peer at the application layer, per connection:
+A tunnel arrives at the `Server` from an unknown client key `C`. Nothing is trusted until
+the dialer opens a `hello` stream ([04](04-streams.md)) and the acceptor checks:
 
-1. On accept, resolve the connection's remote tunnel address to a node key. v0.7.0
-   exposes this only through `Server.PeerEnv(local, remote)`, which returns
-   `TAILCAT_PEER_KEY=nodekey:…` among other strings; beam parses that until a
-   `Server.PeerKey(netip.Addr)` exists upstream (to be filed).
-2. Look the key up in the peer table.
-   - **Pinned and not revoked:** proceed to read the open header.
-   - **Revoked:** close. Nothing is read.
-   - **Unknown:** read the open header. It must be `kind: "sync"` and its first frame
-     must carry a membership entry whose `nodePublic` equals the key from step 1 and
-     which verifies under `MPK` ([02-identity](02-identity.md)). On success, pin the peer,
-     add it to the allow set for this process, and dial back. Anything else closes the
-     connection. At most one unknown-key connection is processed at a time per source
-     key, and unverified connections are dropped after 5 s.
+1. **Membership.** The frame carries the dialer's signed entry `E`. Verify it
+   ([02](02-identity.md)); it names the dialer's real node key `S`.
+2. **Possession.** `C` is ephemeral and not in any entry, so the dialer proves it holds
+   `S`'s private key without a signature: both sides compute `k = X25519(s, R) = X25519(r,
+   S)` where `R` is the acceptor's node key (the dialer knows it from the address it
+   dialed). The frame carries `mac = HMAC-SHA256(k, "beam-hello:v1" ‖ C ‖ S ‖ R ‖ nonce)`
+   with the dialer's 32-byte `nonce`; the acceptor recomputes it. `C` is taken from the
+   tunnel, not the frame, so a valid `(E, mac)` cannot be replayed from a different
+   tunnel.
+3. **Not revoked.** `E.peerId` has no stored revocation, checked after any revocations
+   already received on this or other tunnels have been applied.
 
-This is what lets a machine that tapped once connect to a fleet nobody told about it.
-It is also why revocation needs no cooperation from tailcat: a revoked key is refused
-here and its existing tunnel is terminated.
+Pass: bind `C → E.peerId` for this tunnel, pin `E` if new (and schedule a dial back),
+answer `ok`. Fail: answer `refused` with a reason and close. Any other first stream from
+an unbound `C`, or any stream after a failed hello, is closed unread. Budgets: 16
+concurrent unbound tunnels in hello, 5 s each; beyond that the oldest is closed. tailcat
+keeps its own per-peer state for a client that handshook; beam cannot evict it and does
+not claim to.
+
+The acceptor learns the peer behind a TCP connection from `Server.PeerEnv(local,
+remote)` (`TAILCAT_PEER_KEY=nodekey:…`), failing closed when absent, until upstream
+exposes a `PeerKey` lookup.
 
 ## Streams are TCP
 
-gVisor netstack gives real TCP through the tunnel:
-
 ```go
-ln, _ := server.Listen(ctx, "tcp", ":7000")
-conn, _ := client.Dial(ctx, "tcp", "[<server tunnel ip>]:7000")
+ln, _  := server.Listen(ctx, "tcp", ":7000")
+conn, _ := client.DialTCPPort(ctx, 7000)
 ```
 
-Each beam stream is one TCP connection. Ordering, flow control, backpressure and
-half-close are TCP's. There is no application multiplexer, no stream id space, no frame
-window. One port for every stream kind; the first line of the connection says which
-([04-streams](04-streams.md)).
+One TCP connection per stream through netstack; ordering, flow control and half-close
+are TCP's. No multiplexer. One port, kind in the header.
 
-## Connection lifecycle
+## Lifecycle
 
-- **Up.** The daemon starts the `Server`, then for each pinned, unrevoked peer creates a
-  `Client` and dials `:7000` for a `sync` stream. Success: exchange `sync`, mark
-  `connected`, flush that peer's mailbox queue.
-- **Retry.** A failed dial retries with exponential backoff from 2 s to 60 s, forever,
-  while the daemon runs. There is no presence oracle, so "is this peer online" is
-  answered only by trying; via DERP a failed attempt costs one relay round trip. The
-  backoff resets when the peer connects inbound to us, which proves it is up.
-- **Down.** WireGuard keepalives and `Server.Status()` detect a dead tunnel; a TCP stream
-  through it gets a reset. Mark `offline`, re-enter retry.
-- **Path.** `Server.Status()` reports per peer `CurAddr` (direct) or `Relay` (DERP
-  region), exposed on the control socket as `path: "direct"` or `path: "relay:fra"`.
+- **Up.** For each member, create a `Client`, `DialTCPPort(7000)` with a 20 s deadline,
+  open `hello`, then `sync`. `connected` means hello succeeded on *our* dialed tunnel;
+  the peer's own dial to us is independent and reported separately as `inbound`.
+- **Liveness.** A `ping` control frame on the `sync` stream every 15 s; no reply within
+  30 s closes the tunnel. WireGuard keepalives and `Server.Status()` are advisory.
+- **Retry.** Exponential backoff 2 s → 5 min with jitter, forever while the daemon runs;
+  reset on inbound contact from that peer, on a learned entry for it, and on
+  `msg.send` to it. There is no give-up state: queued mail must eventually flow.
+- **Path.** `Server.Status()` gives `CurAddr` or `Relay` for inbound peers; the `Client`
+  has no equivalent, so `path` is reported for the inbound tunnel or as `unknown`.
 
 | State | Meaning |
 |---|---|
-| `connected` | a tunnel is up and `sync` has been exchanged |
-| `offline` | last dial failed; retrying |
-| `revoked` | in the table, never dialed, refused at admission |
+| `connected` | hello succeeded on the tunnel this machine dialed |
+| `offline` | last dial failed or liveness lapsed; retrying |
+| `revoked` | refused at admission; never dialed |
 
 ## DERP
 
-- **Map.** Defaults to `https://tailcat.dev/derpmap.json`, Tailscale's dedicated tailcat
-  relay fleet. Tailscale states it is rate-limited, logs metadata, carries no SLA and may
-  be withdrawn. The map is cached in `$BEAM_DIR/derpmap.json` and used stale rather than
-  failing when the fetch fails.
-- **Own relay.** `beam daemon --derp-map <url>` points at a map we host; running
-  `tailscale.com/cmd/derper` on a VM with a public IP is the escape hatch. The address
-  carries the region so peers follow.
-- **Dev.** Tests use an in-process DERP + STUN on loopback ([10-testing](10-testing.md)).
+Default map `https://tailcat.dev/derpmap.json` (Tailscale's tailcat fleet: rate-limited,
+metadata-logged, no SLA). Cached in `derpmap.json`. `beam daemon --derp-map URL` for a
+self-hosted `derper`. Tests use an in-process relay ([10](10-testing.md)).
 
-## What tailcat does not do for us
+## Footprint (measured, one Server and one Client, Go 1.27.1, linux/amd64)
 
-- Decide membership. That is the signed entry, checked at admission.
-- Multiplex. That is TCP.
-- Persist anything but `key.json`.
-- Interoperate with a running tailscaled. It does not, by upstream decision.
-
-## Footprint (measured, Go 1.27.1, linux/amd64)
-
-| | |
-|---|---|
-| Binary, `-s -w` + tailcat's `build-tags.txt` | 15–16.4 MB across the five targets |
-| Cold build, module cache warm | 21.5 s |
-| Warm rebuild | 0.14 s |
-| Module cache | 479 MB |
-| cgo | not required; `CGO_ENABLED=0` for every target |
-| RSS with one tunnel up | ~26 MB |
+Binary 15–16.4 MB stripped across five targets; cold build 21.5 s; warm 0.14 s; module
+cache 479 MB; `CGO_ENABLED=0`; ~26 MB RSS. Per-peer client stacks add to that; the
+milestone-1 spike measures a five-peer fleet.

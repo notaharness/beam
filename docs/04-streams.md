@@ -1,158 +1,103 @@
 # 04 · Streams
 
-A stream is one TCP connection through a tunnel to the peer's port `7000`. The
-connection is authenticated before any byte is read, declared by a one-line header,
-answered by a one-line response, and then carries frames until either side closes.
+A stream is one TCP connection through a tunnel to the peer's port 7000. It is opened
+only by the tunnel's dialer, declared by a one-line header, answered by a one-line
+response, and then carries frames.
 
-## Admission, before the header
+## Header and response
 
-On accept, the daemon resolves the connection's remote tunnel address to a node key
-and looks it up in the peer table ([03-transport](03-transport.md), "Admission").
-Revoked: close without reading. Unknown: only a `sync` open whose first frame carries a
-valid membership entry for that key is accepted; anything else closes. Pinned: proceed.
-
-## Open header
-
-The first line, at most 64 KiB, newline-terminated JSON:
+First line, ≤ 64 KiB, newline-terminated JSON:
 
 ```json
-{ "v": 1, "kind": "pty", "argv": ["tmux","-u","-S","/tmp/s","attach","-t","=x:"],
-  "cwd": "~/work", "env": { "TERM": "xterm-256color" }, "cols": 220, "rows": 50 }
-{ "v": 1, "kind": "exec", "argv": ["git","status","--porcelain"], "cwd": "/srv/repo" }
-{ "v": 1, "kind": "msg" }
+{ "v": 1, "kind": "hello" }
 { "v": 1, "kind": "sync" }
+{ "v": 1, "kind": "pty",  "argv": [...], "cwd": "~/work", "env": {...}, "cols": 220, "rows": 50 }
+{ "v": 1, "kind": "exec", "argv": ["git","status"], "cwd": "/srv/repo" }
+{ "v": 1, "kind": "msg" }
 ```
 
-Response, one line:
-
-```json
-{ "ok": true }
-{ "ok": false, "reason": "scope" }
-```
-
-Refusal reasons: `version` (unknown `v`), `kind` (unknown kind), `scope` (the peer's
-grant does not include this kind), `limit` (per-peer cap reached), `params` (a required
-field missing or malformed, including a `cwd` that is neither absolute nor `~/`-relative
-and a `cols`/`rows` outside 2–500), `spawn` (the process could not be started; the
-detail follows in the same object as `detail`). After `ok: false` the acceptor closes.
+Response: `{ "ok": true }` or `{ "ok": false, "reason": "<token>", "detail"?: "…" }` then
+close. Reasons: `version`, `kind`, `unauthenticated` (tunnel not yet through hello),
+`revoked`, `grant`, `limit`, `params`, `spawn`.
 
 ## Frames
 
-After the response, both directions carry frames:
-
 ```
-offset  len  field
-0       1    type      0 = data, 1 = control, 2 = close
-1       4    length    u32 big-endian, payload bytes, ≤ 1 MiB
-5       n    payload
+type   u8      0 data · 1 control (JSON) · 2 close (JSON)
+length u32be   payload bytes, ≤ 1 MiB
+payload
 ```
 
-- `data`: bytes for the stream's purpose. On `exec`, the first payload byte is a channel:
-  `0` stdin (opener → acceptor), `1` stdout, `2` stderr (acceptor → opener).
-- `control`: JSON, kind-specific, below.
-- `close`: JSON `{ "reason": … }`, then the sender half-closes. The receiver may still
-  flush what it holds, then closes. A TCP reset without a `close` frame is an abnormal
-  end and is reported as one.
+`close` carries `{ "reason": … }`; the sender half-closes after it. A reset without
+`close` is abnormal and reported as such.
 
-This is a framing, not a multiplexer: there are no stream ids and no windows. It exists
-because `pty` and `exec` need an in-band control channel and a typed end, and `msg`
-needs an ack per envelope. About fifty lines each side.
+## `hello`
 
-## `pty`
-
-Open parameters: `argv?`, `cwd?`, `env?`, `cols`, `rows`. An empty `argv` runs the login
-shell (`$SHELL`, else `bash`, else `sh`); otherwise `argv[0]` is executed directly with
-no shell and no word splitting. `cwd` is resolved on the acceptor: absolute, or `~/`
-expanded against the daemon user's home. `env` entries are merged over the daemon's
-environment; the injected variables below are set last and cannot be overridden.
-
-Unix: `github.com/creack/pty` (already a tailcat dependency). Windows: ConPTY via
-`CreatePseudoConsole`; tailcat's `tailcat_ssh_windows.go` has a working implementation
-to copy.
-
-Control from the opener: `{ "kind": "resize", "cols": 220, "rows": 50 }`, clamped to
-2–500. Close from the opener kills the process group. The process exiting sends
-`close { "reason": "exit", "exitCode": n, "signal": s|null }`.
-
-Cap: 32 live `pty` streams **per peer**. A peer that fills its allowance shrinks no
-other peer's; a peer that reconnects finds its own budget intact.
-
-## `exec`
-
-Open parameters: `argv` (required, non-empty), `cwd?`, `env?`. Same execution and `cwd`
-rules as `pty`. `argv[0]` runs directly, no shell.
-
-Data frames carry the channel byte. End of stdin is
-`control { "kind": "stdin-eof" }`, never a zero-length data frame. Exit is
-`close { "reason": "exit", "exitCode": n, "signal": s|null }` from the acceptor after
-stdout and stderr are drained. Close from the opener kills the process group.
-
-Cap: 32 live `exec` children per peer, same reasoning as `pty`.
-
-## `msg`
-
-Either side may open one; either side may send. Data frames carry one mailbox envelope
-each as JSON ([05-mailbox](05-mailbox.md)). The receiver answers each with
-`control { "kind": "ack", "id": "<envelope id>", "accepted": true }` or
-`{ …, "accepted": false, "reason": "<ack reason>" }`. The flusher sends one envelope,
-waits for its ack, and continues. A `msg` stream stays open for the life of the tunnel;
-the daemon opens one per connected peer.
+The first stream on every tunnel. One data frame from the dialer:
+`{ "entry": <member entry>, "nonce": "…", "mac": "…" }` ([03](03-transport.md),
+Admission). One data frame back: `{ "ok": true }` or `{ "ok": false, "reason":
+"bad-entry" | "wrong-passkey" | "bad-assertion" | "revoked" | "possession" }`, then close.
 
 ## `sync`
 
-Opened by each side once per tunnel establishment, and the only kind an unknown key may
-open. One data frame each way:
+Opened by the dialer after hello; lives as long as the tunnel. Data frames carry
+`{ "records": [ <entry or revocation>, … ] }`, ≤ 200 records and ≤ 1 MiB each; a
+`control {"kind":"end"}` marks the end of the initial dump; later frames are deltas.
+`control {"kind":"ping","t":…}` / `{"kind":"pong","t":…}` carry liveness. Not subject
+to grants.
 
-```json
-{ "v": 1, "self": <member entry>, "members": [ <member entry>, … ], "revocations": [ <revocation>, … ] }
-```
+## `pty`
 
-`self` is the sender's own signed entry and is what admits an unknown key. `members` and
-`revocations` are everything the sender holds; the receiver verifies each and stores
-what it lacks ([02-identity](02-identity.md), "Sync and gossip"). Then `close`.
+`argv?`, `cwd?`, `env?`, `cols`, `rows`. Empty `argv` runs the login shell: `$SHELL` if it
+names an executable, else `/bin/sh`, invoked as `-<basename>`. Otherwise `argv[0]`
+directly, no shell. `cwd` absolute or `~/`-relative, resolved on the acceptor. `env`
+merged over the daemon's environment; injected variables last. Unix: `creack/pty`.
 
-## Scopes
+Control from the opener: `{"kind":"resize","cols":…,"rows":…}` (2–500). Data both ways
+raw. Process exit → `close {"reason":"exit","exitCode":n,"signal":s|null}`. Opener close
+or connection loss → SIGHUP then SIGKILL to the process group after 5 s.
 
-A peer record carries which kinds that peer may open here.
+## `exec`
 
-| `Scopes` | Meaning |
-|---|---|
-| `nil` (field absent) | all three: `pty`, `exec`, `msg`. The default. |
-| `["msg"]` | exactly that; `pty` and `exec` refused with `scope` |
-| `[]` | nothing; the peer authenticates and opens no stream |
-| anything unparseable | nothing. A field that exists but cannot be read is not a reason to hand over a shell. |
+`argv` (required), `cwd?`, `env?`. Data payloads carry a channel byte: `0` stdin
+(opener→acceptor), `1` stdout, `2` stderr. `control {"kind":"stdin-eof"}` ends stdin.
+Exit as for `pty`, after stdout and stderr drain. Connection loss kills the process group.
 
-Read per open, so `beam peer grant` takes effect on a live tunnel without a reconnect.
-`sync` is never subject to scopes: a peer with `[]` still exchanges entries and
-revocations, because that is how it learns it has been revoked.
+## `msg`
 
-There are three names and nothing else: no roles, no wildcards, no filtering of what an
-`exec` may run. `pty` and `exec` both grant a shell as the daemon's user; they are
-separate only so that a peer can be given neither.
+Opened by the dialer; carries mail **from the dialer to the acceptor only**. One per
+tunnel, opened when the outbound queue is non-empty and kept while it drains. Each data
+frame is one envelope; the acceptor answers each with
+`control {"kind":"ack","id":…,"accepted":true}` or
+`{…,"accepted":false,"reason":"duplicate"|"queue-full"|"payload-too-large"|"invalid-envelope"|"storage-failure"}`.
+The acceptor requires `envelope.from == the peerId bound to this tunnel` and
+`envelope.to == its own peerId`; a mismatch is `invalid-envelope`.
+
+## Grants
+
+Each peer row has `Grant`, what *this* machine lets that peer open here:
+
+| Grant | `pty` / `exec` | `msg` | `hello` / `sync` |
+|---|---|---|---|
+| `all` (default) | yes | yes | yes |
+| `msg` | no | yes | yes |
+| `none` | no | no | yes |
+
+`pty` and `exec` are one privilege (a shell as the daemon's user) and are never granted
+separately. Read per open. A row whose grant cannot be parsed is `none`. Grants are local
+policy on the granting machine and travel nowhere.
 
 ## Injected environment
 
-Every process started for a `pty` or `exec` receives, after the caller's `env`:
-
 | Variable | Value |
 |---|---|
-| `BEAM_DIR` | the daemon's config directory |
-| `BEAM_SOCKET` | path of the control socket |
+| `BEAM_DIR` | daemon config directory |
+| `BEAM_SOCKET` | control socket path |
 | `BEAM_PEER_ID` | this machine's `peerId` |
 | `BEAM_CALLER_ID` | the opener's `peerId` |
-| `BEAM_CALLER_LABEL` | the opener's label as this machine knows it |
+| `BEAM_CALLER_LABEL` | the opener's label or local alias |
 
-A script beam started can therefore answer the machine that started it — `beam msg send
-"$BEAM_CALLER_ID" …` — without configuration.
+## Limits
 
-## Limits, collected
-
-| | |
-|---|---|
-| Header line | 64 KiB |
-| Frame payload | 1 MiB |
-| `pty` per peer | 32 |
-| `exec` per peer | 32 |
-| `cols`, `rows` | 2–500 |
-| `argv` entries | 1,024; each ≤ 64 KiB |
-| `env` entries | 256 |
+Header 64 KiB · frame payload 1 MiB · `pty`+`exec` 32 per peer · `argv` ≤ 1,024 items,
+each ≤ 64 KiB · `env` ≤ 256 · `sync` records/frame 200 · unbound tunnels in hello 16.
