@@ -32,8 +32,8 @@ Linux, 103 on macOS) is refused before anything else, naming `BEAM_SOCKET`.
   completes before the daemon exits. An open `pty` session holds that for its 5 s grace.
   A fleet reset and a re-join end the streams the same way. A client treats a closed
   socket after a `shutdown` event, or after its own `daemon.shutdown`, as deliberate and
-  does not respawn until asked; any other disconnect is unexpected. n10 recovers from one as [08](08-desktop.md) says; the CLI
-  is one call per process and reconnects never.
+  does not respawn until asked; any other disconnect is unexpected. n10 recovers from one
+  as [08](08-desktop.md) says; the CLI is one call per process and reconnects never.
 
 ## Two kinds of connection
 
@@ -145,8 +145,9 @@ is open nothing is sent to the peer.
 streamId, reason, exitCode?, signal? }` · `ceremony { ceremonyUrl }` ·
 `directory.published { kind, peerId }` · `shutdown { reason }`.
 
-`shutdown` is a stopping daemon's last line to each subscriber, sent before it closes its
-socket: `reason` is `requested` (a `daemon.shutdown`), `signal` (SIGTERM or SIGINT) or
+`shutdown` is sent to each subscriber once the daemon has stopped listening and before it
+closes their connections; an event or reply already under way may still follow it.
+`reason` is `requested` (a `daemon.shutdown`), `signal` (SIGTERM or SIGINT) or
 `parent-exited` (the end of stdin under `--exit-with-parent`). Events go to each
 subscriber independently, so one that stalls holds up no other.
 

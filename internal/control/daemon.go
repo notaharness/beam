@@ -104,8 +104,8 @@ func Run(ctx context.Context, o Options) error {
 	}
 	close(d.started)
 	<-ctx.Done()
-	d.emit("shutdown", map[string]string{"reason": stopReason(context.Cause(ctx))})
 	ln.Close() // no client starts anything on a daemon that is stopping
+	d.emit("shutdown", map[string]string{"reason": stopReason(context.Cause(ctx))})
 	d.close()
 	return nil
 }
