@@ -37,6 +37,7 @@ type fleet struct {
 	cred    identity.Credential
 	entries []directory.Entry
 	hashes  map[string]int64 // statementHash → seq
+	reads   int              // pages served
 }
 
 // New returns an empty worker.
@@ -69,6 +70,16 @@ func (w *Worker) WithholdLast(fleetID string) {
 	if f := w.fleets[fleetID]; f != nil && len(f.entries) > 0 {
 		w.withheld[f.entries[len(f.entries)-1].StatementHash] = true
 	}
+}
+
+// Reads is how many pages of fleetID's directory have been read.
+func (w *Worker) Reads(fleetID string) int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if f := w.fleets[fleetID]; f != nil {
+		return f.reads
+	}
+	return 0
 }
 
 // Len is how many entries fleetID's directory holds.
@@ -137,6 +148,7 @@ func (w *Worker) read(rw http.ResponseWriter, r *http.Request) {
 		fail(rw, http.StatusBadRequest, "params")
 		return
 	}
+	f.reads++
 	p := directory.Page{FleetID: f.id, CredentialID: f.cred.ID, CredentialPublicKey: b64(f.cred.PublicKey), Entries: []directory.Entry{}}
 	for _, e := range f.entries[min(since, int64(len(f.entries))):] {
 		if len(p.Entries) == directory.PageSize {
