@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"testing/iotest"
+
+	"pgregory.net/rapid"
 )
 
 func pipe(t *testing.T) (*Conn, *Conn) {
@@ -191,4 +193,76 @@ func TestParseClose(t *testing.T) {
 			t.Errorf("%s: got %+v", tc.payload, m)
 		}
 	}
+}
+
+// splitReader hands out b in the chunk sizes it is given, cycling through
+// them.
+type splitReader struct {
+	b     []byte
+	sizes []int
+	i     int
+}
+
+func (r *splitReader) Read(p []byte) (int, error) {
+	if len(r.b) == 0 {
+		return 0, io.EOF
+	}
+	n := min(len(p), len(r.b), r.sizes[r.i%len(r.sizes)])
+	r.i++
+	copy(p, r.b[:n])
+	r.b = r.b[n:]
+	return n, nil
+}
+
+func drawSplits(t *rapid.T) []int {
+	return rapid.SliceOfN(rapid.IntRange(1, 97), 1, 16).Draw(t, "splits")
+}
+
+// docs/10: frames come through whole under any split of the byte stream.
+func TestFramesUnderArbitrarySplits(t *testing.T) {
+	type frame struct {
+		t Type
+		p []byte
+	}
+	rapid.Check(t, func(t *rapid.T) {
+		frames := rapid.SliceOfN(rapid.Custom(func(t *rapid.T) frame {
+			return frame{Type(rapid.IntRange(0, 2).Draw(t, "type")), rapid.SliceOfN(rapid.Byte(), 0, 2048).Draw(t, "payload")}
+		}), 0, 8).Draw(t, "frames")
+		var buf bytes.Buffer
+		w := &Conn{w: &buf}
+		for _, f := range frames {
+			if err := w.WriteFrame(f.t, f.p); err != nil {
+				t.Fatal(err)
+			}
+		}
+		r := &Conn{r: bufio.NewReaderSize(&splitReader{b: buf.Bytes(), sizes: drawSplits(t)}, 16)}
+		for i, f := range frames {
+			typ, p, err := r.ReadFrame()
+			if err != nil || typ != f.t || !bytes.Equal(p, f.p) {
+				t.Fatalf("frame %d: type %d, %d bytes, %v", i, typ, len(p), err)
+			}
+		}
+		if _, _, err := r.ReadFrame(); err != io.EOF {
+			t.Fatalf("after the last frame: %v, want EOF", err)
+		}
+	})
+}
+
+// docs/10: a header line is read whole at any length up to the cap, however
+// it arrives and however small the buffer, and refused beyond it.
+func TestHeaderLinesAroundTheCap(t *testing.T) {
+	rapid.Check(t, func(t *rapid.T) {
+		n := rapid.IntRange(MaxLine-64, MaxLine+64).Draw(t, "bytes before the newline")
+		line := `{"v":1,"kind":"x","pad":"` + strings.Repeat("a", n-len(`{"v":1,"kind":"x","pad":""}`)) + "\"}\n"
+		size := rapid.IntRange(16, 8192).Draw(t, "buffer")
+		c := &Conn{r: bufio.NewReaderSize(&splitReader{b: []byte(line), sizes: drawSplits(t)}, size)}
+		var h Header
+		err := c.ReadLine(&h)
+		switch {
+		case n+1 <= MaxLine && (err != nil || h.Kind != "x"):
+			t.Fatalf("%d bytes: %+v, %v", n+1, h, err)
+		case n+1 > MaxLine && !errors.Is(err, ErrTooLarge):
+			t.Fatalf("%d bytes: %v, want ErrTooLarge", n+1, err)
+		}
+	})
 }
