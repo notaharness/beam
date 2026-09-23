@@ -1,7 +1,7 @@
 // Package fakeworker is the directory worker's API in memory, for tests
-// (docs/10): the routes, the bearer check and assertion verification as the
-// worker does them, with switches to take it down or have it withhold a
-// record. The contract test holds it to the real worker.
+// (docs/10): the routes, the bearer check, assertion verification and
+// ceremony slots as the worker does them, with switches to take it down or
+// have it withhold a record. The contract tests hold it to the real worker.
 package fakeworker
 
 import (
@@ -30,6 +30,14 @@ type Worker struct {
 	byRead   map[string]*fleet // by SHA-256(read token), base64url
 	down     bool
 	withheld map[string]bool // statementHash → left out of reads
+	slots    map[string]*slot
+}
+
+// slot is one ceremony's slot: written once, read once (docs/09). The fake
+// keeps it for the process rather than five minutes.
+type slot struct {
+	sealed  string        // "" once read
+	written chan struct{} // closed by the write
 }
 
 type fleet struct {
@@ -42,10 +50,13 @@ type fleet struct {
 
 // New returns an empty worker.
 func New() *Worker {
-	w := &Worker{mux: http.NewServeMux(), fleets: map[string]*fleet{}, byRead: map[string]*fleet{}, withheld: map[string]bool{}}
+	w := &Worker{mux: http.NewServeMux(), fleets: map[string]*fleet{}, byRead: map[string]*fleet{}, withheld: map[string]bool{},
+		slots: map[string]*slot{}}
 	w.mux.HandleFunc("POST /v1/fleets", w.register)
 	w.mux.HandleFunc("GET /v1/entries", w.read)
 	w.mux.HandleFunc("POST /v1/fleets/{id}/entries", w.appendEntry)
+	w.mux.HandleFunc("POST /v1/slots/{slot}", w.writeSlot)
+	w.mux.HandleFunc("GET /v1/slots/{slot}", w.readSlot)
 	return w
 }
 
