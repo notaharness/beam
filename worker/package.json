@@ -1,0 +1,19 @@
+{
+  "name": "beam-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "tsc -p . && vitest run"
+  },
+  "dependencies": {
+    "@simplewebauthn/server": "^14.0.2"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "@cloudflare/workers-types": "^5.20260916.1",
+    "playwright": "1.63",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11",
+    "wrangler": "^4.132.0"
+  }
+}
