@@ -12,6 +12,7 @@ interface Env {
 
 const RP_ID = "beam.n10.is";
 const ORIGIN = "https://beam.n10.is";
+const MAX_BODY = 16384;
 const MAX_BLOB = 8192;
 const MAX_ENTRIES = 5000;
 const PAGE = 500;
@@ -112,7 +113,8 @@ async function read(env: Env, req: Request, url: URL): Promise<Response> {
 
 // POST /v1/fleets/:id/entries: append a record signed by the fleet's
 // credential in the domain of its kind; appending one held already answers
-// its seq.
+// its seq. One statement allocates the seq and checks the cap, so appends
+// at once cannot pass it together.
 async function appendEntry(env: Env, fleetId: string, req: any): Promise<Response> {
   if (req.kind !== "member" && req.kind !== "revoke") throw new Refusal(400, "params");
   const fleet = await env.DB.prepare("SELECT fleet_id, credential_id, credential_pk FROM fleets WHERE fleet_id = ?").bind(fleetId).first<Fleet>();
@@ -122,18 +124,19 @@ async function appendEntry(env: Env, fleetId: string, req: any): Promise<Respons
   const held = () => env.DB.prepare("SELECT seq FROM entries WHERE fleet_id = ? AND statement_hash = ?").bind(fleetId, e.hash).first<number>("seq");
   let seq = await held();
   if (seq !== null) return json(200, { seq });
-  const count = await env.DB.prepare("SELECT count(*) AS n FROM entries WHERE fleet_id = ?").bind(fleetId).first<number>("n");
-  if ((count ?? 0) >= MAX_ENTRIES) throw new Refusal(413, "fleet-full");
   try {
     seq = await env.DB.prepare(
       `INSERT INTO entries (fleet_id, seq, statement_hash, blob, assertion, created_at)
-       SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ? FROM entries WHERE fleet_id = ? RETURNING seq`,
-    ).bind(fleetId, e.hash, e.blob, JSON.stringify(e.assertion), Date.now(), fleetId).first<number>("seq");
+       SELECT ?, COALESCE(MAX(seq), 0) + 1, ?, ?, ?, ? FROM entries WHERE fleet_id = ? HAVING count(*) < ? RETURNING seq`,
+    ).bind(fleetId, e.hash, e.blob, JSON.stringify(e.assertion), Date.now(), fleetId, MAX_ENTRIES).first<number>("seq");
   } catch (err) {
     if (!String(err).includes("UNIQUE")) throw err;
     return json(200, { seq: await held() }); // a concurrent append of the same record
   }
-  return json(201, { seq });
+  if (seq !== null) return json(201, { seq });
+  seq = await held(); // the fleet is full, unless the one that filled it was this record
+  if (seq === null) throw new Refusal(413, "fleet-full");
+  return json(200, { seq });
 }
 
 // verified checks an entry's shape and its assertion: by credentialId, under
@@ -175,9 +178,23 @@ async function limit(env: Env, fleetId: string) {
   if (!(await env.LIMITER.limit({ key: fleetId })).success) throw new Refusal(429, "rate-limited");
 }
 
+// body is a request's JSON. It reads at most MAX_BODY bytes, counted as
+// they arrive whatever Content-Length says, before parsing any.
 async function body(req: Request): Promise<any> {
+  let text = "";
+  let n = 0;
+  const decoder = new TextDecoder();
+  const reader = req.body?.getReader();
+  for (let r = await reader?.read(); r && !r.done; r = await reader!.read()) {
+    n += r.value.length;
+    if (n > MAX_BODY) {
+      await reader!.cancel();
+      throw new Refusal(413, "too-large");
+    }
+    text += decoder.decode(r.value, { stream: true });
+  }
   try {
-    return await req.json();
+    return JSON.parse(text + decoder.decode());
   } catch {
     throw new Refusal(400, "params");
   }
