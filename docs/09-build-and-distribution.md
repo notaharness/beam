@@ -62,7 +62,7 @@ pins `@notaharness/beam` with a caret range.
 
 | Package | Contents |
 |---|---|
-| `@notaharness/beam` | `bin/beam.js`: resolves the platform package and runs the binary with `child_process.spawn(bin, argv, { stdio: "inherit" })`, forwards `SIGINT`/`SIGTERM`/`SIGWINCH`, exits with the child's code or `128+signal`. `index.js` exports `binaryPath()`. The platform packages are its `optionalDependencies`, the one list of platforms. |
+| `@notaharness/beam` | `bin/beam.js`: resolves the platform package and runs the binary with `child_process.spawn(bin, argv, { stdio: "inherit" })`, forwards `SIGINT`/`SIGTERM`/`SIGWINCH`, handling them from before the binary starts, exits with the child's code or `128+signal`. `index.js` exports `binaryPath()`. The platform packages are its `optionalDependencies`, the one list of platforms. |
 | `@notaharness/beam-{darwin-arm64,darwin-x64,linux-x64,linux-arm64}` | one binary each, named `beam`; `os`/`cpu` set |
 
 `npm/beam/` is the shim and `npm/platform/package.json` the platform packages' template.

@@ -21,7 +21,8 @@ in [05](05-mailbox.md) (SQLite's commit hook turns a chosen commit into a rollba
 the machine restarts). Found counterexamples become fixed cases.
 
 The npm packages: `node --test` runs the shim with a shell script standing in for the
-binary (arguments, exit code, `128+signal`, each forwarded signal), `npm/pack.mjs`
+binary (arguments, exit code, `128+signal`, each forwarded signal, one that comes while
+`spawn` runs), `npm/pack.mjs`
 over stand-in binaries, and `npm/version.mjs` over stable, prerelease and noncanonical
 tags.
 

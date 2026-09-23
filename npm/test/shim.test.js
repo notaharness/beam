@@ -23,9 +23,10 @@ function install(t, script) {
   return path.join(dir, "node_modules", "@notaharness", "beam", "bin", "beam.js");
 }
 
-// run starts the shim with args; done resolves to its exit code and output.
-function run(bin, args) {
-  const child = spawn(process.execPath, [bin, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+// run starts the shim with args, node given its own options first; done
+// resolves to its exit code and output.
+function run(bin, args, node = []) {
+  const child = spawn(process.execPath, [...node, bin, ...args], { stdio: ["ignore", "pipe", "pipe"] });
   let out = "";
   child.stdout.on("data", (b) => (out += b));
   child.stderr.on("data", (b) => (out += b));
@@ -60,6 +61,15 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGWINCH"]) {
     assert.deepStrictEqual(await done, { code: 0, out: `ready\ngot ${name}\n` });
   });
 }
+
+// A signal that comes while the binary starts, before spawn has returned, is
+// passed on too: the shim neither dies of it nor leaves the binary running.
+test("passes on a signal that comes while spawn runs", { timeout: 5000 }, async (t) => {
+  const bin = install(t, "trap 'echo got TERM; exit 0' TERM; kill -TERM $PPID; i=0; while [ $i -lt 100 ]; do sleep 0.05; i=$((i+1)); done; exit 9");
+  const { child, done } = run(bin, [], ["--require", path.join(__dirname, "slow-spawn.js")]);
+  t.after(() => child.kill("SIGKILL"));
+  assert.deepStrictEqual(await done, { code: 0, out: "got TERM\n" });
+});
 
 test("says which platform has no binary", () => {
   const { binaryPath } = require(path.join(shim, "index.js"));
