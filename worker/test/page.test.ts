@@ -26,6 +26,8 @@ describe("the ceremony page", () => {
   });
 
   it("loads nothing", () => {
-    expect(page).not.toMatch(/\b(src|href)=/);
+    expect(page).not.toMatch(/\bsrc=|<link\b|@import|url\((?!#)/);
+    // The one href is a navigation, not a fetch: the repository link in the footer.
+    expect([...page.matchAll(/\bhref="([^"]*)"/g)].map((m) => m[1])).toEqual(["https://github.com/notaharness/beam"]);
   });
 });
