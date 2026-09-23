@@ -17,18 +17,16 @@ Linux, 103 on macOS) is refused before anything else, naming `BEAM_SOCKET`.
   everything else is `not-enrolled`.
   The socket is ready before transport starts; `status.ready` reports transport state.
   `status` answers at once; every other op waits until the daemon has started.
-- **Connect-or-spawn**, one shared helper used by the CLI and the desktop: connect; on
+- **Connect-or-spawn**, one shared helper used by the CLI and n10's TUI: connect; on
   `ECONNREFUSED`/`ENOENT` run `beam daemon --detach`, wait ≤ 5 s for the socket, connect.
   A spawn that loses the lock race exits 1 and the helper simply connects to the winner.
   `--detach` starts the daemon in a new session, its output appended to
   `$BEAM_DIR/daemon.log`, and returns.
-- **Shutdown.** Only an explicit `daemon.shutdown` or SIGTERM stops the daemon, whoever
-  started it, and, for a daemon started with `--exit-with-parent`, the end of its stdin:
-  the process that started it has exited ([07](07-cli.md)). The desktop starts its own
-  daemon that way ([08](08-desktop.md)). Clients treat a closed socket after `daemon.shutdown` as deliberate and do
-  not respawn until asked; any other disconnect is unexpected. The desktop's port of the
-  helper reconnects with backoff (500 ms → 30 s, [08](08-desktop.md)); the CLI is one
-  call per process and reconnects never.
+- **Shutdown.** `daemon.shutdown`, SIGTERM or SIGINT stop the daemon, whoever started
+  it; so does the end of its stdin for one started with `--exit-with-parent`
+  ([07](07-cli.md)). Clients treat a closed socket after `daemon.shutdown` as deliberate
+  and do not respawn until asked; any other disconnect is unexpected. n10 recovers from
+  one as [08](08-desktop.md) says; the CLI is one call per process and reconnects never.
 
 ## Two kinds of connection
 

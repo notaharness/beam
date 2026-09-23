@@ -184,13 +184,17 @@ func (m *machine) start(t *testing.T) {
 	var once sync.Once
 	m.stop = func() { once.Do(func() { cancel(); <-done }) }
 	t.Cleanup(func() { m.stop() })
-	waitFor(t, 5*time.Second, "socket", func() bool {
-		c, err := net.Dial("unix", m.paths().Socket)
-		if err == nil {
-			c.Close()
-		}
-		return err == nil
-	})
+	waitFor(t, 5*time.Second, "socket", func() bool { return answering(m) })
+}
+
+// answering reports whether m's daemon answers on its socket; unlike
+// control.Connect, it never spawns one.
+func answering(m *machine) bool {
+	c, err := net.Dial("unix", m.paths().Socket)
+	if err == nil {
+		c.Close()
+	}
+	return err == nil
 }
 
 // fleet makes machines that all know each other and starts them.

@@ -104,7 +104,7 @@ bare member node (transport only) stands in for a daemon:
 | mailbox | stored/delivered/rejected; crash between store and ack → duplicate suppressed; subscriber defer/ack; `send` while connected flushes immediately |
 | junk in the log | valid assertion, unrelated blob → ignored |
 | daemon lock | second daemon exits 1; connect-or-spawn loser connects to winner |
-| exit with parent | a parent process spawns `beam daemon --exit-with-parent` with a stdin pipe and is killed with SIGKILL: the daemon shuts down, releasing lock and socket; a terminal, `/dev/null` or `--detach` with the flag is a usage error |
+| exit with parent | a parent process spawns `beam daemon --exit-with-parent` with a stdin pipe and is killed with SIGKILL: the daemon exits; a terminal, `/dev/null` or `--detach` with the flag is a usage error |
 | reset | tunnels closed, fleet state gone, key kept, re-join works |
 
 ## n10 e2e
