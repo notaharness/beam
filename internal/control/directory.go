@@ -112,7 +112,7 @@ func (d *daemon) readDirectory(e *enrolment) {
 	}
 	p, err := d.directory().Read(e.ctx, tRead)
 	if err != nil {
-		d.o.Logf("directory: %v", err)
+		d.o.Logf("%v", err) // the client's errors name the directory
 		return
 	}
 	for _, r := range p.Records(kDir) {

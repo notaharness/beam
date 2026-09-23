@@ -138,8 +138,8 @@ func listen(path string) (net.Listener, error) {
 }
 
 // enroll enrolls with f, key.json and state.db: it starts the transport and
-// dials every member, then reads the directory and retries queued writes
-// while enrolled. A new enrolment has its own entry: that is queued for the
+// dials every member, then reads the directory at a daemon's start and
+// retries queued writes while enrolled. A new enrolment has its own entry: that is queued for the
 // directory before f is written as fleet.json, so an enrolment on disk
 // always has its publication queued or done. d.enrolling must be held.
 func (d *daemon) enroll(f *identity.Fleet, own *identity.Record) (*enrolment, error) {
@@ -177,7 +177,9 @@ func (d *daemon) enroll(f *identity.Fleet, own *identity.Record) (*enrolment, er
 	defer d.mu.Unlock()
 	d.en = e
 	d.gen++
-	go d.readDirectory(e)
+	if own == nil { // a new enrolment's ceremony read the directory, or init made it
+		go d.readDirectory(e)
+	}
 	go d.retryPending(e)
 	peers, err := st.Peers()
 	for _, p := range peers {

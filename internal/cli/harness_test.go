@@ -89,8 +89,9 @@ type machine struct {
 	dir     string
 	key     *transport.Key
 	entry   identity.Record
-	derpMap string // the daemon's DERP map; the dev relay's when empty
-	dirURL  string // the daemon's directory; the fake worker's when empty
+	derpMap string                           // the daemon's DERP map; the dev relay's when empty
+	dirURL  string                           // the daemon's directory; the fake worker's when empty
+	logf    func(format string, args ...any) // the daemon's log; discarded when nil
 	stop    func()
 }
 
@@ -169,8 +170,12 @@ func (m *machine) start(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	derpMap := cmp.Or(m.derpMap, relay.MapURL)
+	logf := m.logf
+	if logf == nil {
+		logf = logger.Discard
+	}
 	go func() {
-		done <- control.Run(ctx, control.Options{Paths: m.paths(), Version: "test", Logf: logger.Discard,
+		done <- control.Run(ctx, control.Options{Paths: m.paths(), Version: "test", Logf: logf,
 			DERPMap: derpMap, Directory: cmp.Or(m.dirURL, dirURL)})
 	}()
 	var once sync.Once

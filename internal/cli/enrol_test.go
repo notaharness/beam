@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -43,6 +44,45 @@ func initFleet(t *testing.T, label string) *machine {
 		t.Fatalf("init: %+v", r)
 	}
 	return m.enrolled(t)
+}
+
+// docs/02: init has no directory to read, the fleet being new, and logs no
+// error for one; a join reads the directory once, itself.
+func TestEnrolmentReadsNoDirectoryAgain(t *testing.T) {
+	var mu sync.Mutex
+	var lines []string
+	logf := func(format string, args ...any) {
+		mu.Lock()
+		lines = append(lines, fmt.Sprintf(format, args...))
+		mu.Unlock()
+	}
+	prev := owner
+	owner = identity.NewAuthenticator()
+	authenticate(owner)
+	t.Cleanup(func() { owner = prev; authenticate(prev) })
+	a, b := blank(t, "alpha"), blank(t, "beta")
+	a.logf, b.logf = logf, logf
+	a.start(t)
+	b.start(t)
+	fleetID := owner.Credential().FleetID()
+	if r := a.beam("", "init", "--label", "alpha"); r.code != 0 {
+		t.Fatalf("init: %+v", r)
+	}
+	reads := worker.Reads(fleetID)
+	if r := b.beam("", "join", "--label", "beta"); r.code != 0 {
+		t.Fatalf("join: %+v", r)
+	}
+	connectedAll(t, a.enrolled(t), b.enrolled(t))
+	if n := worker.Reads(fleetID) - reads; n != 1 {
+		t.Errorf("the join read the directory %d times", n)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, l := range lines {
+		if strings.Contains(l, "directory") {
+			t.Errorf("logged %q", l)
+		}
+	}
 }
 
 // join enrols a fresh machine with beam join.
