@@ -244,7 +244,8 @@ open here ([04](04-streams.md)).
 Each direction of a pair has a long-lived `sync` stream opened by the tunnel's dialer
 right after admission. On open the dialer sends every entry and revocation it holds, in
 frames of at most 1 MiB and at most 200 records each, then a `control {"kind":"end"}`.
-Thereafter it sends each new record as it learns it. The receiver verifies each record
+Thereafter it sends each new record as it learns it, including one learned while the dump
+was on its way, which may then arrive twice. The receiver verifies each record
 independently (the passkey signature authenticates the record; the tunnel authenticates
 only the forwarder), applies supersession, stores what is new, and for a newly learned
 member schedules a dial. Revocations are applied before any pending stream open from
