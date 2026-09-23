@@ -90,6 +90,7 @@ type machine struct {
 	key     *transport.Key
 	entry   identity.Record
 	derpMap string // the daemon's DERP map; the dev relay's when empty
+	dirURL  string // the daemon's directory; the fake worker's when empty
 	stop    func()
 }
 
@@ -170,7 +171,7 @@ func (m *machine) start(t *testing.T) {
 	derpMap := cmp.Or(m.derpMap, relay.MapURL)
 	go func() {
 		done <- control.Run(ctx, control.Options{Paths: m.paths(), Version: "test", Logf: logger.Discard,
-			DERPMap: derpMap, Directory: dirURL})
+			DERPMap: derpMap, Directory: cmp.Or(m.dirURL, dirURL)})
 	}()
 	var once sync.Once
 	m.stop = func() { once.Do(func() { cancel(); <-done }) }

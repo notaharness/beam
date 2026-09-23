@@ -83,11 +83,15 @@ func (d *daemon) join(ctx context.Context, cc *clientConn, entry identity.Record
 	}
 	cur := d.enrolment()
 	rejoin := cur != nil
-	if rejoin && !cur.sameKDir(kDir) {
-		return nil, fail("wrong-passkey", "")
+	var pinned *identity.Credential
+	if rejoin {
+		if !cur.sameKDir(kDir) {
+			return nil, fail("wrong-passkey", "")
+		}
+		pinned = &cur.cred
 	}
 	stage(cc, "reading directory")
-	cred, records, revoked, err := d.readFleet(ctx, kDir, tRead)
+	cred, records, revoked, err := d.readFleet(ctx, kDir, tRead, pinned)
 	if err != nil {
 		return nil, err
 	}
@@ -108,8 +112,9 @@ func (d *daemon) join(ctx context.Context, cc *clientConn, entry identity.Record
 }
 
 // readFleet reads the directory tRead opens: the fleet's credential, its
-// records, and the peers they verifiably revoke.
-func (d *daemon) readFleet(ctx context.Context, kDir, tRead []byte) (identity.Credential, []identity.Record, map[string]bool, error) {
+// records, and the peers they verifiably revoke. A pinned credential, a
+// re-joining machine's root, is the fleet's whatever the directory says.
+func (d *daemon) readFleet(ctx context.Context, kDir, tRead []byte, pinned *identity.Credential) (identity.Credential, []identity.Record, map[string]bool, error) {
 	p, err := d.directory().Read(ctx, tRead)
 	switch {
 	case errors.Is(err, directory.ErrUnauthorized):
@@ -119,6 +124,9 @@ func (d *daemon) readFleet(ctx context.Context, kDir, tRead []byte) (identity.Cr
 	}
 	pk, _ := base64.RawURLEncoding.DecodeString(p.CredentialPublicKey) // a key that does not decode verifies nothing
 	cred := identity.Credential{ID: p.CredentialID, PublicKey: pk}
+	if pinned != nil {
+		cred = *pinned
+	}
 	records := p.Records(kDir)
 	revoked := map[string]bool{}
 	for _, r := range records {

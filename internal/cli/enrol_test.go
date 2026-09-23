@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 	"github.com/notaharness/beam/internal/control"
 	"github.com/notaharness/beam/internal/devderp"
 	"github.com/notaharness/beam/internal/directory"
+	"github.com/notaharness/beam/internal/fakeworker"
 	"github.com/notaharness/beam/internal/identity"
 	"tailscale.com/types/logger"
 )
@@ -215,6 +217,35 @@ func TestWrongPasskey(t *testing.T) {
 	authenticate(&forked)
 	if r := a.beam("", "revoke", "gamma"); r.code != 1 || !strings.Contains(r.err, "wrong-passkey") {
 		t.Errorf("revoke with another PRF: %+v", r)
+	}
+}
+
+// docs/02 join: on a machine with fleet.json the root is pinned. A page that
+// kept the PRF output and signs with a credential of its own, which a hostile
+// directory vouches for, cannot re-join the machine into that credential's
+// fleet.
+func TestRejoinKeepsRoot(t *testing.T) {
+	a := initFleet(t, "alpha")
+	thief := identity.NewAuthenticator()
+	thief.PRFSecret = owner.PRFSecret
+	hostile := httptest.NewServer(fakeworker.New())
+	defer hostile.Close()
+	authenticate(thief)
+	defer authenticate(owner)
+	x := blank(t, "x")
+	x.dirURL = hostile.URL
+	x.start(t)
+	if r := x.beam("", "init"); r.code != 0 {
+		t.Fatalf("the thief's fleet, under the same read token: %+v", r)
+	}
+	a.stop()
+	a.dirURL = hostile.URL
+	a.start(t)
+	if r := a.beam("", "join"); r.code != 1 || !strings.Contains(r.err, "wrong-passkey") {
+		t.Errorf("re-join signed by another credential: %+v", r)
+	}
+	if st := a.status(t); st.FleetID != owner.Credential().FleetID() {
+		t.Errorf("fleet %s, want %s", st.FleetID, owner.Credential().FleetID())
 	}
 }
 
