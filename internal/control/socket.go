@@ -1,0 +1,156 @@
+package control
+
+import (
+	"bufio"
+	"encoding/json"
+	"errors"
+	"net"
+	"sync"
+
+	"github.com/notaharness/beam/internal/stream"
+)
+
+// maxControlLine bounds one control request or reply (docs/06).
+const maxControlLine = 1 << 20
+
+// request is a control request; each op reads the fields it needs.
+type request struct {
+	ID       json.RawMessage   `json:"id"`
+	Op       string            `json:"op"`
+	Attach   string            `json:"attach"`
+	Peer     string            `json:"peer"`
+	Alias    *string           `json:"alias"`
+	Grant    string            `json:"grant"`
+	Argv     []string          `json:"argv"`
+	Cwd      string            `json:"cwd"`
+	Env      map[string]string `json:"env"`
+	Cols     int               `json:"cols"`
+	Rows     int               `json:"rows"`
+	StreamID string            `json:"streamId"`
+	Cursor   string            `json:"cursor"`
+	Limit    int               `json:"limit"`
+}
+
+type response struct {
+	ID     json.RawMessage `json:"id"`
+	OK     bool            `json:"ok"`
+	Result any             `json:"result,omitempty"`
+	Error  string          `json:"error,omitempty"`
+	Detail string          `json:"detail,omitempty"`
+}
+
+type event struct {
+	Event string `json:"event"`
+	Data  any    `json:"data"`
+}
+
+// OpError is a failed op: a token from docs/06's error list, and detail.
+type OpError struct {
+	Code, Detail string
+}
+
+func (e *OpError) Error() string {
+	if e.Detail == "" {
+		return e.Code
+	}
+	return e.Code + ": " + e.Detail
+}
+
+func fail(code, detail string) error { return &OpError{code, detail} }
+
+// clientConn is one control connection; replies and events share it.
+type clientConn struct {
+	mu sync.Mutex
+	c  net.Conn
+}
+
+func (cc *clientConn) send(v any) {
+	b, _ := json.Marshal(v)
+	cc.mu.Lock()
+	defer cc.mu.Unlock()
+	_, _ = cc.c.Write(append(b, '\n')) // a gone client ends its read loop
+}
+
+func (d *daemon) serveSocket(ln net.Listener) {
+	for {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		go d.serveConn(c)
+	}
+}
+
+// serveConn reads a connection's first line to tell an attach from a control
+// connection, then serves requests concurrently.
+func (d *daemon) serveConn(c net.Conn) {
+	defer c.Close()
+	br := bufio.NewReader(c)
+	cc := &clientConn{c: c}
+	defer d.unsubscribe(cc)
+	for first := true; ; first = false {
+		line, err := stream.ReadLine(br, maxControlLine)
+		if err != nil {
+			return
+		}
+		var req request
+		if err := json.Unmarshal(line, &req); err != nil {
+			cc.send(response{Error: "params", Detail: "not a JSON request"})
+			continue
+		}
+		if first && req.Attach != "" {
+			d.attach(stream.NewConnReader(c, br), req.Attach)
+			return
+		}
+		go d.dispatch(cc, req)
+	}
+}
+
+func (d *daemon) dispatch(cc *clientConn, req request) {
+	res, err := d.op(cc, req)
+	resp := response{ID: req.ID, OK: err == nil, Result: res}
+	var oe *OpError
+	switch {
+	case errors.As(err, &oe):
+		resp.Error, resp.Detail = oe.Code, oe.Detail
+	case err != nil:
+		resp.Error, resp.Detail = "internal", err.Error()
+	}
+	cc.send(resp)
+	if req.Op == "daemon.shutdown" && err == nil {
+		d.stop()
+	}
+}
+
+func (d *daemon) subscribe(cc *clientConn) {
+	d.mu.Lock()
+	d.subscribers[cc] = true
+	d.mu.Unlock()
+}
+
+func (d *daemon) unsubscribe(cc *clientConn) {
+	d.mu.Lock()
+	delete(d.subscribers, cc)
+	d.mu.Unlock()
+}
+
+func (d *daemon) emit(name string, data any) {
+	d.mu.Lock()
+	subs := make([]*clientConn, 0, len(d.subscribers))
+	for cc := range d.subscribers {
+		subs = append(subs, cc)
+	}
+	d.mu.Unlock()
+	for _, cc := range subs {
+		cc.send(event{name, data})
+	}
+}
+
+func (d *daemon) emitPeer(peerID string) {
+	d.mu.Lock()
+	n := len(d.subscribers)
+	d.mu.Unlock()
+	if n > 0 {
+		d.emit("peer", d.peerView(peerID))
+	}
+}
