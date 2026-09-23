@@ -42,7 +42,9 @@ envelope with `seq ≤ high_seq` is answered `accepted: false, reason: "duplicat
 the sender deletes it. Contiguity is not required.
 
 A peer's `send_seq` row is created at 1 in the transaction that pins the peer, so one that
-is missing is an error (`storage-failure` on send), never a restart at 1.
+is missing is an error (`storage-failure` on send), never a restart at 1. `send_seq` and
+`seen` belong to the keys, not the fleet: `beam fleet reset` keeps them, and a peer
+pinned again continues where it was.
 
 ## Transactions
 
