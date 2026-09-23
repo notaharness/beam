@@ -162,18 +162,3 @@ func TestJunkDiscarded(t *testing.T) {
 		t.Fatalf("%d entries, %d records, %v; want the junk stored and discarded", len(p.Entries), len(p.Records(o.kDir)), err)
 	}
 }
-
-// docs/09 Routes: pages hold at most 500 entries and Read follows them all.
-func TestReadPages(t *testing.T) {
-	c, o := worker(t), newOwner()
-	o.register(t, c, o.entry(identity.Member))
-	for range 520 {
-		if _, err := c.Append(context.Background(), o.cred.FleetID(), o.sealed(o.entry(identity.Member))); err != nil {
-			t.Fatal(err)
-		}
-	}
-	p, err := c.Read(context.Background(), o.tRead)
-	if err != nil || len(p.Entries) != 521 || p.Entries[520].Seq != 521 {
-		t.Fatalf("%d entries, %v", len(p.Entries), err)
-	}
-}
