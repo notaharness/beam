@@ -20,8 +20,7 @@ type syncFrame struct {
 	Records []json.RawMessage `json:"records"`
 }
 
-// runSync is the dialer's sync stream: the full dump, "end", then deltas and a
-// ping every 15 s. The tunnel is dropped when 30 s pass without a pong.
+// runSync is the dialer's sync stream, from the dump on.
 func (d *daemon) runSync(ctx context.Context, peerID string, ps *peerState, tun *transport.Tunnel) {
 	octx, cancel := context.WithTimeout(ctx, dialTimeout)
 	sc, err := tun.Open(octx, stream.Header{V: 1, Kind: stream.KindSync})
@@ -33,23 +32,46 @@ func (d *daemon) runSync(ctx context.Context, peerID string, ps *peerState, tun 
 	defer sc.Close()
 	deltas := make(chan identity.Record, deltaBuffer)
 	d.capture(ps, tun, deltas)
-	if d.sendDump(sc, peerID) != nil {
+	dump, err := d.store.Records()
+	if err != nil {
 		d.setState(ps, stateOffline, nil, nil)
 		return
 	}
-	d.setState(ps, stateConnected, tun, deltas)
-	d.seen(peerID)
-	d.emitPeer(peerID)
-	defer func() { d.setState(ps, stateOffline, nil, nil); d.emitPeer(peerID) }()
-	pongs := make(chan struct{}, 1)
-	go readPongs(sc, pongs)
-	d.pushSync(ctx, sc, deltas, pongs)
+	d.at("dumped", peerID)
+	up := false
+	pushSync(ctx, sc, append(dump, d.fleet.Entry), deltas, func() {
+		up = true
+		d.setState(ps, stateConnected, tun, deltas)
+		d.seen(peerID)
+		d.emitPeer(peerID)
+	})
+	d.setState(ps, stateOffline, nil, nil)
+	if up {
+		d.emitPeer(peerID)
+	}
 }
 
-func (d *daemon) pushSync(ctx context.Context, sc *stream.Conn, deltas chan identity.Record, pongs chan struct{}) {
+// pushSync sends the dump (every record this machine holds, its own entry
+// included) and "end", calls up, then sends deltas and a ping every 15 s
+// until ctx ends or the stream fails. Every pong moves the write deadline
+// 30 s on, so the ping after 30 s without one fails, and so does a write the
+// peer never takes; ctx's end closes the stream under a blocked write too.
+func pushSync(ctx context.Context, sc *stream.Conn, dump []identity.Record, deltas chan identity.Record, up func()) {
+	defer context.AfterFunc(ctx, func() { sc.Close() })()
+	sc.SetWriteDeadline(time.Now().Add(pongTimeout))
+	for i := 0; i < len(dump); i += maxRecordsPerFrame {
+		if sendRecords(sc, dump[i:min(i+maxRecordsPerFrame, len(dump))]) != nil {
+			return
+		}
+	}
+	if sc.WriteJSON(stream.Control, stream.Ctl{Kind: "end"}) != nil {
+		return
+	}
+	up()
+	pongs := make(chan struct{}, 1)
+	go readPongs(sc, pongs)
 	ping := time.NewTicker(pingEvery)
 	defer ping.Stop()
-	lastPong := time.Now()
 	for {
 		var err error
 		select {
@@ -61,11 +83,8 @@ func (d *daemon) pushSync(ctx context.Context, sc *stream.Conn, deltas chan iden
 			if !ok {
 				return
 			}
-			lastPong = time.Now()
+			sc.SetWriteDeadline(time.Now().Add(pongTimeout))
 		case t := <-ping.C:
-			if t.Sub(lastPong) > pongTimeout {
-				return
-			}
 			err = sc.WriteJSON(stream.Control, stream.Ctl{Kind: "ping", T: t.UnixMilli()})
 		}
 		if err != nil {
@@ -89,22 +108,6 @@ func readPongs(sc *stream.Conn, pongs chan struct{}) {
 			}
 		}
 	}
-}
-
-// sendDump sends every record this machine holds, its own entry included.
-func (d *daemon) sendDump(sc *stream.Conn, peerID string) error {
-	recs, err := d.store.Records()
-	if err != nil {
-		return err
-	}
-	d.at("dumped", peerID)
-	recs = append(recs, d.fleet.Entry)
-	for i := 0; i < len(recs); i += maxRecordsPerFrame {
-		if err := sendRecords(sc, recs[i:min(i+maxRecordsPerFrame, len(recs))]); err != nil {
-			return err
-		}
-	}
-	return sc.WriteJSON(stream.Control, stream.Ctl{Kind: "end"})
 }
 
 func sendRecords(sc *stream.Conn, recs []identity.Record) error {

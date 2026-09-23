@@ -97,7 +97,8 @@ are TCP's. No multiplexer. One port, kind in the header.
   open `sync`. `connected` means hello succeeded on *our* dialed tunnel;
   the peer's own dial to us is independent and reported separately as `inbound`.
 - **Liveness.** A `ping` control frame on the `sync` stream every 15 s; no reply within
-  30 s closes the tunnel. The dialer keeps a tunnel exactly as long as its `sync`, so the
+  30 s closes the tunnel, and so does a `sync` write the peer has not taken 30 s after
+  its last reply. The dialer keeps a tunnel exactly as long as its `sync`, so the
   acceptor retires the tunnel, closing every stream it carried, when that inbound `sync`
   ends or is silent for 30 s: a stream's own close can be lost with the tunnel. WireGuard
   keepalives and `Server.Status()` are advisory.
