@@ -278,10 +278,20 @@ func TestJunkInLog(t *testing.T) {
 }
 
 // docs/10 "reset": tunnels closed, fleet state gone, key kept, re-join works.
+// Mail sent after the re-join reaches the peer: a machine's message counter
+// belongs to its key, which the reset keeps (docs/05).
 func TestFleetReset(t *testing.T) {
 	a := initFleet(t, "alpha")
 	b := join(t, "beta")
 	connectedAll(t, a, b)
+	send := func(payload string) {
+		t.Helper()
+		if r := b.beam("", "msg", "send", "alpha", payload); r.out != "delivered to alpha\n" {
+			t.Fatalf("send %s: %+v", payload, r)
+		}
+	}
+	send("before 1")
+	send("before 2")
 	if r := b.beam("nope\n", "fleet", "reset"); r.code != 1 {
 		t.Fatalf("an unconfirmed reset: %+v", r)
 	}
@@ -310,6 +320,18 @@ func TestFleetReset(t *testing.T) {
 		t.Fatalf("re-join: %+v, id %s want %s", join2, b.id(), id)
 	}
 	connectedAll(t, a, b)
+	send("after 1")
+	send("after 2")
+	c, next := subscribeMail(t, a, nil)
+	for _, want := range []string{"before 1", "before 2", "after 1", "after 2"} {
+		e := next()
+		if e.Payload != want {
+			t.Errorf("alpha has %q, want %q", e.Payload, want)
+		}
+		if err := c.Call("msg.ack", map[string]any{"envelopeId": e.ID}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
 // docs/02 reset: a reset ends the ceremony under way, and one whose result is

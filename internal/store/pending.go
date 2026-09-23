@@ -71,14 +71,16 @@ func pendingKey(r identity.Record) string {
 
 // Reset forgets the fleet (docs/02, beam fleet reset): every peer and
 // revocation, the pending directory writes, and the mail to and from the
-// peers, which goes with them.
+// peers, which goes with them. The message counters stay: they belong to the
+// keys, which outlive the fleet, and one restarted at 1 would make a peer
+// that remembers it drop new mail as duplicates.
 func (s *Store) Reset() error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }() // a no-op once committed
-	for _, table := range []string{"peers", "revocations", "pending", "outbound", "inbound", "seen", "send_seq", "quarantine"} {
+	for _, table := range []string{"peers", "revocations", "pending", "outbound", "inbound", "quarantine"} {
 		if _, err := tx.Exec(`DELETE FROM ` + table); err != nil {
 			return err
 		}

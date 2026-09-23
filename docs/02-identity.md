@@ -244,7 +244,8 @@ assertion by any other credential is `wrong-passkey`.
 Daemon-owned recovery for a lost passkey or a compromised fleet: closes every tunnel,
 deletes `fleet.json` and all peers, revocations and pending writes from `state.db`,
 keeps `key.json` (the machine's identity is not the problem) and the mailbox tables
-(queued mail to old peers is deleted with the peers). It ends the ceremony under way,
+(queued mail to old peers is deleted with the peers; the message counters, which belong
+to the keys, stay). It ends the ceremony under way,
 and one already past its tap commits nothing (`ceremony-cancelled`): a ceremony commits
 only if the enrolment it began under is unchanged. Prompts for confirmation. Then
 `beam init` or `beam join` as appropriate.
