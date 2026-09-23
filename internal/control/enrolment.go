@@ -101,9 +101,9 @@ func memberEntry(k *transport.Key, label string) identity.Record {
 		NodePublic: base64.RawURLEncoding.EncodeToString(pub[:]), Address: k.Address(), Label: label, IssuedAt: now()}
 }
 
-// signing is the get that signs r.
-func signing(r identity.Record, action string) ceremony.Request {
-	return ceremony.Request{Op: ceremony.Get, Action: action, Label: r.Label, Fingerprint: identity.Fingerprint(r.PeerID), Challenge: r.Challenge()}
+// adding is the get that signs the member entry r.
+func adding(r identity.Record) ceremony.Request {
+	return ceremony.Request{Kind: ceremony.Add, Label: r.Label, PeerID: r.PeerID, Challenge: r.Challenge()}
 }
 
 // labelOr is label, or the short host name when empty, checked (docs/02).

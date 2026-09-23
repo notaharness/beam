@@ -27,7 +27,7 @@ func (d *daemon) begin(op string, req ceremony.Request, then func(context.Contex
 	if d.flow != nil {
 		return nil, fail("busy", "a ceremony is under way: "+d.flow.op)
 	}
-	cer, err := ceremony.Start(req)
+	cer, err := ceremony.Start(req, d.o.Directory)
 	if err != nil {
 		return nil, err
 	}
@@ -67,8 +67,8 @@ func (d *daemon) finish(op string, cc *clientConn) (any, error) {
 
 // another runs a second ceremony within a flow, announcing it to the waiting
 // client as a ceremony event.
-func another(ctx context.Context, cc *clientConn, req ceremony.Request) (ceremony.Result, error) {
-	cer, err := ceremony.Start(req)
+func (d *daemon) another(ctx context.Context, cc *clientConn, req ceremony.Request) (ceremony.Result, error) {
+	cer, err := ceremony.Start(req, d.o.Directory)
 	if err != nil {
 		return ceremony.Result{}, err
 	}

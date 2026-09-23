@@ -1,6 +1,7 @@
 package control
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -26,24 +27,24 @@ func opInitStart(d *daemon, _ *clientConn, r request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	fleetName := r.FleetName
-	if fleetName == "" {
-		fleetName = "beam"
+	fleetName := cmp.Or(r.FleetName, "beam")
+	if !identity.ValidLabel(fleetName) {
+		return nil, fail("params", "a fleet name is 1–64 characters without / \\ { } or control characters")
 	}
 	k, err := d.homeKey()
 	if err != nil {
 		return nil, err
 	}
 	challenge := random(32)
-	req := ceremony.Request{Op: ceremony.Create, Action: "Create your beam fleet", Label: label,
-		Fingerprint: identity.Fingerprint(identity.PeerID(k.NodePublic())), Challenge: challenge, FleetName: fleetName}
+	req := ceremony.Request{Kind: ceremony.Create, Label: label, PeerID: identity.PeerID(k.NodePublic()), Challenge: challenge,
+		FleetName: fleetName}
 	return d.begin("init", req, func(ctx context.Context, cc *clientConn, created ceremony.Result) (any, error) {
 		cred, err := created.Credential(challenge)
 		if err != nil {
 			return nil, fail("bad-assertion", err.Error())
 		}
 		entry := memberEntry(k, label)
-		got, err := another(ctx, cc, signing(entry, "Add "+label+" to your fleet"))
+		got, err := d.another(ctx, cc, adding(entry))
 		if err != nil {
 			return nil, err
 		}
@@ -73,7 +74,7 @@ func opJoinStart(d *daemon, _ *clientConn, r request) (any, error) {
 		return nil, err
 	}
 	entry := memberEntry(k, label)
-	return d.begin("join", signing(entry, "Add "+label+" to your fleet"), func(ctx context.Context, cc *clientConn, got ceremony.Result) (any, error) {
+	return d.begin("join", adding(entry), func(ctx context.Context, cc *clientConn, got ceremony.Result) (any, error) {
 		return d.join(ctx, cc, gen, entry, got)
 	})
 }
@@ -152,8 +153,7 @@ func opRevokeStart(d *daemon, e *enrolment, _ *clientConn, r request) (any, erro
 		return nil, err
 	}
 	rec := identity.Record{V: 1, Kind: identity.Revoke, PeerID: id, IssuedAt: now()}
-	req := ceremony.Request{Op: ceremony.Get, Action: "Remove " + p.Entry.Label + " (" + identity.Fingerprint(id) + ") from your fleet",
-		Label: p.Entry.Label, Fingerprint: identity.Fingerprint(id), Challenge: rec.Challenge()}
+	req := ceremony.Request{Kind: ceremony.Remove, Label: p.Entry.Label, PeerID: id, Challenge: rec.Challenge()}
 	return d.begin("revoke", req, func(ctx context.Context, cc *clientConn, got ceremony.Result) (any, error) {
 		kDir, _, err := got.DirectoryKeys()
 		if err != nil || !e.sameKDir(kDir) {

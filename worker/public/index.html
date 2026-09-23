@@ -59,56 +59,99 @@ footer a { color: inherit; }
 <script>
 (() => {
   const p = new URLSearchParams(location.hash.slice(1));
-  const op = p.get("op"), state = p.get("state") || "", port = Number(p.get("port"));
+  const op = p.get("o"), slot = p.get("s") || "", label = p.get("l") || "";
   const $ = (id) => document.getElementById(id);
-  $("action").textContent = p.get("action") || "beam";
-  $("label").textContent = p.get("label") || "";
-  $("fingerprint").textContent = p.get("fingerprint") || "";
-  const valid = (op === "create" || op === "get") && Number.isInteger(port) && port > 0 && port < 65536 && state;
-  if (!valid) {
-    $("status").textContent = "This link is incomplete. Run the beam command again.";
-    return;
-  }
+  const say = (text) => { $("status").textContent = text; };
+  const heading = { c: "Create your beam fleet", a: `Add ${label} to your fleet`, r: `Remove ${label} from your fleet` }[op];
+  $("action").textContent = heading || "beam";
+  $("label").textContent = label;
+  $("fingerprint").textContent = (p.get("f") || "").replace(/(.{4})(?=.)/g, "$1 ");
   const decode = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
   const encode = (b) => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-  const back = (result, out) => {
-    location.href = "http://127.0.0.1:" + port + "/cb#" + new URLSearchParams({ state, result, ...out });
+  const bytes = (...parts) => {
+    const all = parts.map((x) => (typeof x === "string" ? new TextEncoder().encode(x) : new Uint8Array(x)));
+    const out = new Uint8Array(all.reduce((n, x) => n + x.length, 0));
+    all.reduce((at, x) => (out.set(x, at), at + x.length), 0);
+    return out;
   };
+  // HPKE base mode, single shot (RFC 9180): DHKEM(X25519, HKDF-SHA256),
+  // HKDF-SHA256, AES-128-GCM, sealed to the daemon's key for this slot.
+  const u16 = (n) => [n >> 8, n & 255];
+  const kemId = bytes("KEM", u16(0x20)), suiteId = bytes("HPKE", u16(0x20), u16(1), u16(1));
+  const hmac = async (key, data) => new Uint8Array(await crypto.subtle.sign("HMAC",
+    await crypto.subtle.importKey("raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]), data));
+  const extract = (suite, salt, label, ikm) => hmac(salt.length ? salt : new Uint8Array(32), bytes("HPKE-v1", suite, label, ikm));
+  const expand = async (suite, prk, label, info, n) => (await hmac(prk, bytes(u16(n), "HPKE-v1", suite, label, info, [1]))).slice(0, n);
+  async function seal(pkR, info, plaintext) {
+    const e = await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
+    const enc = new Uint8Array(await crypto.subtle.exportKey("raw", e.publicKey));
+    const dh = new Uint8Array(await crypto.subtle.deriveBits({ name: "X25519", public: pkR }, e.privateKey, 256));
+    const shared = await expand(kemId, await extract(kemId, [], "eae_prk", dh), "shared_secret",
+      bytes(enc, await crypto.subtle.exportKey("raw", pkR)), 32);
+    const context = bytes([0], await extract(suiteId, [], "psk_id_hash", []), await extract(suiteId, [], "info_hash", info));
+    const secret = await extract(suiteId, shared, "secret", []);
+    const key = await crypto.subtle.importKey("raw", await expand(suiteId, secret, "key", context, 16), "AES-GCM", false, ["encrypt"]);
+    const iv = await expand(suiteId, secret, "base_nonce", context, 12);
+    return bytes(enc, await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plaintext));
+  }
+  let pkR;
+  async function send(result, out) {
+    const sealed = await seal(pkR, bytes("beam-ceremony:v1", slot), bytes(new URLSearchParams({ result, ...out }).toString()));
+    const res = await fetch("/v1/slots/" + slot, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sealed: encode(sealed) }) });
+    if (res.status === 201) return say("Done. The machine finishes on its own; you can close this page.");
+    if (res.status === 409) {
+      return say(`This request was already answered from another device. If that was not you, someone who saw the code answered it: check ${label || "the machine"}, and if it enrolled, run beam fleet reset there.`);
+    }
+    say("beam.n10.is did not take the answer (" + res.status + "). Run the beam command again.");
+  }
   async function create() {
     const cred = await navigator.credentials.create({ publicKey: {
       rp: { id: "beam.n10.is", name: "beam" },
-      user: { id: crypto.getRandomValues(new Uint8Array(16)), name: p.get("fleetName") || "beam", displayName: p.get("fleetName") || "beam" },
-      challenge: decode(p.get("challenge") || ""),
+      user: { id: crypto.getRandomValues(new Uint8Array(16)), name: p.get("n") || "beam", displayName: p.get("n") || "beam" },
+      challenge: decode(p.get("c")),
       pubKeyCredParams: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -8 }],
       authenticatorSelection: { residentKey: "required", userVerification: "required" },
       extensions: { prf: {} },
     } });
-    if (cred.getClientExtensionResults().prf?.enabled !== true) return back("prf-unsupported", {});
-    back("ok", { credentialId: encode(cred.rawId), clientDataJSON: encode(cred.response.clientDataJSON), attestationObject: encode(cred.response.attestationObject) });
+    if (cred.getClientExtensionResults().prf?.enabled !== true) return ["prf-unsupported", {}];
+    return ["ok", { credentialId: encode(cred.rawId), clientDataJSON: encode(cred.response.clientDataJSON), attestationObject: encode(cred.response.attestationObject) }];
   }
   async function get() {
     const cred = await navigator.credentials.get({ publicKey: {
       rpId: "beam.n10.is",
-      challenge: decode(p.get("challenge") || ""),
+      challenge: decode(p.get("c")),
       userVerification: "required",
       extensions: { prf: { eval: { first: new TextEncoder().encode("beam:v1:directory") } } },
     } });
     const first = cred.getClientExtensionResults().prf?.results?.first;
-    if (!first) return back("prf-unsupported", {});
-    back("ok", {
+    if (!first) return ["prf-unsupported", {}];
+    return ["ok", {
       credentialId: encode(cred.rawId), clientDataJSON: encode(cred.response.clientDataJSON),
       authenticatorData: encode(cred.response.authenticatorData), signature: encode(cred.response.signature), prf: encode(first),
-    });
+    }];
   }
-  $("go").disabled = false;
+  (async () => {
+    if (!heading || !/^[A-Za-z0-9_-]{22}$/.test(slot) || !p.get("k") || !p.get("c")) {
+      return say("This link is incomplete. Run the beam command again.");
+    }
+    try {
+      pkR = await crypto.subtle.importKey("raw", decode(p.get("k")), { name: "X25519" }, true, []);
+    } catch {
+      return say("This browser cannot seal beam's answer: it needs X25519 in Web Crypto (Safari 17, Chrome 133, Firefox 130 or later).");
+    }
+    say("Continue only if you started this just now.");
+    $("go").disabled = false;
+  })();
   $("go").addEventListener("click", async () => {
     $("go").disabled = true;
-    $("status").textContent = "Waiting for your passkey…";
+    say("Waiting for your passkey…");
+    let answer;
     try {
-      await (op === "create" ? create() : get());
+      answer = await (op === "c" ? create() : get());
     } catch (e) {
-      back(e && e.name === "NotAllowedError" ? "cancelled" : "failed", {});
+      answer = [e && e.name === "NotAllowedError" ? "cancelled" : "failed", {}];
     }
+    await send(...answer).catch(() => say("beam.n10.is could not be reached. Run the beam command again."));
   });
 })();
 </script>
