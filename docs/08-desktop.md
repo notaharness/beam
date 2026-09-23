@@ -6,10 +6,24 @@ identity code lives in n10.
 
 ## Process model
 
-Both shells use the shared connect-or-spawn helper (a small TypeScript port of the same
-rules in [06](06-control-socket.md)). The daemon outlives the app. "Quit and stop beam"
-sends `daemon.shutdown`; plain quit does not. An unexpected socket loss reconnects with
-backoff and shows "beam restarting…" in the machines panel.
+The desktop owns the lifetime of a daemon it started, and of no other:
+
+- On start it connects to the socket. A daemon that answers was started by someone else
+  (the CLI, a service, another app); the desktop uses it and leaves it running when it
+  quits.
+- Otherwise it spawns `beam daemon --exit-with-parent` as its own child, with stdin a
+  pipe it holds for as long as it runs ([07](07-cli.md)), and connects once the socket
+  answers. On quit it sends `daemon.shutdown` and waits for the child to exit. If the
+  app crashes or is killed, its end of the pipe closes and the daemon shuts itself
+  down, so a daemon the app started never outlives it. The machine drops off its
+  peers' radar when the app is gone.
+- A spawn that loses the lock race to another daemon exits 1; the desktop connects to
+  the winner and treats it as someone else's.
+
+The TUI uses the shared connect-or-spawn helper (a TypeScript port of the rules in
+[06](06-control-socket.md)); a daemon it starts is detached and outlives it. An
+unexpected socket loss reconnects with backoff and shows "beam restarting…" in the
+machines panel; a lost daemon the desktop owned is spawned again.
 
 ## Machines panel
 
