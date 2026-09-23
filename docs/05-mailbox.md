@@ -13,7 +13,8 @@ it.
 ```
 
 Payload ≤ 256 KiB decoded; serialized envelope ≤ 960 KiB, so that one fits a 1 MiB control
-line ([06](06-control-socket.md)) with what wraps it. `topic` 0–128 scalar values with
+line ([06](06-control-socket.md)) with what wraps it. An envelope is stored as it arrived
+and never goes out larger: no line beam writes HTML-escapes its JSON. `topic` 0–128 scalar values with
 the label character rules. `seq` is a positive safe integer. A `base64` payload is unpadded
 base64url, like every binary field in beam.
 
@@ -101,7 +102,9 @@ delivery unread for 10 s and is disconnected, releases its in-flight envelope fo
 redelivery. `msg.defer { envelopeId, reason }` releases an envelope without acking and
 records `reason` for `msg.queue` and the desktop's refused list; it is offered again only
 to a subscription made after the defer, such as the next subscribe on the same
-connection.
+connection. A delivery goes out only while its subscription is live and still holds the
+envelope; a replacing subscribe, an ack or a defer waits out one under way, so nothing
+reaches a connection after the reply that settled or replaced it.
 
 `delivered` means the other daemon has it. Whether an application has acted on it is
 that application's business, and beam does not claim exactly-once effects.
