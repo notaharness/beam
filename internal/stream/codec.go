@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync"
 )
 
 // Limits from docs/04.
@@ -102,12 +103,25 @@ type Conn struct {
 	net.Conn
 	r *bufio.Reader
 	w io.Writer
+
+	closeOnce sync.Once
+	done      chan struct{} // closed by Close
 }
 
 // NewConn wraps c.
 func NewConn(c net.Conn) *Conn {
-	return &Conn{Conn: c, r: bufio.NewReader(c), w: c}
+	return &Conn{Conn: c, r: bufio.NewReader(c), w: c, done: make(chan struct{})}
 }
+
+// Close closes the connection; Done is closed with it.
+func (c *Conn) Close() error {
+	c.closeOnce.Do(func() { close(c.done) })
+	return c.Conn.Close()
+}
+
+// Done is closed once the stream has been closed on this side, which a reader
+// held back from the connection notices here.
+func (c *Conn) Done() <-chan struct{} { return c.done }
 
 func (c *Conn) Read(p []byte) (int, error)  { return c.r.Read(p) }
 func (c *Conn) Write(p []byte) (int, error) { return c.w.Write(p) }
@@ -156,7 +170,7 @@ func ReadLine(r *bufio.Reader, max int) ([]byte, error) {
 // NewConnReader is NewConn for a connection whose first bytes were already
 // read into r.
 func NewConnReader(c net.Conn, r *bufio.Reader) *Conn {
-	return &Conn{Conn: c, r: r, w: c}
+	return &Conn{Conn: c, r: r, w: c, done: make(chan struct{})}
 }
 
 // WriteFrame writes one frame.

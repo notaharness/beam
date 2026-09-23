@@ -33,6 +33,7 @@
 | D27 | A `pty` or `exec` without `cwd` starts in the acceptor's home directory. | Where a login shell starts; the opener's directory means nothing on another machine. | 04 |
 | D28 | tailcat's own logs are discarded; `daemon.log` holds beam's lines only. | tailcat's logs are verbose and not actionable for a beam user. | 06 |
 | D29 | `status.derp.source` is `"key.json"`. | The relay region is fixed by the node key (D21); there is no other source yet. | 06 |
+| D30 | A `pty`/`exec` leader is reaped only after its group's teardown; the acceptor waits for its exit without reaping it (`waitid` `WNOWAIT`, kqueue `NOTE_EXIT`). | The unreaped leader holds the group id, so the SIGKILL reaches descendants that outlive it and never a group that reused the id. | 04 |
 
 ## Milestone gate
 

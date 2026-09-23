@@ -42,9 +42,9 @@ type admission struct {
 
 type tunnel struct {
 	state   int
-	peer    string            // bound
-	hello   net.Conn          // pending
-	streams map[net.Conn]bool // bound
+	peer    string                // bound
+	hello   *stream.Conn          // pending
+	streams map[*stream.Conn]bool // bound
 }
 
 // Tunnel states.
@@ -67,26 +67,27 @@ func newAdmission(k *Key, admit AdmitFunc, handle HandleFunc) *admission {
 
 // serve takes one accepted stream from the tunnel whose client key is c.
 func (a *admission) serve(conn net.Conn, c [32]byte) {
-	peer, class := a.classify(c, conn)
+	sc := stream.NewConn(conn)
+	peer, class := a.classify(c, sc)
 	switch class {
 	case peerStream:
-		a.serveBound(stream.NewConn(conn), peer)
+		a.serveBound(sc, peer)
 	case helloStream:
-		conn.SetDeadline(time.Now().Add(helloTimeout))
-		a.hello(stream.NewConn(conn), c)
-		conn.Close()
+		sc.SetDeadline(time.Now().Add(helloTimeout))
+		a.hello(sc, c)
+		sc.Close()
 	default:
-		conn.Close()
+		sc.Close()
 		return
 	}
-	a.leave(c, conn)
+	a.leave(c, sc)
 }
 
 // classify decides what a new stream is and registers it in one step: the
 // first stream of an unbound key starts its hello, and a bound tunnel's
 // stream joins those retirement closes. A hello beyond the budget evicts the
 // oldest pending one first.
-func (a *admission) classify(c [32]byte, conn net.Conn) (peer string, class int) {
+func (a *admission) classify(c [32]byte, conn *stream.Conn) (peer string, class int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	t, seen := a.tunnels[c]
@@ -122,7 +123,7 @@ func (a *admission) finish(c [32]byte, peer, reason string) {
 		return
 	}
 	a.killPeer(peer)
-	*t = tunnel{state: bound, peer: peer, streams: map[net.Conn]bool{}}
+	*t = tunnel{state: bound, peer: peer, streams: map[*stream.Conn]bool{}}
 }
 
 // drop fails the tunnels bound to peer, a revoked member.
@@ -133,7 +134,7 @@ func (a *admission) drop(peer string) {
 }
 
 // retireConn fails the bound tunnel a stream arrived on.
-func (a *admission) retireConn(conn net.Conn) {
+func (a *admission) retireConn(conn *stream.Conn) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	for c, t := range a.tunnels {
@@ -154,6 +155,16 @@ func (a *admission) clientOf(peer string) ([32]byte, bool) {
 		}
 	}
 	return [32]byte{}, false
+}
+
+// closeAll fails every tunnel, closing its hello or its streams: the node is
+// closing.
+func (a *admission) closeAll() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for c := range a.tunnels {
+		a.kill(c)
+	}
 }
 
 func (a *admission) killPeer(peer string) {
@@ -180,7 +191,7 @@ func (a *admission) kill(c [32]byte) {
 
 // leave unregisters a stream that classify admitted. A hello that ends while
 // its record is still pending had no verdict, so its key is unbound again.
-func (a *admission) leave(c [32]byte, conn net.Conn) {
+func (a *admission) leave(c [32]byte, conn *stream.Conn) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	switch t := a.tunnels[c]; t.state {

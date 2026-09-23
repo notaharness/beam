@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -138,26 +139,81 @@ func exitMsg(ps *os.ProcessState) CloseMsg {
 	return msg
 }
 
-// group signals a process group until the process has been reaped.
+// group is a stream's process group. Its leader is reaped only after the
+// group's teardown: until then the leader, even exited, holds the group id,
+// so a signal to the group never reaches a process that reused it.
 type group struct {
+	cmd    *exec.Cmd
+	exited chan struct{} // the leader has exited; it is not yet reaped
+
 	mu     sync.Mutex
-	pid    int
 	reaped bool
+}
+
+func newGroup(cmd *exec.Cmd) *group {
+	g := &group{cmd: cmd, exited: make(chan struct{})}
+	go func() {
+		_ = awaitExit(cmd.Process.Pid) // one that cannot be waited for has gone
+		close(g.exited)
+	}()
+	return g
 }
 
 func (g *group) signal(sig syscall.Signal) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if !g.reaped {
-		_ = syscall.Kill(-g.pid, sig) // the group may have exited already
+		_ = syscall.Kill(-g.cmd.Process.Pid, sig) // the group may be empty already
 	}
 }
 
-func (g *group) wait(cmd *exec.Cmd) {
-	_ = cmd.Wait() // the status is in cmd.ProcessState
+// reap collects the exited leader's status; the group is signalled no more.
+func (g *group) reap() {
+	<-g.exited
+	_ = g.cmd.Wait() // the status is in cmd.ProcessState
 	g.mu.Lock()
 	g.reaped = true
 	g.mu.Unlock()
+}
+
+// inputAhead is how many of the opener's frames are read ahead of a process
+// slow to take them; beyond that the opener is held back.
+const inputAhead = 4
+
+// feed reads the opener's frames until its side ends, it sends close, or the
+// stream is closed here, which a feed held back by a process that is not
+// reading still notices. frame turns each into input for q, a nil input
+// ending it. feed closes q when the opener is gone.
+func feed(c *Conn, q chan<- []byte, frame func(Type, []byte) (in []byte, ok bool)) {
+	defer close(q)
+	for {
+		t, p, err := c.ReadFrame()
+		if err != nil || t == Close {
+			return
+		}
+		in, ok := frame(t, p)
+		if !ok {
+			continue
+		}
+		select {
+		case q <- in:
+		case <-c.Done():
+			return
+		}
+	}
+}
+
+// deliver writes queued input to w until q closes; nil closes w. A process
+// that stopped reading and exited, or whose input was closed on the
+// opener's departure, fails the writes and the rest is dropped.
+func deliver(q <-chan []byte, w io.WriteCloser) {
+	for p := range q {
+		if p == nil {
+			_ = w.Close() // the process sees end of input
+			continue
+		}
+		_, _ = w.Write(p)
+	}
 }
 
 // writer serialises frames from several goroutines.

@@ -57,13 +57,15 @@ merged over the daemon's environment; injected variables last. Unix: `creack/pty
 Control from the opener: `{"kind":"resize","cols":…,"rows":…}` (2–500). Data both ways
 raw. Process exit → `close {"reason":"exit","exitCode":n,"signal"?:s}`; a process ended
 by a signal has `exitCode` 128+signal and `signal` its name (`SIGKILL`). Opener close or
-connection loss → SIGHUP then SIGKILL to the process group after 5 s.
+connection loss → SIGHUP then SIGKILL to the process group after 5 s, whether or not its
+leader has already exited.
 
 ## `exec`
 
 `argv` (required), `cwd?`, `env?`. Data payloads carry a channel byte: `0` stdin
 (opener→acceptor), `1` stdout, `2` stderr. `control {"kind":"stdin-eof"}` ends stdin.
-Exit as for `pty`, after stdout and stderr drain. Connection loss kills the process group.
+Exit as for `pty`, after stdout and stderr drain. Opener close or connection loss closes
+stdin and kills the process group.
 
 ## `msg`
 
@@ -102,4 +104,10 @@ policy on the granting machine and travel nowhere.
 ## Limits
 
 Header 64 KiB · frame payload 1 MiB · `pty`+`exec` 32 per peer · `argv` ≤ 1,024 items,
-each ≤ 64 KiB · `env` ≤ 256 · `sync` records/frame 200 · unbound tunnels in hello 16.
+each ≤ 64 KiB · `env` ≤ 256 · `sync` records/frame 200 · unbound tunnels in hello 16 ·
+opener input read ahead of the process 4 frames.
+
+Beyond that read-ahead the opener waits for the process. An opener close queued behind
+input the process never takes cannot arrive; the process ends when the acceptor closes the
+stream instead: the tunnel retires (docs/03), the peer is revoked or loses its grant, or
+the daemon stops.

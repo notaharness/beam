@@ -23,26 +23,36 @@ func PTY(c *Conn, h Header, sp Spawn) {
 		return
 	}
 	defer f.Close()
-	g := &group{pid: cmd.Process.Pid}
+	g := newGroup(cmd)
 	w := &writer{c: c}
-	_ = c.WriteLine(Response{OK: true}) // a lost opener ends ptyInput, which hangs up the session
+	_ = c.WriteLine(Response{OK: true}) // a lost opener ends feed, which hangs up the session
 	output := make(chan struct{})
 	go func() {
 		defer close(output)
 		pumpRaw(f, w)
 	}()
+	q := make(chan []byte, inputAhead)
+	go deliver(q, f)
+	killed := make(chan struct{}) // the group got its SIGKILL
 	openerDone := make(chan struct{})
 	go func() {
 		defer close(openerDone)
-		ptyInput(c, f)
+		feed(c, q, ptyFrame(f))
 		g.signal(syscall.SIGHUP)
-		time.AfterFunc(killGrace, func() { g.signal(syscall.SIGKILL) })
+		f.Close() // frees a write the session was not reading
+		time.AfterFunc(killGrace, func() { g.signal(syscall.SIGKILL); close(killed) })
 	}()
-	g.wait(cmd)
+	<-g.exited
 	select { // the terminal drains once every holder of it has closed
 	case <-output:
 	case <-time.After(time.Second):
 	}
+	select {
+	case <-openerDone: // the opener left first: the group is killed before the leader is reaped
+		<-killed
+	default:
+	}
+	g.reap()
 	w.finish(exitMsg(cmd.ProcessState), openerDone)
 }
 
@@ -78,21 +88,18 @@ func pumpRaw(r io.Reader, w *writer) {
 	}
 }
 
-func ptyInput(c *Conn, f *os.File) {
-	for {
-		t, p, err := c.ReadFrame()
-		if err != nil || t == Close {
-			return
+// ptyFrame is terminal input from the opener's frames; a resize is applied
+// as it arrives.
+func ptyFrame(f *os.File) func(Type, []byte) ([]byte, bool) {
+	return func(t Type, p []byte) ([]byte, bool) {
+		var ctl Ctl
+		switch {
+		case t == Data:
+			return p, true
+		case t == Control && json.Unmarshal(p, &ctl) == nil && ctl.Kind == "resize" && validSize(ctl.Cols, ctl.Rows):
+			_ = pty.Setsize(f, &pty.Winsize{Cols: uint16(ctl.Cols), Rows: uint16(ctl.Rows)}) // fails only once the session ended
 		}
-		switch t {
-		case Data:
-			_, _ = f.Write(p) // a session that stopped reading drops its input
-		case Control:
-			var ctl Ctl
-			if json.Unmarshal(p, &ctl) == nil && ctl.Kind == "resize" && validSize(ctl.Cols, ctl.Rows) {
-				_ = pty.Setsize(f, &pty.Winsize{Cols: uint16(ctl.Cols), Rows: uint16(ctl.Rows)}) // fails only once the session ended
-			}
-		}
+		return nil, false
 	}
 }
 

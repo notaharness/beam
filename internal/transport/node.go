@@ -99,7 +99,7 @@ func (n *Node) Drop(peerID string) {
 // Retire retires the tunnel a stream from a peer arrived on, closing all its
 // streams: for a tunnel whose dialer has gone silent.
 func (n *Node) Retire(c *stream.Conn) {
-	n.adm.retireConn(c.Conn)
+	n.adm.retireConn(c)
 }
 
 // Path is how the tunnel peerID dialed to us travels: "direct", "relay
@@ -130,6 +130,7 @@ func (n *Node) Close() error {
 		t.client.Close()
 	}
 	n.mu.Unlock()
+	n.adm.closeAll()
 	return n.srv.Close()
 }
 

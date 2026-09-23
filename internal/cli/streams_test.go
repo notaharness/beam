@@ -4,8 +4,10 @@ package cli_test
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -72,8 +74,6 @@ func TestConnect(t *testing.T) {
 	}
 }
 
-// Losing the opener's machine hangs up the remote session once its silence
-// passes the 30 s liveness bound (docs/03).
 // docs/04 pty: an empty argv runs $SHELL as a login shell when it names an
 // executable, else /bin/sh.
 func TestLoginShell(t *testing.T) {
@@ -103,24 +103,109 @@ func TestLoginShell(t *testing.T) {
 // never arrives.
 func TestSyncEndRetiresTunnel(t *testing.T) {
 	b := fleet(t, "beta")[0]
-	tun := rawTunnel(t, b)
+	tun, _ := rawTunnel(t, b)
 	sync := rawOpen(t, tun, stream.Header{V: 1, Kind: stream.KindSync})
 	pidFile := filepath.Join(t.TempDir(), "pid")
 	ex := rawOpen(t, tun, stream.Header{V: 1, Kind: stream.KindExec,
 		Argv: []string{"sh", "-c", "echo $$ > " + pidFile + "; exec sleep 300"}})
 	defer ex.Close()
+	pid := waitPid(t, pidFile)
+	sync.Close()
+	waitGone(t, pid)
+}
+
+// waitPid waits for the process a remote shell wrote to file and returns it.
+func waitPid(t *testing.T, file string) int {
+	t.Helper()
 	var pid int
 	waitFor(t, 10*time.Second, "the remote process", func() bool {
-		b, err := os.ReadFile(pidFile)
+		b, err := os.ReadFile(file)
 		pid, _ = strconv.Atoi(strings.TrimSpace(string(b)))
 		return err == nil && pid > 0
 	})
-	sync.Close()
-	waitFor(t, 10*time.Second, "the remote process to end", func() bool {
-		return syscall.Kill(pid, 0) != nil
-	})
+	return pid
 }
 
+func waitGone(t *testing.T, pid int) {
+	t.Helper()
+	waitFor(t, 10*time.Second, "the remote process to end", func() bool { return ended(pid) })
+}
+
+// ended reports whether pid runs no more: it is gone, or a zombie not yet
+// reaped (the acceptor keeps an exited leader until its group is torn down).
+func ended(pid int) bool {
+	if syscall.Kill(pid, 0) != nil {
+		return true
+	}
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	i := bytes.LastIndexByte(b, ')') // the state follows the command's name
+	return err == nil && i > 0 && i+2 < len(b) && b[i+2] == 'Z'
+}
+
+// docs/04: the opener's end kills a process that never reads its input,
+// whether the stream ends behind input the process has not taken, or the
+// tunnel is retired while that input is held back.
+func TestInputNeverRead(t *testing.T) {
+	b := fleet(t, "beta")[0]
+	for _, kind := range []string{stream.KindExec, stream.KindPTY} {
+		for _, tc := range []struct {
+			name   string
+			frames int
+			end    func(s, sync *stream.Conn)
+		}{
+			{"stream closed behind its input", 1, func(s, _ *stream.Conn) { s.Close() }},
+			{"tunnel retired while input is held back", 16, func(_, sync *stream.Conn) { sync.Close() }},
+		} {
+			t.Run(kind+"/"+tc.name, func(t *testing.T) {
+				tun, _ := rawTunnel(t, b)
+				sync := rawOpen(t, tun, stream.Header{V: 1, Kind: stream.KindSync})
+				pidFile := filepath.Join(t.TempDir(), "pid")
+				s := rawOpen(t, tun, stream.Header{V: 1, Kind: kind, Cols: 80, Rows: 24,
+					Argv: []string{"sh", "-c", "echo $$ > " + pidFile + "; exec sleep 300"}})
+				pid := waitPid(t, pidFile)
+				frame := make([]byte, stream.MaxPayload) // for exec, channel 0: stdin
+				sent := make(chan struct{})
+				go func() {
+					defer close(sent)
+					for range tc.frames {
+						if s.WriteFrame(stream.Data, frame) != nil {
+							return
+						}
+					}
+				}()
+				if tc.frames == 1 {
+					<-sent
+				} else {
+					time.Sleep(time.Second) // until the acceptor holds input back
+				}
+				tc.end(s, sync)
+				waitGone(t, pid)
+			})
+		}
+	}
+}
+
+// docs/04: a pty whose opener leaves gets SIGHUP and then, 5 s later,
+// SIGKILL for its whole process group, even once the leader has exited.
+func TestHangupThenKill(t *testing.T) {
+	b := fleet(t, "beta")[0]
+	tun, _ := rawTunnel(t, b)
+	dir := t.TempDir()
+	// The child ignores SIGHUP before it says who it is.
+	os.WriteFile(dir+"/child.sh", []byte("trap '' HUP; echo $$ > "+dir+"/child; exec sleep 300\n"), 0o600)
+	s := rawOpen(t, tun, stream.Header{V: 1, Kind: stream.KindPTY, Cols: 80, Rows: 24, Argv: []string{"sh", "-c",
+		"sh " + dir + "/child.sh >/dev/null 2>&1 </dev/null & echo $$ > " + dir + "/leader; exec sleep 300"}})
+	leader, child := waitPid(t, dir+"/leader"), waitPid(t, dir+"/child")
+	s.Close()
+	waitGone(t, leader)
+	if ended(child) {
+		t.Fatal("the child that ignores SIGHUP ended with its leader")
+	}
+	waitGone(t, child)
+}
+
+// Losing the opener's machine hangs up the remote session once its silence
+// passes the 30 s liveness bound (docs/03).
 func TestConnectLossKillsSession(t *testing.T) {
 	ms := fleet(t, "alpha", "beta")
 	a := ms[0]
@@ -130,22 +215,14 @@ func TestConnectLossKillsSession(t *testing.T) {
 	go func() {
 		done <- a.beam("", "connect", "beta", "--", "sh", "-c", "echo $$ > "+pidFile+"; exec sleep 300")
 	}()
-	var pid int
-	waitFor(t, 20*time.Second, "the remote shell", func() bool {
-		b, err := os.ReadFile(pidFile)
-		pid, _ = strconv.Atoi(strings.TrimSpace(string(b)))
-		return err == nil && pid > 0
-	})
+	pid := waitPid(t, pidFile)
 	ms[0].stop() // the opener's daemon goes away mid-session
-	waitFor(t, 45*time.Second, "the remote session to end", func() bool {
-		return syscall.Kill(pid, 0) != nil
-	})
+	waitFor(t, 45*time.Second, "the remote session to end", func() bool { return ended(pid) })
 	if r := <-done; r.code != 1 || !strings.Contains(r.err, "connection lost") {
 		t.Errorf("opener: %+v, want connection lost", r)
 	}
 }
 
-// openPTY opens a pty on peer through m's socket and attaches to it.
 // openPTY opens a pty on peer through m and attaches to it.
 func openPTY(t *testing.T, m *machine, peer string, argv ...string) (*stream.Conn, string) {
 	t.Helper()
@@ -202,9 +279,7 @@ func TestDetachHangsUp(t *testing.T) {
 		t.Fatalf("no pid in %q", out.String())
 	}
 	ac.Close()
-	waitFor(t, 3*time.Second, "the remote session to end", func() bool {
-		return syscall.Kill(pid, 0) != nil
-	})
+	waitGone(t, pid)
 	if ev := nextClosed(t, next); ev.StreamID != id || ev.Reason != "detached" {
 		t.Errorf("stream.closed %+v, want %s detached", ev, id)
 	}

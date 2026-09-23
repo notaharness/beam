@@ -25,7 +25,8 @@ import (
 // (a forwarder's word counts for nothing; each record carries the passkey's).
 func push(t *testing.T, m *machine, recs ...identity.Record) {
 	t.Helper()
-	sc := rawOpen(t, rawTunnel(t, m), stream.Header{V: 1, Kind: stream.KindSync})
+	tun, _ := rawTunnel(t, m)
+	sc := rawOpen(t, tun, stream.Header{V: 1, Kind: stream.KindSync})
 	defer sc.Close()
 	var f struct {
 		Records []identity.Record `json:"records"`
@@ -42,8 +43,8 @@ func push(t *testing.T, m *machine, recs ...identity.Record) {
 }
 
 // rawTunnel dials m from a member that runs no daemon, only a node that
-// admits no one, and returns the tunnel.
-func rawTunnel(t *testing.T, m *machine) *transport.Tunnel {
+// admits no one, and returns the tunnel and that member.
+func rawTunnel(t *testing.T, m *machine) (*transport.Tunnel, *machine) {
 	t.Helper()
 	raw := newMachine(t, "raw")
 	entry, _ := json.Marshal(raw.entry)
@@ -60,7 +61,7 @@ func rawTunnel(t *testing.T, m *machine) *transport.Tunnel {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return tun
+	return tun, raw
 }
 
 func rawOpen(t *testing.T, tun *transport.Tunnel, h stream.Header) *stream.Conn {
