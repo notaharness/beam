@@ -6,6 +6,9 @@ identity code lives in n10.
 
 ## Process model
 
+The desktop passes `BEAM_CONFIG_DIR` explicitly, as an absolute path, to the daemon it
+spawns and every process it starts, so that they all reach the same daemon.
+
 The desktop owns the lifetime of a daemon it started, and of no other:
 
 - On start it connects to the socket. A daemon that answers was started by someone else
@@ -21,7 +24,9 @@ The desktop owns the lifetime of a daemon it started, and of no other:
 
 On an unexpected socket loss the desktop shows "beam restarting…" in the machines panel
 and starts over as on start, retrying with backoff (500 ms → 30 s): connect, else spawn
-its own.
+its own. A loss after a `shutdown` event ([06](06-control-socket.md)) is not unexpected:
+someone stopped the daemon, and the desktop shows it stopped, with a button to start it
+again, rather than respawning it.
 
 The TUI uses the shared connect-or-spawn helper (a TypeScript port of the rules in
 [06](06-control-socket.md)); a daemon it starts is detached and outlives it.

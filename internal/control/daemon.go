@@ -38,7 +38,7 @@ type Options struct {
 type daemon struct {
 	o       Options
 	ctx     context.Context
-	stop    context.CancelFunc
+	stop    func()        // daemon.shutdown
 	started chan struct{} // closed once the start has enrolled, or found no fleet.json
 
 	flow    *flow         // the ceremony under way, if any
@@ -85,9 +85,9 @@ func Run(ctx context.Context, o Options) error {
 		return err
 	}
 	defer ln.Close()
-	ctx, stop := context.WithCancel(ctx)
-	defer stop()
-	d := &daemon{o: o, ctx: ctx, stop: stop, started: make(chan struct{}),
+	ctx, stop := context.WithCancelCause(ctx)
+	defer stop(nil)
+	d := &daemon{o: o, ctx: ctx, stop: func() { stop(errRequested) }, started: make(chan struct{}),
 		peers: map[string]*peerState{}, granted: map[string]map[*granted]bool{}, inbound: map[string]int{},
 		reservations: map[string]*reservation{}, active: map[string]context.CancelFunc{}, subscribers: map[*clientConn]bool{}, conns: map[net.Conn]bool{},
 		sends: map[string]map[int64]chan sendResult{}, pending: make(chan struct{}, 1)}
@@ -104,9 +104,29 @@ func Run(ctx context.Context, o Options) error {
 	}
 	close(d.started)
 	<-ctx.Done()
+	d.emit("shutdown", map[string]string{"reason": stopReason(context.Cause(ctx))})
 	ln.Close() // no client starts anything on a daemon that is stopping
 	d.close()
 	return nil
+}
+
+// Why a daemon stops, as its shutdown event says (docs/06): ErrParentExited
+// is the cause a --exit-with-parent daemon's context ends with.
+var (
+	errRequested    = errors.New("daemon.shutdown")
+	ErrParentExited = errors.New("stdin ended: the parent has exited")
+)
+
+// stopReason is the shutdown event's reason for the cause that stopped the
+// daemon: anything but a request or the parent's exit is a signal.
+func stopReason(cause error) string {
+	switch {
+	case errors.Is(cause, errRequested):
+		return "requested"
+	case errors.Is(cause, ErrParentExited):
+		return "parent-exited"
+	}
+	return "signal"
 }
 
 func lock(path string) (func(), error) {

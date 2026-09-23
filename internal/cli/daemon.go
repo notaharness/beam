@@ -53,13 +53,11 @@ func runDaemon(e *env) int {
 	if err := control.Run(ctx, control.Options{Paths: p, Version: Version, Logf: logf, DERPMap: *derpMap, Directory: *dir}); err != nil {
 		return e.fail(err)
 	}
-	if errors.Is(context.Cause(ctx), errParentExited) {
-		logf("stopped: %v", errParentExited) // after the shutdown, so a write that blocks cannot hold it
+	if errors.Is(context.Cause(ctx), control.ErrParentExited) {
+		logf("stopped: %v", control.ErrParentExited) // after the shutdown, so a write that blocks cannot hold it
 	}
 	return 0
 }
-
-var errParentExited = errors.New("stdin ended: the parent has exited")
 
 // untilParentExits is ctx, ended also when stdin ends: the parent holding
 // its other end has exited. The parent's pipes to stdout and stderr may be
@@ -70,7 +68,7 @@ func untilParentExits(ctx context.Context, stdin io.Reader) context.Context {
 	ctx, cancel := context.WithCancelCause(ctx)
 	go func() {
 		_, _ = io.Copy(io.Discard, stdin) // until the parent's end closes, or fails
-		cancel(errParentExited)
+		cancel(control.ErrParentExited)
 	}()
 	return ctx
 }
