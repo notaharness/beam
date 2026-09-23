@@ -19,16 +19,17 @@ const reserveTTL = 10 * time.Second
 // reservation is an opened stream not yet attached: nothing has been sent to
 // the peer.
 type reservation struct {
+	e     *enrolment // the open's; the attach finds no stream once it has ended
 	peer  string
 	h     stream.Header
 	timer *time.Timer
 }
 
-func (d *daemon) reserve(peer string, h stream.Header) string {
+func (d *daemon) reserve(e *enrolment, peer string, h stream.Header) string {
 	b := make([]byte, 16)
 	rand.Read(b)
 	id := hex.EncodeToString(b)
-	r := &reservation{peer: peer, h: h}
+	r := &reservation{e: e, peer: peer, h: h}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	r.timer = time.AfterFunc(reserveTTL, func() {
@@ -52,6 +53,7 @@ func (d *daemon) attach(ac *stream.Conn, id string) {
 	defer detach()
 	d.mu.Lock()
 	r, ok := d.reservations[id]
+	ok = ok && r.e == d.en
 	if ok {
 		r.timer.Stop()
 		delete(d.reservations, id)

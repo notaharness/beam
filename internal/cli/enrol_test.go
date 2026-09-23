@@ -384,6 +384,68 @@ func TestResetEndsCeremony(t *testing.T) {
 	})
 }
 
+// An enrolment a reset ended changes nothing in the one after it: a
+// revocation the old fleet's sync was applying when the reset came does not
+// touch the same peer in the new fleet.
+func TestOldFleetRevokesNothing(t *testing.T) {
+	a := initFleet(t, "alpha")
+	b := join(t, "beta")
+	c := join(t, "gamma")
+	connectedAll(t, a, b, c)
+	reached, release := pauseAt(t, b, "revoking", c.id())
+	a.beam("", "revoke", "gamma")
+	await(t, reached, "beta to apply the revocation")
+	for _, m := range []*machine{b, c} {
+		if r := m.beam("reset\n", "fleet", "reset"); r.code != 0 {
+			t.Fatalf("reset: %+v", r)
+		}
+	}
+	owner = identity.NewAuthenticator()
+	authenticate(owner)
+	if r := b.beam("", "init", "--label", "beta"); r.code != 0 {
+		t.Fatalf("init: %+v", r)
+	}
+	if r := c.beam("", "join", "--label", "gamma"); r.code != 0 {
+		t.Fatalf("join: %+v", r)
+	}
+	connectedAll(t, b, c)
+	release()
+	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		if s := b.peers(t)[c.id()].State; s == "revoked" {
+			t.Fatalf("the old fleet's revocation reached the new one: gamma is %s", s)
+		}
+	}
+}
+
+// A stream opened before a reset attaches to nothing after it.
+func TestOpenEndsWithReset(t *testing.T) {
+	a := initFleet(t, "alpha")
+	b := join(t, "beta")
+	connectedAll(t, a, b)
+	c, err := control.Connect(b.paths(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	var res struct {
+		StreamID string `json:"streamId"`
+	}
+	if err := c.Call("exec.open", map[string]any{"peer": "alpha", "argv": []string{"true"}}, &res); err != nil {
+		t.Fatal(err)
+	}
+	if r := b.beam("reset\n", "fleet", "reset"); r.code != 0 {
+		t.Fatalf("reset: %+v", r)
+	}
+	ac, err := control.Attach(b.paths(), res.StreamID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ac.Close()
+	if msg := readClose(t, ac); msg.Reason != "params" {
+		t.Errorf("close %+v, want params: no such stream", msg)
+	}
+}
+
 // docs/03 "Addresses": a machine that moves to another DERP map re-joins
 // with the same key on a new address; its peers switch to it, and the older
 // entry still in the directory stays superseded.

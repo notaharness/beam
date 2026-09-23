@@ -101,7 +101,7 @@ func (d *daemon) admitStream(e *enrolment, id, kind string, c *stream.Conn) (p s
 	defer d.mu.Unlock()
 	p, ok, err := e.store.Peer(id)
 	switch {
-	case err != nil || !ok || p.Revoked:
+	case e != d.en || err != nil || !ok || p.Revoked:
 		return p, nil, "revoked"
 	case !allows(p.Grant, kind):
 		return p, nil, "grant"
@@ -191,7 +191,7 @@ func (d *daemon) admit(e *enrolment, raw json.RawMessage) (string, [32]byte, fun
 	return r.PeerID, pub, func() {
 		d.at("admitting", r.PeerID)
 		if d.pin(e, r) {
-			d.broadcast(r, nil)
+			d.broadcast(e, r, nil)
 		} else {
 			d.mu.Lock()
 			d.startDialerLocked(e, r.PeerID) // inbound contact resets the backoff
