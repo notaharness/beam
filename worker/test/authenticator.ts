@@ -19,21 +19,22 @@ export class Authenticator {
     readonly cose: Uint8Array,
   ) {}
 
-  static async create(): Promise<Authenticator> {
+  // create makes a passkey, under credentialId when given: another key
+  // claiming a credential's id.
+  static async create(credentialId = b64(crypto.getRandomValues(new Uint8Array(16)))): Promise<Authenticator> {
     const keys = (await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"])) as CryptoKeyPair;
     const raw = new Uint8Array((await crypto.subtle.exportKey("raw", keys.publicKey)) as ArrayBuffer);
     // COSE_Key {1: 2 (EC2), 3: -7 (ES256), -1: 1 (P-256), -2: x, -3: y}
     const cose = new Uint8Array([0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21, 0x58, 0x20, ...raw.slice(1, 33), 0x22, 0x58, 0x20, ...raw.slice(33)]);
-    return new Authenticator(b64(crypto.getRandomValues(new Uint8Array(16))), keys, cose);
+    return new Authenticator(credentialId, keys, cose);
   }
 
-  // assert signs a get over challenge, by default with user presence (0x01)
-  // and verification (0x04).
-  async assert(challenge: Uint8Array, flags = 0x05): Promise<Assertion> {
-    const authData = new Uint8Array([...(await sha256(new TextEncoder().encode("beam.n10.is"))), flags, 0, 0, 0, 0]);
-    const clientData = new TextEncoder().encode(
-      JSON.stringify({ type: "webauthn.get", challenge: b64(challenge), origin: "https://beam.n10.is", crossOrigin: false }),
-    );
+  // assert signs a get over challenge, by default for beam with user
+  // presence (0x01) and verification (0x04); as overrides one of them.
+  async assert(challenge: Uint8Array, flags = 0x05, as: { type?: string; origin?: string; rpId?: string } = {}): Promise<Assertion> {
+    const { type = "webauthn.get", origin = "https://beam.n10.is", rpId = "beam.n10.is" } = as;
+    const authData = new Uint8Array([...(await sha256(new TextEncoder().encode(rpId))), flags, 0, 0, 0, 0]);
+    const clientData = new TextEncoder().encode(JSON.stringify({ type, challenge: b64(challenge), origin, crossOrigin: false }));
     const signed = new Uint8Array([...authData, ...(await sha256(clientData))]);
     const p1363 = new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, this.keys.privateKey, signed));
     return { credentialId: this.credentialId, clientDataJSON: b64(clientData), authenticatorData: b64(authData), signature: b64(der(p1363)) };
