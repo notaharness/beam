@@ -85,7 +85,7 @@ type clientConn struct {
 // send writes one line. A client that leaves it unread for sendTimeout is
 // disconnected, which ends its read loop and releases what it held.
 func (cc *clientConn) send(v any) error {
-	b, err := json.Marshal(v)
+	b, err := stream.Marshal(v)
 	if err != nil {
 		return err
 	}

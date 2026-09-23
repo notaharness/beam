@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/notaharness/beam/internal/identity"
+	"github.com/notaharness/beam/internal/stream"
 )
 
 // Limits (docs/05, docs/06).
@@ -91,9 +92,10 @@ func (e Envelope) checkPayload() string {
 	return ""
 }
 
-// Marshal serializes e, refusing one over MaxEnvelope.
+// Marshal serializes e as it is stored and sent, refusing one over
+// MaxEnvelope.
 func (e Envelope) Marshal() ([]byte, string) {
-	b, _ := json.Marshal(e)
+	b, _ := stream.Marshal(e)
 	if len(b) > MaxEnvelope {
 		return nil, PayloadTooLarge
 	}

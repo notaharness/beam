@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/notaharness/beam/internal/store"
+	"github.com/notaharness/beam/internal/stream"
 )
 
 // docs/04 msg: an envelope is exactly one JSON object in valid UTF-8; one
@@ -54,8 +55,8 @@ func TestLargestEnvelopeFitsALine(t *testing.T) {
 	if reason != "" || len(env) < MaxEnvelope-6 {
 		t.Fatalf("an envelope of %d bytes (%s)", len(env), reason)
 	}
-	event, _ := json.Marshal(map[string]any{"event": "mail", "data": json.RawMessage(env)})
-	item, _ := json.Marshal([]store.QueueItem{{Envelope: env, Reason: strings.Repeat("r", MaxDeferReason)}})
+	event, _ := stream.Marshal(map[string]any{"event": "mail", "data": json.RawMessage(env)})
+	item, _ := stream.Marshal([]store.QueueItem{{Envelope: env, Reason: strings.Repeat("r", MaxDeferReason)}})
 	if len(event) >= controlLine || len(item) > store.MaxPage {
 		t.Errorf("event %d bytes, page %d bytes", len(event), len(item))
 	}

@@ -1,13 +1,13 @@
 package store
 
 import (
-	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/notaharness/beam/internal/identity"
+	"github.com/notaharness/beam/internal/stream"
 )
 
 const peer = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -95,19 +95,19 @@ func TestQuarantineCounts(t *testing.T) {
 // they are, and the pages list each envelope once.
 func TestQueuePagesFitALine(t *testing.T) {
 	s := pinned(t)
-	big := `{"payload":"` + strings.Repeat("x", 300<<10) + `"}`
+	big := `{"payload":"` + strings.Repeat("<", 300<<10) + `"}` // three to a page, as sent
 	for range 5 {
 		if _, err := enqueue(s, big); err != nil {
 			t.Fatal(err)
 		}
 	}
-	seen, pages := 0, 0
+	seen, pages := 0, 1
 	for cursor := int64(0); ; pages++ {
 		items, next, err := s.Queue(Outbound, "", cursor, 100)
 		if err != nil {
 			t.Fatal(err)
 		}
-		b, _ := json.Marshal(items)
+		b, _ := stream.Marshal(items)
 		if len(b) > MaxPage {
 			t.Fatalf("a page of %d bytes", len(b))
 		}
@@ -117,7 +117,7 @@ func TestQueuePagesFitALine(t *testing.T) {
 		}
 		cursor = next
 	}
-	if seen != 5 || pages < 1 {
-		t.Errorf("listed %d envelopes in %d pages", seen, pages+1)
+	if seen != 5 || pages != 2 {
+		t.Errorf("listed %d envelopes in %d pages, want 5 in 2", seen, pages)
 	}
 }

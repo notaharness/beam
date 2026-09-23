@@ -73,7 +73,7 @@ func (c *Client) Call(op string, params map[string]any, out any) error {
 	for k, v := range params {
 		req[k] = v
 	}
-	b, _ := json.Marshal(req)
+	b, _ := stream.Marshal(req)
 	if _, err := c.c.Write(append(b, '\n')); err != nil {
 		return err
 	}
@@ -132,7 +132,7 @@ func Attach(p Paths, streamID string) (*stream.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	b, _ := json.Marshal(map[string]string{"attach": streamID})
+	b, _ := stream.Marshal(map[string]string{"attach": streamID})
 	if _, err := c.Write(append(b, '\n')); err != nil {
 		c.Close()
 		return nil, err

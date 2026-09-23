@@ -461,3 +461,22 @@ func TestMsgOneStreamPerTunnel(t *testing.T) {
 		return err == nil
 	})
 }
+
+// D34: a payload of markup characters travels as it is stored, never
+// HTML-escaped past a control line: in msg.send, in the mail event and in a
+// msg.queue page.
+func TestMsgMarkupPayload(t *testing.T) {
+	ms := fleet(t, "alpha", "beta")
+	a, b := ms[0], ms[1]
+	waitState(t, a, b, "connected")
+	payload := strings.Repeat("<", mailbox.MaxPayload)
+	if r := a.beam(payload, "msg", "send", "beta", "-"); r.out != "delivered to beta\n" {
+		t.Fatalf("send: %d, %.200s", r.code, r.err)
+	}
+	if q := queue(t, b, "--which", "inbound"); len(q) != 1 || !strings.Contains(q[0], `"payload":"`+payload+`"`) {
+		t.Errorf("queue: %d lines, %.200s", len(q), q)
+	}
+	if _, next := subscribeMail(t, b, nil); next().Payload != payload {
+		t.Error("the mail event is not the payload")
+	}
+}

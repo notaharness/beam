@@ -4,6 +4,7 @@ package stream
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -81,9 +82,22 @@ func ParseClose(p []byte) CloseMsg {
 	return m
 }
 
+// Marshal is v as every JSON line and payload beam writes: without
+// encoding/json's HTML escaping, so text goes out as it is and a stored
+// envelope as it is stored (docs/05).
+func Marshal(v any) ([]byte, error) {
+	var b bytes.Buffer
+	e := json.NewEncoder(&b)
+	e.SetEscapeHTML(false)
+	if err := e.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
+}
+
 // WriteJSON writes v as the payload of a frame of type t.
 func (c *Conn) WriteJSON(t Type, v any) error {
-	b, err := json.Marshal(v)
+	b, err := Marshal(v)
 	if err != nil {
 		return err
 	}
@@ -138,7 +152,7 @@ func (c *Conn) Write(p []byte) (int, error) { return c.w.Write(p) }
 
 // WriteLine writes v as one JSON line.
 func (c *Conn) WriteLine(v any) error {
-	b, err := json.Marshal(v)
+	b, err := Marshal(v)
 	if err != nil {
 		return err
 	}

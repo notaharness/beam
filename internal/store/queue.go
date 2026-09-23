@@ -3,6 +3,8 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/notaharness/beam/internal/stream"
 )
 
 // Queue lists, for msg.queue (docs/06): outbound mail not yet acked, inbound
@@ -58,7 +60,7 @@ func (s *Store) Queue(which, peer string, cursor int64, limit int) ([]QueueItem,
 			return nil, 0, err
 		}
 		it.Envelope = json.RawMessage(env)
-		b, _ := json.Marshal(it)
+		b, _ := stream.Marshal(it) // as msg.queue sends it
 		if len(items) == limit || len(items) > 0 && size+len(b)+1 > MaxPage {
 			return items, last, rows.Err()
 		}

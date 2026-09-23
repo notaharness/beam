@@ -1,7 +1,6 @@
 package stream
 
 import (
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -222,7 +221,7 @@ type writer struct {
 
 // taken writes a taken frame, calling release under the lock first.
 func (w *writer) taken(release func()) error {
-	b, _ := json.Marshal(Ctl{Kind: "taken"})
+	b, _ := Marshal(Ctl{Kind: "taken"})
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	release()
