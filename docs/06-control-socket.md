@@ -19,9 +19,10 @@ Linux, 103 on macOS) is refused before anything else, naming `BEAM_SOCKET`.
   `status` answers at once; every other op waits until the daemon has started.
 - **Connect-or-spawn**, one shared helper used by the CLI and n10's TUI: connect; on
   `ECONNREFUSED`/`ENOENT` run `beam daemon --detach`, wait ≤ 5 s for the socket, connect.
-  A spawn that loses the lock race exits 1 and the helper simply connects to the winner.
-  `--detach` starts the daemon in a new session, its output appended to
-  `$BEAM_DIR/daemon.log`, and returns.
+  `--detach` starts `beam daemon` with the same options but `--detach` in a new session,
+  its output appended to `$BEAM_DIR/daemon.log`, and returns 0 without waiting for it. A
+  daemon that loses the lock race logs `another daemon holds $BEAM_DIR` there and exits
+  1; the helper connects to the winner either way.
 - **Shutdown.** `daemon.shutdown`, SIGTERM or SIGINT stop the daemon, whoever started
   it; so does the end of its stdin for one started with `--exit-with-parent`
   ([07](07-cli.md)). Stopping, the daemon closes its socket first, lets a fleet reset or
