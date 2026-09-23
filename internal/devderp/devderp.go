@@ -6,6 +6,7 @@ package devderp
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -23,8 +24,10 @@ import (
 // Relay is a running dev DERP.
 type Relay struct {
 	Region *tailcfg.DERPRegion
+	MapURL string // a DERP map of Region alone, as beam daemon --derp-map takes one
 	derp   *derpserver.Server
 	https  *httptest.Server
+	maps   *httptest.Server
 	stun   *net.UDPConn
 }
 
@@ -46,7 +49,7 @@ func Start(logf logger.Logf) (*Relay, error) {
 	srv.Config.TLSNextProto = make(map[string]func(*http.Server, *tls.Conn, http.Handler))
 	srv.StartTLS()
 	go serveSTUN(uln)
-	return &Relay{
+	r := &Relay{
 		derp:  d,
 		https: srv,
 		stun:  uln,
@@ -64,7 +67,11 @@ func Start(logf logger.Logf) (*Relay, error) {
 				InsecureForTests: true,
 			}},
 		},
-	}, nil
+	}
+	m, _ := json.Marshal(tailcfg.DERPMap{Regions: map[tailcfg.DERPRegionID]*tailcfg.DERPRegion{1: r.Region}})
+	r.maps = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(m) }))
+	r.MapURL = r.maps.URL + "/derpmap.json"
+	return r, nil
 }
 
 // serveSTUN answers binding requests. Without it netcheck spends seconds timing
@@ -85,6 +92,7 @@ func serveSTUN(c *net.UDPConn) {
 // Close stops the relay.
 func (r *Relay) Close() {
 	r.stun.Close()
+	r.maps.Close()
 	r.https.Close()
 	r.derp.Close()
 }

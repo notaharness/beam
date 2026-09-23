@@ -20,7 +20,6 @@ import (
 	"github.com/notaharness/beam/internal/identity"
 	"github.com/notaharness/beam/internal/stream"
 	"github.com/notaharness/beam/internal/transport"
-	"tailscale.com/tailcfg"
 	"tailscale.com/types/logger"
 )
 
@@ -195,7 +194,7 @@ func TestNewAddressReplacesTunnel(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(relay2.Close)
-	moved := &machine{dir: beamDir(t), key: onRelay(t, b.key, relay2.Region), entry: b.entry}
+	moved := &machine{dir: beamDir(t), key: b.key.OnRegion(relay2.Region), entry: b.entry}
 	moved.entry.Address, moved.entry.IssuedAt = moved.key.Address(), b.entry.IssuedAt+1
 	owner.SignRecord(&moved.entry)
 	moved.writeFleet(t)
@@ -209,24 +208,6 @@ func TestNewAddressReplacesTunnel(t *testing.T) {
 	if v := a.peers(t)[b.id()]; v.Alias == nil || *v.Alias != "bee" || v.Grant != "msg" {
 		t.Errorf("after the move: %+v, want alias bee and grant msg", v)
 	}
-}
-
-// onRelay is k reached through another relay: the same node key at a new
-// address.
-func onRelay(t *testing.T, k *transport.Key, region *tailcfg.DERPRegion) *transport.Key {
-	t.Helper()
-	b, _ := json.Marshal(k)
-	var m map[string]any
-	if err := json.Unmarshal(b, &m); err != nil {
-		t.Fatal(err)
-	}
-	m["Public"].(map[string]any)["Region"] = []*tailcfg.DERPRegion{region}
-	b, _ = json.Marshal(m)
-	moved := new(transport.Key)
-	if err := json.Unmarshal(b, moved); err != nil {
-		t.Fatal(err)
-	}
-	return moved
 }
 
 // docs/10 "revoke while all tunnels are up": peers refuse within the sync
