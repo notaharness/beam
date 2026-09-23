@@ -28,8 +28,8 @@ const (
 // peerState is this machine's dialed side of one peer.
 type peerState struct {
 	state   string
-	tunnel  *transport.Tunnel
-	deltas  chan identity.Record // records to push on the live sync stream
+	tunnel  *transport.Tunnel    // the dialed tunnel, from its dump on
+	deltas  chan identity.Record // records to push on its sync stream
 	kick    chan struct{}        // resets the backoff
 	changed chan struct{}        // closed and replaced on every state change
 	cancel  context.CancelFunc
@@ -66,6 +66,18 @@ func (d *daemon) setState(ps *peerState, state string, tun *transport.Tunnel, de
 	close(ps.changed)
 	ps.changed = make(chan struct{})
 	d.mu.Unlock()
+}
+
+// capture queues deltas for a tunnel before its dump's snapshot is taken, so
+// every record reaches the peer in one or the other, and a queue that fills
+// meanwhile fails the tunnel. The attempt has no outcome yet: nothing waiting
+// on the peer's state wakes.
+func (d *daemon) capture(ps *peerState, tun *transport.Tunnel, deltas chan identity.Record) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if ps.state != stateRevoked {
+		ps.tunnel, ps.deltas = tun, deltas
+	}
 }
 
 // dialLoop keeps a tunnel to the peer up: dial, hello, sync; retry with

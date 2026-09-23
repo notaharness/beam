@@ -32,7 +32,8 @@ func (d *daemon) runSync(ctx context.Context, peerID string, ps *peerState, tun 
 	}
 	defer sc.Close()
 	deltas := make(chan identity.Record, deltaBuffer)
-	if d.sendDump(sc) != nil {
+	d.capture(ps, tun, deltas)
+	if d.sendDump(sc, peerID) != nil {
 		d.setState(ps, stateOffline, nil, nil)
 		return
 	}
@@ -91,11 +92,12 @@ func readPongs(sc *stream.Conn, pongs chan struct{}) {
 }
 
 // sendDump sends every record this machine holds, its own entry included.
-func (d *daemon) sendDump(sc *stream.Conn) error {
+func (d *daemon) sendDump(sc *stream.Conn, peerID string) error {
 	recs, err := d.store.Records()
 	if err != nil {
 		return err
 	}
+	d.at("dumped", peerID)
 	recs = append(recs, d.fleet.Entry)
 	for i := 0; i < len(recs); i += maxRecordsPerFrame {
 		if err := sendRecords(sc, recs[i:min(i+maxRecordsPerFrame, len(recs))]); err != nil {

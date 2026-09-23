@@ -201,3 +201,29 @@ func waitFor(t *testing.T, limit time.Duration, what string, ok func() bool) {
 		}
 	}
 }
+
+// pauseAt holds m's daemon the first time it reaches point for peer, until the
+// test calls release (or ends). reached is closed when it gets there.
+func pauseAt(t *testing.T, m *machine, point string, peer *machine) (reached <-chan struct{}, release func()) {
+	t.Helper()
+	arrived, released := make(chan struct{}), make(chan struct{})
+	var first, done sync.Once
+	release = func() { done.Do(func() { close(released) }) }
+	control.SetHook(func(self, p, pr string) {
+		if self == m.id() && p == point && pr == peer.id() {
+			first.Do(func() { close(arrived); <-released })
+		}
+	})
+	t.Cleanup(func() { release(); control.SetHook(nil) })
+	return arrived, release
+}
+
+// await waits for ch to close.
+func await(t *testing.T, ch <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(30 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+	}
+}

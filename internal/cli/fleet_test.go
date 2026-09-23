@@ -185,6 +185,21 @@ func TestRevocationOnLiveSync(t *testing.T) {
 	}
 }
 
+// docs/02 Sync: a record learned while a dump is on its way reaches the peer
+// as a delta; none falls between the dump's snapshot and the deltas.
+func TestRecordLearnedDuringDump(t *testing.T) {
+	a, b, c := newMachine(t, "alpha"), newMachine(t, "beta"), newMachine(t, "gamma")
+	a.knows(t, b, c)
+	b.knows(t, a, c)
+	reached, release := pauseAt(t, a, "dumped", b)
+	a.start(t)
+	b.start(t)
+	await(t, reached, "alpha's dump to beta")
+	push(t, a, revocation(c))
+	release()
+	waitState(t, b, c, "revoked")
+}
+
 // docs/10 "junk in the log": a record that does not verify is ignored.
 func TestUnverifiedRecordIgnored(t *testing.T) {
 	ms := fleet(t, "alpha", "beta")
