@@ -13,6 +13,10 @@ import (
 // retries, or a msg stream it could not open (docs/05).
 const retryEvery = 2 * time.Second
 
+// writeTimeout bounds a send the peer does not take; the stream is then
+// dropped and the head sent again on a new one.
+const writeTimeout = 30 * time.Second
+
 // Flush delivers peer's outbound queue while ctx lives (the life of the
 // tunnel this machine dialed): it opens the msg stream once there is mail,
 // sends the head, and moves on only when it is acked. wake says a new
@@ -50,11 +54,12 @@ func Flush(ctx context.Context, st *store.Store, peer string, open func(context.
 	}
 }
 
-// flusher is the dialer's side of one msg stream.
+// flusher is the dialer's side of one msg stream, which ctx's end closes.
 type flusher struct {
 	sc   *stream.Conn
 	acks chan Ack      // closed when the stream ends
 	done chan struct{} // closed when the flusher drops the stream
+	stop func() bool   // unties the stream from ctx
 }
 
 func (f *flusher) send(ctx context.Context, open func(context.Context) (*stream.Conn, error), env []byte) error {
@@ -64,8 +69,10 @@ func (f *flusher) send(ctx context.Context, open func(context.Context) (*stream.
 			return err
 		}
 		f.sc, f.acks, f.done = sc, make(chan Ack), make(chan struct{})
+		f.stop = context.AfterFunc(ctx, func() { sc.Close() })
 		go readAcks(sc, f.acks, f.done)
 	}
+	f.sc.SetWriteDeadline(time.Now().Add(writeTimeout))
 	return f.sc.WriteFrame(stream.Data, env)
 }
 
@@ -112,6 +119,7 @@ func (f *flusher) await(ctx context.Context, id string) (Ack, bool) {
 
 func (f *flusher) close() {
 	if f.sc != nil {
+		f.stop()
 		close(f.done)
 		f.sc.Close()
 		f.sc = nil

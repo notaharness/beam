@@ -66,3 +66,57 @@ func TestFlushResendsUnackedHead(t *testing.T) {
 	}
 }
 
+// docs/05 Delivery: a send the peer does not take holds the flusher neither
+// past the tunnel's end nor for long: the stream is dropped and the head sent
+// again on a new one.
+func TestFlushWriteBounded(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		cancel bool
+		within time.Duration
+	}{
+		{"the tunnel ends", true, 2 * time.Second},
+		{"the peer never takes it", false, writeTimeout + 5*time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer st.Close()
+			st.Pin(knownB, 1)
+			e, _ := New(peerA, peerB, "", "stuck", UTF8, 1)
+			st.Enqueue(peerB, 1, func(seq int64) ([]byte, error) { e.Seq = seq; b, _ := e.Marshal(); return b, nil })
+			opens := make(chan struct{}, 2)
+			open := func(context.Context) (*stream.Conn, error) {
+				ours, theirs := net.Pipe() // theirs is never read
+				t.Cleanup(func() { theirs.Close() })
+				opens <- struct{}{}
+				return stream.NewConn(ours), nil
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				Flush(ctx, st, peerB, open, make(chan struct{}), func(int64, string) {})
+			}()
+			<-opens
+			time.Sleep(100 * time.Millisecond) // into the write
+			want := done
+			if tc.cancel {
+				cancel()
+			} else {
+				reopened := make(chan struct{})
+				go func() { <-opens; close(reopened) }()
+				want = reopened
+			}
+			select {
+			case <-want:
+			case <-time.After(tc.within):
+				t.Fatal("the flusher is still held by the write")
+			}
+		})
+	}
+}
