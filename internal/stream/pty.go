@@ -32,9 +32,7 @@ func PTY(c *Conn, h Header, sp Spawn) {
 		defer close(output)
 		pumpRaw(f, w)
 	}()
-	win := &window{w: w}
-	q := make(chan []byte, InputWindow)
-	go deliver(q, f, win.taken)
+	win, q := input(w, f)
 	openerDone := make(chan struct{}) // the opener has closed its side, or overran its window
 	killed := make(chan struct{})     // and the group got its SIGKILL
 	var overrun atomic.Bool

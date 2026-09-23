@@ -10,11 +10,27 @@ import (
 // Input).
 const InputWindow = 4
 
-// window counts an opener's outstanding input frames.
+// window counts an opener's outstanding input frames and answers them. A
+// frame holds its place until its taken is written, so at most a window of
+// answers wait in acks and taken never blocks: the reader queues the answer
+// and reads on, whatever the output's pace.
 type window struct {
-	w  *writer
-	mu sync.Mutex
-	n  int
+	mu   sync.Mutex
+	n    int
+	acks chan struct{}
+}
+
+// input starts delivering the opener's input to in, and answering each frame
+// taken on w. The caller feeds the returned queue.
+func input(w *writer, in io.WriteCloser) (*window, chan<- []byte) {
+	win := &window{acks: make(chan struct{}, InputWindow)}
+	q := make(chan []byte, InputWindow)
+	go func() {
+		deliver(q, in, win.taken)
+		close(win.acks) // feed, the other sender, closed q before
+	}()
+	go win.answer(w)
+	return win, q
 }
 
 // take admits an input frame; false is an overrun.
@@ -28,19 +44,26 @@ func (win *window) take() bool {
 	return true
 }
 
-// taken gives a frame's place back, telling the opener.
-func (win *window) taken() {
-	win.mu.Lock()
-	win.n--
-	win.mu.Unlock()
-	_ = win.w.control(Ctl{Kind: "taken"}) // a lost opener ends feed
+// taken queues the answer for a frame taken.
+func (win *window) taken() { win.acks <- struct{}{} }
+
+// answer writes the queued answers, giving each frame's place back just
+// before the opener can learn of it.
+func (win *window) answer(w *writer) {
+	for range win.acks {
+		win.mu.Lock()
+		win.n--
+		win.mu.Unlock()
+		_ = w.control(Ctl{Kind: "taken"}) // a lost opener ends feed
+	}
 }
 
 // feed reads the opener's frames until its side ends or sends close, or it
 // overruns its window, which feed reports. Each data or control frame takes
 // a place in win. frame turns it into input for q (nil ending the input), or
-// handles it at once, and its place is given back then. q holds a window, so
-// feed never waits on the process: it always reads on. It closes q.
+// handles it at once, and it is answered then. q holds a window and answers
+// are queued, so feed waits neither on the process nor on the output: it
+// always reads on. It closes q.
 func feed(c *Conn, q chan<- []byte, win *window, frame func(Type, []byte) (in []byte, queue bool)) (overrun bool) {
 	defer close(q)
 	for {

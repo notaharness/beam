@@ -33,9 +33,7 @@ func Exec(c *Conn, h Header, sp Spawn) {
 	var drained sync.WaitGroup
 	drained.Go(func() { pumpOutput(stdout, chanStdout, w) })
 	drained.Go(func() { pumpOutput(stderr, chanStderr, w) })
-	win := &window{w: w}
-	q := make(chan []byte, InputWindow)
-	go deliver(q, stdin, win.taken)
+	win, q := input(w, stdin)
 	openerDone := make(chan struct{}) // the opener has closed its side, or overran its window
 	tornDown := make(chan struct{})   // and the group got its SIGKILL
 	var overrun atomic.Bool
