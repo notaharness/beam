@@ -4,12 +4,14 @@ package cli_test
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +22,7 @@ import (
 	"github.com/notaharness/beam/internal/cli"
 	"github.com/notaharness/beam/internal/control"
 	"github.com/notaharness/beam/internal/devderp"
+	"github.com/notaharness/beam/internal/fakeworker"
 	"github.com/notaharness/beam/internal/identity"
 	"github.com/notaharness/beam/internal/store"
 	"github.com/notaharness/beam/internal/transport"
@@ -27,8 +30,10 @@ import (
 )
 
 var (
-	relay *devderp.Relay
-	owner *identity.Authenticator // the fleet's passkey
+	relay  *devderp.Relay
+	owner  *identity.Authenticator // the fleet's passkey
+	worker *fakeworker.Worker      // the directory
+	dirURL string                  // where it listens
 )
 
 func TestMain(m *testing.M) {
@@ -44,17 +49,48 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	owner = identity.NewAuthenticator()
+	authenticate(owner)
+	worker = fakeworker.New()
+	srv := httptest.NewServer(worker)
+	dirURL = srv.URL
 	code := m.Run()
+	srv.Close()
 	relay.Close()
 	os.Exit(code)
 }
 
+// authenticate makes a the passkey every ceremony in this process uses
+// (docs/10, the test authenticator).
+func authenticate(a *identity.Authenticator) {
+	j, _ := json.Marshal(a)
+	os.Setenv("BEAM_TEST_AUTHENTICATOR", string(j))
+}
+
+// blank is a $BEAM_DIR with nothing in it yet: a machine for init or join.
+func blank(t *testing.T, label string) *machine {
+	t.Helper()
+	return &machine{dir: beamDir(t), entry: identity.Record{Label: label}}
+}
+
+// enrolled reads m's fleet.json once a ceremony has written it.
+func (m *machine) enrolled(t *testing.T) *machine {
+	t.Helper()
+	var f identity.Fleet
+	b, err := os.ReadFile(filepath.Join(m.dir, "fleet.json"))
+	if err != nil || json.Unmarshal(b, &f) != nil {
+		t.Fatalf("fleet.json: %v", err)
+	}
+	m.entry = f.Entry
+	return m
+}
+
 // machine is one enrolled $BEAM_DIR and, once started, its daemon.
 type machine struct {
-	dir   string
-	key   *transport.Key
-	entry identity.Record
-	stop  func()
+	dir     string
+	key     *transport.Key
+	entry   identity.Record
+	derpMap string // the daemon's DERP map; the dev relay's when empty
+	stop    func()
 }
 
 func (m *machine) id() string { return m.entry.PeerID }
@@ -131,8 +167,10 @@ func (m *machine) start(t *testing.T) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
+	derpMap := cmp.Or(m.derpMap, relay.MapURL)
 	go func() {
-		done <- control.Run(ctx, control.Options{Paths: m.paths(), Version: "test", Logf: logger.Discard})
+		done <- control.Run(ctx, control.Options{Paths: m.paths(), Version: "test", Logf: logger.Discard,
+			DERPMap: derpMap, Directory: dirURL})
 	}()
 	var once sync.Once
 	m.stop = func() { once.Do(func() { cancel(); <-done }) }

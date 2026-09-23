@@ -15,10 +15,12 @@ import (
 
 // runDaemon runs the daemon in the foreground until SIGTERM or
 // daemon.shutdown, or with --detach starts it in its own session, logging to
-// $BEAM_DIR/daemon.log, and returns.
+// $BEAM_DIR/daemon.log, and returns. --derp-map names the DERP map a new key
+// is homed from.
 func runDaemon(e *env) int {
 	fs := e.flags("daemon")
 	detach := fs.Bool("detach", false, "")
+	derpMap := fs.String("derp-map", "", "")
 	if fs.Parse(e.args) != nil || fs.NArg() != 0 {
 		return e.fail(errUsage)
 	}
@@ -27,7 +29,7 @@ func runDaemon(e *env) int {
 		return e.fail(err)
 	}
 	if *detach {
-		if err := e.detach(p); err != nil {
+		if err := e.detach(p, e.args); err != nil {
 			return e.fail(err)
 		}
 		return 0
@@ -35,13 +37,14 @@ func runDaemon(e *env) int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
 	logf := log.New(e.stderr, "", log.LstdFlags).Printf
-	if err := control.Run(ctx, control.Options{Paths: p, Version: Version, Logf: logf}); err != nil {
+	if err := control.Run(ctx, control.Options{Paths: p, Version: Version, Logf: logf, DERPMap: *derpMap}); err != nil {
 		return e.fail(err)
 	}
 	return 0
 }
 
-func (e *env) detach(p control.Paths) error {
+// detach starts `beam daemon` with args but --detach in a new session.
+func (e *env) detach(p control.Paths, args []string) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
@@ -54,7 +57,13 @@ func (e *env) detach(p control.Paths) error {
 		return err
 	}
 	defer logFile.Close()
-	cmd := exec.Command(exe, "daemon")
+	var rest []string
+	for _, a := range args {
+		if a != "--detach" && a != "-detach" {
+			rest = append(rest, a)
+		}
+	}
+	cmd := exec.Command(exe, append([]string{"daemon"}, rest...)...)
 	cmd.Env, cmd.Stdout, cmd.Stderr = e.vars, logFile, logFile
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {

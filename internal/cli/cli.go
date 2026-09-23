@@ -62,6 +62,10 @@ var commands = map[string]func(*env) int{
 	"exec":    runExec,
 	"connect": runConnect,
 	"msg":     runMsg,
+	"init":    runInit,
+	"join":    runJoin,
+	"revoke":  runRevoke,
+	"fleet":   runFleet,
 	"version": func(e *env) int { fmt.Fprintln(e.stdout, Version); return 0 },
 }
 
@@ -69,7 +73,11 @@ var commands = map[string]func(*env) int{
 var errUsage = errors.New("usage")
 
 const usage = `usage:
-  beam daemon [--detach]
+  beam init   [--label NAME] [--fleet-name NAME]
+  beam join   [--label NAME]
+  beam revoke <peer>
+  beam fleet reset
+  beam daemon [--detach] [--derp-map URL]
   beam status [--json]
   beam peers  [--json]
   beam peer alias <peer> <alias|->
