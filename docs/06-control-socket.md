@@ -86,10 +86,15 @@ with `directory-unavailable` because it cannot proceed without the read.
 | op | request | result |
 |---|---|---|
 | `msg.send` | `{ to, topic, payload, encoding }` | `{ outcome, to, pendingReason?, reason? }` |
-| `msg.subscribe` | `{ topic?, from? }` | `{}`; then `mail` events |
-| `msg.ack` | `{ id }` | `{}` |
-| `msg.defer` | `{ id, reason }` | `{}` |
-| `msg.queue` | `{ peer?, which: "outbound" \| "inbound" \| "refused" \| "quarantine", cursor?, limit? ≤ 100 }` | `{ items, next? }` |
+| `msg.subscribe` | `{ topic?, from? }` (`from`: peer arguments) | `{}`; then `mail` events |
+| `msg.ack` | `{ envelopeId }` | `{}` |
+| `msg.defer` | `{ envelopeId, reason }` | `{}` |
+| `msg.queue` | `{ peer?, which: "outbound" \| "inbound" \| "refused" \| "quarantine", cursor?, limit? ≤ 100 }` | `{ items: [{ envelope, reason? }], next? }` |
+
+`msg.ack` and `msg.defer` name the subscriber's in-flight envelope by its `id` as
+`envelopeId`; any other is `params`. A second `msg.subscribe` on a connection replaces its
+subscription, releasing what it held. `refused` lists deferred inbound envelopes with the
+defer's reason, and `quarantine` outbound ones the recipient refused for good, with its.
 
 ### Streams
 
@@ -115,7 +120,8 @@ is open nothing is sent to the peer.
 
 ### Events
 
-`peer { PeerView }` · `peer.new { PeerView }` · `mail { envelope }` · `stream.closed {
+`peer { PeerView }` · `peer.new { PeerView }` · `mail { envelope }` (acked by its `id` as
+`envelopeId`) · `stream.closed {
 streamId, reason, exitCode?, signal? }` · `ceremony { ceremonyUrl }` ·
 `directory.published { kind, peerId }`.
 

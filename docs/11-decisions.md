@@ -35,6 +35,8 @@
 | D29 | `status.derp.source` is `"key.json"`. | The relay region is fixed by the node key (D21); there is no other source yet. | 06 |
 | D30 | A `pty`/`exec` leader is reaped only after its group's teardown, under the lock its signals take; the acceptor reads its exit status without reaping it (`waitid` `WNOWAIT`'s siginfo on Linux; on Darwin kqueue `NOTE_EXIT` with `NOTE_EXITSTATUS`, or the zombie's `p_xstat` for a leader that exited before the watch). A leader it cannot watch has its group killed, then is reaped for its status. | The unreaped leader holds the group id, so the SIGKILL reaches descendants that outlive it and never a group that reused the id. `/proc/<pid>/stat`'s `exit_code` reads 0 for a non-dumpable process. | 04 |
 | D31 | `pty`/`exec` input is flow-controlled: at most 4 frames outstanding, each answered `taken`; an overrun closes the stream `window`. The daemon holds its attach clients to the same window. | A reader that stops reading to push back hides the opener's close behind queued input. With a window every reader reads on, so a close, a detach or a departure is always seen, as with SSH channel windows. | 04, 06 |
+| D32 | `msg.ack` and `msg.defer` take `envelopeId`, and `msg.subscribe`'s `from` is a list. | Every control request already has an `id`; a subscriber filtering by sender may want several. | 05, 06 |
+| D33 | A deferred envelope is kept from only the subscription that deferred it; `refused` in `msg.queue` is the deferred inbound mail. | The next subscribe gets it again, as 05 says, without a separate refused table. | 05, 06 |
 
 ## Milestone gate
 

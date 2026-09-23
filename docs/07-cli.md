@@ -66,10 +66,16 @@ shell exited (0)`, `killed by SIGKILL`, `connection lost`.
 ## Messages
 
 `msg send` prints `delivered to buildbox`, or the `stored` sentence from
-[05](05-mailbox.md), or `rejected: <reason>`. Exit 0 for the first two.
+[05](05-mailbox.md) for its `pendingReason`, or `rejected: <reason>` on stderr. Exit 0
+for the first two. The payload is the argument, or stdin for `-`; `--base64` sends it as
+bytes.
 
 `msg listen` prints one envelope per line and acks after the write to stdout succeeds.
 That is the durability an observer gets; a consumer that needs more writes its own.
+Peers given filter by sender.
+
+`msg queue` prints one `{ envelope, reason? }` per line from `msg.queue`, all pages,
+`outbound` unless `--which` says otherwise.
 
 ## Peer arguments
 

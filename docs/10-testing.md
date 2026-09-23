@@ -14,9 +14,9 @@ rpIdHash, UV unset, bad signature, revoked). Canonical JSON (JCS) has its own ve
 HKDF derivations are pinned so a salt or info change fails loudly.
 
 Property tests (`pgregory.net/rapid`): frame codec under arbitrary splits; header lines at
-and over the cap; mailbox under random crash points between the transactions in
-[05](05-mailbox.md) (using SQLite's ability to kill a connection mid-write). Found
-counterexamples become fixed cases.
+and over the cap; mailbox under random crash points between and inside the transactions
+in [05](05-mailbox.md) (SQLite's commit hook turns a chosen commit into a rollback, and
+the machine restarts). Found counterexamples become fixed cases.
 
 ## Dev DERP
 
