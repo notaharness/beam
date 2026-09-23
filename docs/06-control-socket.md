@@ -30,7 +30,8 @@ refused before anything else, naming `BEAM_SOCKET`.
 
 **Control**: newline-delimited JSON, ≤ 1 MiB per line, `{ id, op, … }` → `{ id, ok,
 result | error, detail? }`, out-of-order replies allowed, events (each a line `{ event,
-data }`) only after `events.subscribe`.
+data }`) only after `events.subscribe`. A client that leaves a line unread for 10 s is
+disconnected.
 
 **Attach**: first line `{ "attach": "<streamId>" }`, then the frame format from
 [04](04-streams.md) verbatim in both directions, `taken` included. The daemon relays frames
@@ -88,13 +89,14 @@ with `directory-unavailable` because it cannot proceed without the read.
 | `msg.send` | `{ to, topic, payload, encoding }` | `{ outcome, to, pendingReason?, reason? }` |
 | `msg.subscribe` | `{ topic?, from? }` (`from`: peer arguments) | `{}`; then `mail` events |
 | `msg.ack` | `{ envelopeId }` | `{}` |
-| `msg.defer` | `{ envelopeId, reason }` | `{}` |
+| `msg.defer` | `{ envelopeId, reason ≤ 1 KiB }` | `{}` |
 | `msg.queue` | `{ peer?, which: "outbound" \| "inbound" \| "refused" \| "quarantine", cursor?, limit? ≤ 100 }` | `{ items: [{ envelope, reason? }], next? }` |
 
 `msg.ack` and `msg.defer` name the subscriber's in-flight envelope by its `id` as
 `envelopeId`; any other is `params`. A second `msg.subscribe` on a connection replaces its
 subscription, releasing what it held. `refused` lists deferred inbound envelopes with the
 defer's reason, and `quarantine` outbound ones the recipient refused for good, with its.
+A `msg.queue` page also stops before an item that would take its line past 1 MiB.
 
 ### Streams
 

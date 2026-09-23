@@ -12,7 +12,8 @@ it.
   "payload": "…", "encoding": "utf8" | "base64", "createdAt": 1758570000000 }
 ```
 
-Payload ≤ 256 KiB decoded; serialized envelope ≤ 1 MiB. `topic` 0–128 scalar values with
+Payload ≤ 256 KiB decoded; serialized envelope ≤ 960 KiB, so that one fits a 1 MiB control
+line ([06](06-control-socket.md)) with what wraps it. `topic` 0–128 scalar values with
 the label character rules. `seq` is a positive safe integer. A `base64` payload is unpadded
 base64url, like every binary field in beam.
 
@@ -22,13 +23,14 @@ One SQLite database, `$BEAM_DIR/state.db`, WAL mode, `synchronous=FULL`. Tables:
 `outbound(peer, seq, envelope, created_at)`, `inbound(peer, seq, id, topic, envelope,
 received_at, inflight_to, deferred_to, deferred)`, `seen(peer, high_seq)`, `send_seq(peer,
 next_seq)`, `quarantine(peer, seq, envelope, reason)`. `inbound` keeps the envelope's `id`
-and `topic` for acks and subscriber filters, and for a deferred envelope the subscription
-that deferred it and why. `inflight_to` and `deferred_to` name subscriptions of the
+and `topic` for acks and subscriber filters, and for a deferred envelope why, and the
+newest subscription when it was deferred. `inflight_to` and `deferred_to` name subscriptions of the
 running daemon, so a daemon start clears them. Every state change below is one
 transaction. There are no per-envelope files, no link tricks and no separate counter
 files; durability is SQLite's.
 
-Bounds per peer per direction: 10,000 envelopes, 64 MiB.
+Bounds per peer per direction: 10,000 envelopes, 64 MiB. A recipient's outbound bound
+counts its quarantine too.
 
 ## Sequence numbers
 
@@ -37,8 +39,8 @@ that inserts the outbound row. The receiver keeps `seen.high_seq` per sender; an
 envelope with `seq ≤ high_seq` is answered `accepted: false, reason: "duplicate"` and
 the sender deletes it. Contiguity is not required.
 
-A `send_seq` row that is missing for a peer with any history is an error (`storage-failure`
-on send), never a restart at 1.
+A peer's `send_seq` row is created at 1 in the transaction that pins the peer, so one that
+is missing is an error (`storage-failure` on send), never a restart at 1.
 
 ## Transactions
 
@@ -72,7 +74,7 @@ it does not block the queue; `queue-full`, `storage-failure` and unknown reasons
 |---|---|---|
 | `delivered` | recipient daemon stored it and acked | done |
 | `stored` | on this machine's disk; delivery pending (peer offline, or no ack within 10 s) | **success**; do not resend |
-| `rejected` | nothing stored: `unknown-peer`, `revoked-peer`, `invalid-topic`, `payload-too-large`, `queue-full`, `storage-failure` | failure |
+| `rejected` | nothing stored: `unknown-peer`, `revoked-peer`, `invalid-topic`, `payload-too-large`, `queue-full`, `storage-failure`; or refused for good by the recipient within the 10 s (`payload-too-large`, `invalid-envelope`), and kept only in quarantine | failure |
 
 `stored` carries `pendingReason: "offline" | "no-ack"`. Every surface reports it as:
 
@@ -94,11 +96,12 @@ Applications subscribe over the control socket with an optional `topic` and an o
 list of senders, `from`, applied by the daemon. Each subscriber connection has one
 in-flight envelope at a time and acks it by its `id`, passed as `envelopeId`, after doing
 something durable with it. An envelope no live subscriber matches stays in `inbound`. A
-subscriber that never acks stalls only itself; one that disconnects releases its
-in-flight envelope for redelivery. `msg.defer { envelopeId, reason }` releases an
-envelope without acking and records `reason` for `msg.queue` and the desktop's refused
-list; the subscription that deferred it is not offered it again, and any other,
-including the next subscribe on the same connection, is.
+subscriber that never acks stalls only itself; one that disconnects, or leaves its
+delivery unread for 10 s and is disconnected, releases its in-flight envelope for
+redelivery. `msg.defer { envelopeId, reason }` releases an envelope without acking and
+records `reason` for `msg.queue` and the desktop's refused list; it is offered again only
+to a subscription made after the defer, such as the next subscribe on the same
+connection.
 
 `delivered` means the other daemon has it. Whether an application has acted on it is
 that application's business, and beam does not claim exactly-once effects.

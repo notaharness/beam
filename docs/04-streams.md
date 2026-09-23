@@ -84,7 +84,9 @@ the stream `window`. Nothing else is acknowledged.
 ## `msg`
 
 Opened by the dialer; carries mail **from the dialer to the acceptor only**. One per
-tunnel, opened when the outbound queue is non-empty and kept while it drains. Each data
+tunnel, opened when the outbound queue is non-empty and kept while it drains; the
+acceptor refuses a second with `limit` while one is open, so a sender's envelopes are
+stored in order. Each data
 frame is one envelope; the acceptor answers each with
 `control {"kind":"ack","id":…,"accepted":true}` or
 `{…,"accepted":false,"reason":"duplicate"|"queue-full"|"payload-too-large"|"invalid-envelope"|"storage-failure"}`.
