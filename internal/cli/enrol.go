@@ -32,7 +32,7 @@ func runInit(e *env) int {
 	if err != nil {
 		return e.fail(err)
 	}
-	fmt.Fprintf(e.stdout, "created fleet %s…  ·  this machine: %s (%s)\n%s\n", res.FleetID[:4], e.label(), identity.Fingerprint(res.PeerID), publication(res.Published))
+	fmt.Fprintf(e.stdout, "created fleet %s  ·  this machine: %s (%s)\n%s\n", identity.Fingerprint(res.FleetID), e.label(), identity.Fingerprint(res.PeerID), publication(res.Published))
 	return 0
 }
 
@@ -56,7 +56,7 @@ func runJoin(e *env) int {
 	if err != nil {
 		return e.fail(err)
 	}
-	fmt.Fprintf(e.stdout, "joined fleet %s…; %d other machines known; connecting…\n", res.FleetID[:4], res.Members)
+	fmt.Fprintf(e.stdout, "joined fleet %s; %d other machines known; connecting…\n", identity.Fingerprint(res.FleetID), res.Members)
 	return 0
 }
 

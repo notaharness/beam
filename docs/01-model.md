@@ -62,7 +62,7 @@ would be the same over any transport.
 | Node key | One machine's identity | Membership | That machine is impersonated until revoked. A shell-capable member is the owner's OS account on every machine it reaches, so a stolen member that was used before revocation may have copied other keys; see "Blast radius". |
 | Passkey | Membership and revocation, one statement per tap | Anything per connection | Total. The owner starts a new fleet. |
 | Directory worker | Storing and returning ciphertext; refusing writes that lack a valid assertion | Contents; membership; anything at runtime | Refuses to serve: init, join and publishing stall, and a starting daemon learns no revocation from it. Nothing at runtime waits on it. Cannot read an address, forge an entry or remove one a machine already holds. Sees blob sizes, timing and a fleet identifier. |
-| Ceremony page | Running one WebAuthn call honestly; at `init`, the root | Anything beyond the operation being approved | Can substitute the statement being signed during that one tap, and can keep the PRF output (directory read access). Cannot sign a later statement. At `init` it can substitute the root itself. |
+| Ceremony page | Running one WebAuthn call honestly; at a machine's first enrolment, that machine's root | Anything beyond the operation being approved | Can substitute the statement being signed during that one tap, and can keep the PRF output (directory read access). Cannot sign a later statement. At a machine's first enrolment (`init`, a fresh `join`) it can substitute the root that machine pins. |
 | A fleet machine's disk | Its pins, its mailbox, the directory key | Membership | Stolen: tunnel access until revoked; permanent read access to the directory. Cannot add or remove a machine. |
 | DERP relay | Delivery of encrypted packets; rendezvous | Contents; identity; membership | New connections stall while down. Cannot complete a handshake or join a tunnel it observes. |
 
@@ -76,19 +76,26 @@ page can append that one entry, or that one revocation, to the directory itself:
 machine it holds the key of, or remove one of the owner's. It gets one statement per
 tap and none after: there is no seed to keep and no future signing authority. What it
 keeps is the directory key, which reads addresses and labels for as long as the fleet
-exists. That is the full exposure, and it is accepted: this is the relying-party trust
-every passkey system has, bounded to one operation.
+exists. That is the full exposure on a machine that already holds its fleet's root, and
+it is accepted: this is the relying-party trust every passkey system has, bounded to one
+operation.
 
-Fleet creation is the one tap where the page is trusted for more. `init`'s `create` is
-where the root comes from, and beam checks no attestation (verifying one would mean
-trusting an attestation CA, which beam does not). A hostile page at `init` can return a
-credential it holds itself; the machine pins it as the fleet's root, and the page can
-then sign any statement for as long as the fleet exists. The owner would notice only by
-the fleet fingerprint. So the page is trusted for the root once, at creation. Every
-later ceremony on an enrolled machine is bound to that pinned root: a re-join and a
-revoke verify under the cached credential and never take one from the page or the
-worker. A fresh join has no root to bind to and trusts the page for its one statement,
-as above. The page has
+A machine's first enrolment is where the page is trusted for more. At `init`, `create`
+is where the root comes from, and beam checks no attestation (verifying one would mean
+trusting an attestation CA, which beam does not): a hostile page can return a credential
+it holds itself, the machine pins it as the fleet's root, and the page can then sign any
+statement for as long as the fleet exists. A fresh `join` has no root to check its
+answer against either: a hostile page can return an assertion and a PRF output of its
+own, a directory that goes along presents the matching credential, and the machine pins
+a root the attacker holds. The owner's fleet is untouched, its root still the owner's,
+but the joining machine is in the attacker's fleet, whose root can add machines it will
+admit. So the page is trusted for the root once per machine, at its first enrolment. The
+check that does not pass through the page is the fleet fingerprint, 64 bits of
+`fleetId`, which `init`, `join` and `beam status` print alike ([07](07-cli.md)): a
+machine whose `join` names a fleet other than the one `beam status` shows on a machine
+already in it joined someone else's, and is reset. Every later ceremony on an enrolled
+machine is bound to its pinned root: a re-join and a revoke verify under the cached
+credential and never take one from the page or the worker. The page has
 `Content-Security-Policy: default-src 'none'`, its source is public and its hash is
 pinned in CI; none of that is a cryptographic guarantee, and the spec does not claim one.
 

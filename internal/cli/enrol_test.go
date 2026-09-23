@@ -136,6 +136,22 @@ func TestInitJoin(t *testing.T) {
 	}
 }
 
+// docs/07: init, join and status name the fleet in one form, 64 bits of its
+// id, so a fresh join, which trusts its page and directory for the root
+// (docs/02), can be checked against a machine already in the fleet.
+func TestJoinShowsFleet(t *testing.T) {
+	a := initFleet(t, "alpha")
+	fleet := "fleet " + identity.Fingerprint(owner.Credential().FleetID())
+	m := blank(t, "beta")
+	m.start(t)
+	if r := m.beam("", "join", "--label", "beta"); r.code != 0 || !strings.Contains(r.out, "joined "+fleet+";") {
+		t.Errorf("join: %+v, want %q", r, fleet)
+	}
+	if r := a.beam("", "status"); !strings.Contains(r.out, " · "+fleet+" · ") {
+		t.Errorf("status: %+v, want %q", r, fleet)
+	}
+}
+
 // docs/10 "third joins while second is offline; second returns": the second
 // learns the third and they connect; one row.
 func TestThirdJoinsWhileSecondOffline(t *testing.T) {

@@ -212,8 +212,11 @@ Two taps, once per fleet.
 3. Fetch the directory with `T_read`, which alone names the fleet (`GET /v1/entries`; the
    joining machine cannot know `fleetId` yet). The response carries `fleetId`,
    `credentialId` and `credentialPublicKey`; verify this machine's own assertion under
-   them. A worker lying about the credential alone fails here; a page and a worker lying
-   together are the hostile page of [01](01-model.md), trusted for this one statement.
+   them. A worker lying about the credential alone fails here. A page and a worker lying
+   together can present a credential of their own, and the machine joins their fleet: a
+   fresh join trusts them for the root, once, as `init` trusts the page
+   ([01](01-model.md)). The check is the fleet fingerprint `join` prints, which must be
+   the one `beam status` shows on a machine already in the fleet ([07](07-cli.md)).
    Decrypt and verify every
    record; refuse if this `peerId` is revoked. A token that opens no fleet is
    `wrong-passkey`.

@@ -36,12 +36,17 @@ stages: `starting daemon`, `preparing network`, `waiting for your passkey (creat
 `beam init` ends:
 
 ```
-created fleet 3f9a…  ·  this machine: laptop (b7f3 9a21 0c4e 55d1)
+created fleet 3f9a 0c4e 7d12 e805  ·  this machine: laptop (b7f3 9a21 0c4e 55d1)
 published to directory
 ```
 
-`beam join` ends `joined fleet 3f9a…; 3 other machines known; connecting…` and returns;
-`beam peers` shows progress. With the directory down: `directory unavailable; try again`.
+`beam join` ends `joined fleet 3f9a 0c4e 7d12 e805; 3 other machines known; connecting…`
+and returns; `beam peers` shows progress. With the directory down: `directory
+unavailable; try again`. The fleet is its fingerprint, 64 bits of `fleetId` in the form
+`init` and `beam status` print too. Compare it with `beam status` on a machine already
+in the fleet: a different one means this machine joined another fleet, through a
+substituted ceremony page and a directory that went along ([01](01-model.md)), and
+`beam fleet reset` undoes that.
 
 `beam revoke` ends:
 

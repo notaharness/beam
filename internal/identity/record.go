@@ -98,13 +98,13 @@ func (r Record) Supersedes(s Record) bool {
 	return bytes.Compare(a[:], b[:]) > 0
 }
 
-// Fingerprint is a peer id's display form (docs/02): its first 16 characters
-// in groups of four.
-func Fingerprint(peerID string) string {
-	if len(peerID) < 16 {
-		return peerID
+// Fingerprint is a peer or fleet id's display form (docs/02): its first 16
+// characters, 64 bits, in groups of four.
+func Fingerprint(id string) string {
+	if len(id) < 16 {
+		return id
 	}
-	return peerID[0:4] + " " + peerID[4:8] + " " + peerID[8:12] + " " + peerID[12:16]
+	return id[0:4] + " " + id[4:8] + " " + id[8:12] + " " + id[12:16]
 }
 
 // PeerID is the lowercase hex of the first 16 bytes of SHA-256(nodePublic).

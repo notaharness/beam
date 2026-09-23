@@ -61,7 +61,7 @@ func runStatus(e *env) int {
 		fmt.Fprintf(e.stdout, "daemon %s · not enrolled: run beam init or beam join\n", s.Version)
 		return 0
 	}
-	fmt.Fprintf(e.stdout, "this machine: %s (%s) · fleet %s… · relay %s\n", s.Label, identity.Fingerprint(s.PeerID), s.FleetID[:4], s.DERP.Region)
+	fmt.Fprintf(e.stdout, "this machine: %s (%s) · fleet %s · relay %s\n", s.Label, identity.Fingerprint(s.PeerID), identity.Fingerprint(s.FleetID), s.DERP.Region)
 	fmt.Fprintf(e.stdout, "peers: %d connected, %d offline, %d revoked\n", s.Peers.Connected, s.Peers.Offline, s.Peers.Revoked)
 	if n := s.Peers.RevokedByFleet; n > 0 {
 		fmt.Fprintf(e.stdout, "this machine is revoked: %d peers refuse it\n", n)
