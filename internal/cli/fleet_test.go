@@ -189,7 +189,7 @@ func TestNewAddressReplacesTunnel(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(relay2.Close)
-	moved := &machine{dir: t.TempDir(), key: onRelay(t, b.key, relay2.Region), entry: b.entry}
+	moved := &machine{dir: beamDir(t), key: onRelay(t, b.key, relay2.Region), entry: b.entry}
 	moved.entry.Address, moved.entry.IssuedAt = moved.key.Address(), b.entry.IssuedAt+1
 	owner.SignRecord(&moved.entry)
 	moved.writeFleet(t)

@@ -58,15 +58,23 @@ type machine struct {
 
 func (m *machine) id() string { return m.entry.PeerID }
 
-// newMachine enrols a $BEAM_DIR as the ceremonies would, without them: a node
-// key on the dev relay, an entry signed by the owner's passkey, fleet.json.
-func newMachine(t *testing.T, label string) *machine {
+// beamDir is an empty $BEAM_DIR for the test. It is not t.TempDir(), whose
+// path on macOS leaves the daemon's socket path over the 104-byte limit.
+func beamDir(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "beam") // short: socket paths are limited
+	dir, err := os.MkdirTemp("", "beam")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
+}
+
+// newMachine enrols a $BEAM_DIR as the ceremonies would, without them: a node
+// key on the dev relay, an entry signed by the owner's passkey, fleet.json.
+func newMachine(t *testing.T, label string) *machine {
+	t.Helper()
+	dir := beamDir(t)
 	k := transport.NewKey(relay.Region)
 	pub := k.NodePublic()
 	e := identity.Record{V: 1, Kind: identity.Member, PeerID: identity.PeerID(pub),

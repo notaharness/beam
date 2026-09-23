@@ -26,9 +26,13 @@ func TestExec(t *testing.T) {
 	a, b := ms[0], ms[1]
 	waitState(t, a, b, "connected")
 
+	cwd, err := filepath.EvalSymlinks(os.TempDir()) // as pwd prints it: macOS's is behind a symlink
+	if err != nil {
+		t.Fatal(err)
+	}
 	script := `cat; printf '%s %s %s %s %s\n' "$K" "$BEAM_CALLER_ID" "$BEAM_PEER_ID" "$BEAM_CALLER_LABEL" "$(pwd)"; echo oops >&2; exit 7`
-	r := a.beam("from stdin\n", "exec", "beta", "--cwd", "/tmp", "--env", "K=V", "--", "sh", "-c", script)
-	want := "from stdin\nV " + a.id() + " " + b.id() + " alpha /tmp\n"
+	r := a.beam("from stdin\n", "exec", "beta", "--cwd", cwd, "--env", "K=V", "--", "sh", "-c", script)
+	want := "from stdin\nV " + a.id() + " " + b.id() + " alpha " + cwd + "\n"
 	if r.code != 7 || r.out != want || r.err != "oops\n" {
 		t.Fatalf("got code %d\nstdout %q\nstderr %q\nwant code 7, stdout %q, stderr \"oops\\n\"", r.code, r.out, r.err, want)
 	}
