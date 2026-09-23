@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -43,27 +44,31 @@ func runDaemon(e *env) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
-	logf := log.New(e.stderr, "", log.LstdFlags).Printf
 	if *withParent {
-		ctx = untilParentExits(ctx, e.stdin, logf)
+		ctx = untilParentExits(ctx, e.stdin)
 	}
+	logf := log.New(e.stderr, "", log.LstdFlags).Printf
 	if err := control.Run(ctx, control.Options{Paths: p, Version: Version, Logf: logf, DERPMap: *derpMap}); err != nil {
 		return e.fail(err)
 	}
+	if errors.Is(context.Cause(ctx), errParentExited) {
+		logf("stopped: %v", errParentExited) // after the shutdown, so a write that blocks cannot hold it
+	}
 	return 0
 }
+
+var errParentExited = errors.New("stdin ended: the parent has exited")
 
 // untilParentExits is ctx, ended also when stdin ends: the parent holding
 // its other end has exited. The parent's pipes to stdout and stderr may be
 // gone with it, so a write to one fails rather than raising SIGPIPE, which
 // would end the daemon before its shutdown. SIGTERM and SIGINT stay handled.
-func untilParentExits(ctx context.Context, stdin io.Reader, logf func(string, ...any)) context.Context {
+func untilParentExits(ctx context.Context, stdin io.Reader) context.Context {
 	signal.Ignore(syscall.SIGPIPE)
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancelCause(ctx)
 	go func() {
 		_, _ = io.Copy(io.Discard, stdin) // until the parent's end closes, or fails
-		logf("stdin ended: the parent has exited; shutting down")
-		cancel()
+		cancel(errParentExited)
 	}()
 	return ctx
 }

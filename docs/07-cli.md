@@ -92,9 +92,9 @@ ran ([01](01-model.md), The relayed result).
 - stdin must be a pipe or a socket. A terminal, a file or `/dev/null` is refused before
   the daemon starts: usage error, exit 2. So is `--detach` with it.
 - The daemon reads stdin and discards what it reads. At end of file, or a read error,
-  it logs `stdin ended: the parent has exited; shutting down` and shuts down as it does
-  on SIGTERM: streams end, the lock and socket are released, exit 0. SIGTERM and SIGINT
-  during that shutdown are handled as ever, not fatal.
+  it shuts down as it does on SIGTERM: streams end, the lock and socket are released;
+  then it logs `stopped: stdin ended: the parent has exited` and exits 0. SIGTERM and
+  SIGINT during that shutdown are handled as ever, not fatal.
 - The daemon logs to stderr. A parent that gives it pipes for stdout or stderr drains
   them while it runs; once the parent is gone, a write to them fails and is dropped
   (the daemon ignores SIGPIPE), so the shutdown still completes.

@@ -76,8 +76,7 @@ func TestExitWithParentStdinEnds(t *testing.T) {
 
 // docs/10 "exit with parent": the daemon's parent is killed outright; the
 // kernel closes its end of the daemon's stdin, and the daemon shuts down
-// cleanly, removing its socket, though the line it logs goes to a stderr
-// pipe nobody holds any more.
+// cleanly, removing its socket.
 func TestExitWithParentKilled(t *testing.T) {
 	m := blank(t, "fresh")
 	p := exec.Command(os.Args[0], "parent", "--derp-map", relay.MapURL)
@@ -104,6 +103,33 @@ func TestExitWithParentKilled(t *testing.T) {
 	waitFor(t, 10*time.Second, "the daemon to exit", func() bool { return ended(pid) })
 	if _, err := os.Stat(m.paths().Socket); !os.IsNotExist(err) {
 		t.Errorf("the socket file is left behind: the daemon did not shut down cleanly (%v)", err)
+	}
+}
+
+// docs/07 The daemon: a parent gone takes its end of the daemon's stderr
+// too; the daemon still shuts down and exits 0, its last log line dropped.
+func TestExitWithParentStderrGone(t *testing.T) {
+	m := blank(t, "fresh")
+	d := exec.Command(os.Args[0], "daemon", "--exit-with-parent", "--derp-map", relay.MapURL)
+	d.Env = append(os.Environ(), "BEAM_CONFIG_DIR="+m.dir)
+	stdin, _ := d.StdinPipe()
+	stderr, _ := d.StderrPipe()
+	if err := d.Start(); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, 10*time.Second, "the daemon's socket", func() bool { return answering(m) })
+	stderr.Close()
+	stdin.Close()
+	exited := make(chan error, 1)
+	go func() { exited <- d.Wait() }()
+	select {
+	case err := <-exited:
+		if err != nil {
+			t.Errorf("the daemon ended %v, want exit 0", err)
+		}
+	case <-time.After(10 * time.Second):
+		d.Process.Kill()
+		t.Fatal("the daemon outlived its stdin")
 	}
 }
 
