@@ -2,6 +2,7 @@ import { env, exports } from "cloudflare:workers";
 import { isoBase64URL } from "@simplewebauthn/server/helpers";
 import { beforeAll, describe, expect, it } from "vitest";
 import schema from "../schema.sql?raw";
+import worker from "../src/index";
 import { Authenticator } from "./authenticator";
 
 const b64 = (b: Uint8Array) => isoBase64URL.fromBuffer(new Uint8Array(b));
@@ -118,6 +119,57 @@ describe("docs/09 caps", () => {
     expect((await call("POST", `/v1/fleets/${f.id}/entries`, await entry(f.auth, "member"))).status).toBe(413);
     const again = await call("POST", `/v1/fleets/${f.id}/entries`, f.first);
     expect([again.status, await again.json()]).toEqual([200, { seq: 1 }]);
+  });
+
+  // D1 answering slowly lets concurrent appends interleave anywhere between
+  // their statements; the cap holds only if one statement checks and inserts.
+  it("holds the cap against appends at once", async () => {
+    const slow = new Proxy(env.DB, {
+      get: (db, k) =>
+        k !== "prepare" ? Reflect.get(db, k).bind(db) : (sql: string) => {
+          const wrap = (s: D1PreparedStatement): D1PreparedStatement => new Proxy(s, {
+            get: (st, m) => {
+              const f = Reflect.get(st, m).bind(st);
+              if (m === "bind") return (...a: unknown[]) => wrap(f(...a));
+              return async (...a: unknown[]) => { const r = await f(...a); await new Promise((ok) => setTimeout(ok, 20)); return r; };
+            },
+          });
+          return wrap(db.prepare(sql));
+        },
+    });
+    const post = (id: string, e: unknown) =>
+      worker.fetch(new Request(`https://beam.n10.is/v1/fleets/${id}/entries`, { method: "POST", body: JSON.stringify(e) }), { ...env, DB: slow });
+    const count = async (id: string) => (await env.DB.prepare("SELECT count(*) AS n FROM entries WHERE fleet_id = ?").bind(id).first<number>("n"));
+
+    const distinct = await seeded(4999);
+    const entries = await Promise.all(Array.from({ length: 12 }, () => entry(distinct.auth, "member")));
+    const codes = (await Promise.all(entries.map((e) => post(distinct.id, e)))).map((r) => r.status).sort();
+    expect(codes).toEqual([201, ...Array(11).fill(413)]);
+    expect(await count(distinct.id)).toBe(5000);
+
+    const same = await seeded(4999);
+    const e = await entry(same.auth, "member");
+    const answers = await Promise.all(Array.from({ length: 6 }, async () => { const r = await post(same.id, e); return [r.status, await r.json()]; }));
+    expect(answers.filter(([s]) => s === 201)).toEqual([[201, { seq: 5000 }]]);
+    expect(answers.filter(([s]) => s !== 201)).toEqual(Array(5).fill([200, { seq: 5000 }]));
+  });
+
+  // A request body is refused past 16 KiB as it arrives, whatever its
+  // Content-Length says, before anything parses it.
+  it("reads at most 16 KiB of a request", async () => {
+    const f = await fleet();
+    const padded = { credentialId: f.auth.credentialId, credentialPublicKey: b64(f.auth.cose), readToken: b64(f.token), first: await entry(f.auth, "member"), padding: "x".repeat(2 << 20) };
+    const text = JSON.stringify(padded);
+    const stream = () => new Blob([text]).stream();
+    for (const init of [
+      { body: text },
+      { body: stream() },
+      { body: stream(), headers: { "Content-Length": "100" } },
+    ] as RequestInit[]) {
+      const res = await exports.default.fetch(new Request("https://beam.n10.is/v1/fleets", { method: "POST", ...init }));
+      expect([res.status, await res.json()]).toEqual([413, { error: "too-large" }]);
+    }
+    expect((await call("GET", "/v1/entries", undefined, f.token)).status).toBe(401);
   });
 });
 
