@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/notaharness/beam/internal/cli"
 	"github.com/notaharness/beam/internal/control"
 	"github.com/notaharness/beam/internal/devderp"
 	"github.com/notaharness/beam/internal/identity"
@@ -618,5 +619,16 @@ func TestDaemonDetach(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(m.dir, "daemon.log")); err != nil {
 		t.Errorf("no daemon.log: %v", err)
+	}
+}
+
+// docs/07: beam version prints the build's version and starts no daemon.
+func TestVersion(t *testing.T) {
+	m := blank(t, "fresh")
+	if r := m.beam("", "version"); r.code != 0 || r.out != cli.Version+"\n" {
+		t.Errorf("version: %+v", r)
+	}
+	if _, err := os.Stat(m.paths().Socket); !os.IsNotExist(err) {
+		t.Errorf("the daemon's socket: %v", err)
 	}
 }
