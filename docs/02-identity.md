@@ -76,10 +76,13 @@ $BEAM_DIR/
 ```
 
 The signed statement is `canonical(entry without assertion)`: JSON per RFC 8785 (JCS),
-keys sorted, no whitespace, integers only. Its hash is the WebAuthn challenge:
+keys sorted, no whitespace, integers only (safe integers; a duplicate key or any other
+number is `bad-entry`). The WebAuthn challenge commits to its hash, so the directory
+worker can recompute it without the plaintext:
 
 ```
-challenge = SHA-256( "beam-member:v1" ‖ canonical(statement) )
+statementHash = SHA-256( canonical(statement) )
+challenge     = SHA-256( "beam-member:v1" ‖ statementHash )
 ```
 
 **Verification**, given `fleet.json`:
@@ -108,7 +111,8 @@ machine that changes its address re-runs `beam join`, which is one tap.
 { "v": 1, "kind": "revoke", "peerId": "…", "issuedAt": …, "assertion": { … } }
 ```
 
-`challenge = SHA-256("beam-revoke:v1" ‖ canonical(statement))`, verified as above.
+`challenge = SHA-256("beam-revoke:v1" ‖ statementHash)`, verified as above (steps 1, 4
+and 5; a revocation carries no `nodePublic`, `address` or `label`).
 Permanent: every holder re-sends it forever, so there is no un-revoke; a revoked machine
 returns with a new node key, which is a new `peerId`.
 
