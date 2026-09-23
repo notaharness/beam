@@ -12,7 +12,9 @@ import (
 
 	"github.com/notaharness/beam/internal/stream"
 	"github.com/tailscale/tailcat"
+	"go4.org/mem"
 	"tailscale.com/types/key"
+	"tailscale.com/types/logger"
 )
 
 // dialTimeout bounds bringing up a tunnel and its hello (docs/03, Lifecycle).
@@ -24,7 +26,6 @@ type Config struct {
 	Entry  json.RawMessage // this machine's signed entry, sent in every hello
 	Admit  AdmitFunc
 	Handle HandleFunc
-	Logf   func(format string, args ...any)
 }
 
 // Node is a machine's transport: its Server and the Clients it dialed.
@@ -51,7 +52,7 @@ func Start(cfg Config) (*Node, error) {
 		Key:          cfg.Key.pk.Private,
 		PresharedKey: cfg.Key.pk.Public.PresharedKey,
 		Region:       cfg.Key.pk.Public.Region[0],
-		Logf:         cfg.Logf,
+		Logf:         logger.Discard, // tailcat narrates every packet path; beam logs its own events
 	}
 	ln, err := srv.Listen(context.Background(), "tcp", fmt.Sprintf(":%d", Port))
 	if err != nil {
@@ -87,6 +88,37 @@ func (n *Node) serve(conn net.Conn) {
 		}
 	}
 	conn.Close()
+}
+
+// Drop retires the tunnel peerID dialed to us and closes its streams: for a
+// revoked peer. Its client key is never admitted again.
+func (n *Node) Drop(peerID string) {
+	n.adm.drop(peerID)
+}
+
+// Retire retires the tunnel a stream from a peer arrived on, closing all its
+// streams: for a tunnel whose dialer has gone silent.
+func (n *Node) Retire(c *stream.Conn) {
+	n.adm.retireConn(c.Conn)
+}
+
+// Path is how the tunnel peerID dialed to us travels: "direct", "relay
+// <region>", or "unknown" (docs/03, Lifecycle).
+func (n *Node) Path(peerID string) string {
+	c, ok := n.adm.clientOf(peerID)
+	if !ok {
+		return "unknown"
+	}
+	ps := n.srv.Status().Peer[key.NodePublicFromRaw32(mem.B(c[:]))]
+	switch {
+	case ps == nil:
+		return "unknown"
+	case ps.CurAddr != "":
+		return "direct"
+	case ps.Relay != "":
+		return "relay " + ps.Relay
+	}
+	return "unknown"
 }
 
 // Close closes every tunnel this machine dialed and its Server.
@@ -130,7 +162,7 @@ func (n *Node) Dial(ctx context.Context, address string) (*Tunnel, error) {
 	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
 	defer cancel()
 	defer context.AfterFunc(n.ctx, cancel)()
-	t := &Tunnel{node: n, client: &tailcat.Client{Server: tailcat.Addr(address), Logf: n.cfg.Logf}}
+	t := &Tunnel{node: n, client: &tailcat.Client{Server: tailcat.Addr(address), Logf: logger.Discard}}
 	err = t.hello(ctx, r)
 	if err == nil && n.beforeRegister != nil {
 		n.beforeRegister()

@@ -18,7 +18,6 @@ import (
 
 	"github.com/notaharness/beam/internal/devderp"
 	"tailscale.com/tailcfg"
-	"tailscale.com/types/logger"
 )
 
 // A fleet with one process per machine as in production, each with one Server
@@ -157,7 +156,7 @@ func runFootprintChild(region string) error {
 	k := NewKey(&reg)
 	id, entry := entryFor(k)
 	t0 := time.Now()
-	n, err := Start(Config{Key: k, Entry: entry, Admit: admitFake, Handle: echoCaller, Logf: logger.Discard})
+	n, err := Start(Config{Key: k, Entry: entry, Admit: admitFake, Handle: echoCaller})
 	if err != nil {
 		return err
 	}

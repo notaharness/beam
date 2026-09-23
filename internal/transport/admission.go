@@ -121,12 +121,47 @@ func (a *admission) finish(c [32]byte, peer, reason string) {
 		*t = tunnel{state: dead}
 		return
 	}
-	for old, o := range a.tunnels {
-		if o.peer == peer { // only a bound record has a peer
-			a.kill(old)
+	a.killPeer(peer)
+	*t = tunnel{state: bound, peer: peer, streams: map[net.Conn]bool{}}
+}
+
+// drop fails the tunnels bound to peer, a revoked member.
+func (a *admission) drop(peer string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.killPeer(peer)
+}
+
+// retireConn fails the bound tunnel a stream arrived on.
+func (a *admission) retireConn(conn net.Conn) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for c, t := range a.tunnels {
+		if t.streams[conn] {
+			a.kill(c)
+			return
 		}
 	}
-	*t = tunnel{state: bound, peer: peer, streams: map[net.Conn]bool{}}
+}
+
+// clientOf is the client key of the tunnel bound to peer.
+func (a *admission) clientOf(peer string) ([32]byte, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for c, t := range a.tunnels {
+		if t.peer == peer {
+			return c, true
+		}
+	}
+	return [32]byte{}, false
+}
+
+func (a *admission) killPeer(peer string) {
+	for c, t := range a.tunnels {
+		if t.peer == peer { // only a bound record has a peer
+			a.kill(c)
+		}
+	}
 }
 
 // kill fails c's record, detaching and closing its connections: a pending

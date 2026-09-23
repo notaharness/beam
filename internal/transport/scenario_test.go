@@ -93,7 +93,7 @@ func startMachineWith(t testing.TB, admit AdmitFunc) *machine {
 	t.Helper()
 	k := NewKey(relay.Region)
 	id, entry := entryFor(k)
-	n, err := Start(Config{Key: k, Entry: entry, Admit: admit, Handle: echoCaller, Logf: logger.Discard})
+	n, err := Start(Config{Key: k, Entry: entry, Admit: admit, Handle: echoCaller})
 	if err != nil {
 		t.Fatal(err)
 	}

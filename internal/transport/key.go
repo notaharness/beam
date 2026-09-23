@@ -4,6 +4,7 @@
 package transport
 
 import (
+	"encoding/json"
 	"errors"
 
 	"github.com/tailscale/tailcat"
@@ -25,6 +26,27 @@ func NewKey(region *tailcfg.DERPRegion) *Key {
 	pk := tailcat.NewPrivateKey()
 	pk.Public.Region = []*tailcfg.DERPRegion{region}
 	return &Key{*pk}
+}
+
+// MarshalJSON is key.json: tailcat's PrivateKey, region included.
+func (k *Key) MarshalJSON() ([]byte, error) {
+	return json.Marshal(k.pk)
+}
+
+// UnmarshalJSON reads key.json, refusing a key without exactly one region.
+func (k *Key) UnmarshalJSON(b []byte) error {
+	if err := json.Unmarshal(b, &k.pk); err != nil {
+		return err
+	}
+	if k.pk.Private.IsZero() || len(k.pk.Public.Region) != 1 || k.pk.Public.PresharedKey.IsZero() {
+		return errors.New("key.json: need a node key, a pre-shared key and one DERP region")
+	}
+	return nil
+}
+
+// RegionCode names the DERP region the key is homed on.
+func (k *Key) RegionCode() string {
+	return k.pk.Public.Region[0].RegionCode
 }
 
 // Address is the tailcat address that reaches this machine's Server.
