@@ -31,9 +31,10 @@ type admission struct {
 	handle HandleFunc
 
 	mu      sync.Mutex
-	bound   map[[32]byte]string // client key → peer id
-	failed  map[[32]byte]bool   // client keys whose hello was refused
-	pending []unbound           // tunnels in hello, oldest first
+	bound   map[[32]byte]string            // client key → peer id
+	streams map[[32]byte]map[net.Conn]bool // open streams of each bound tunnel
+	dead    map[[32]byte]bool              // refused or superseded client keys
+	pending []unbound                      // tunnels in hello, oldest first
 }
 
 type unbound struct {
@@ -43,15 +44,19 @@ type unbound struct {
 
 func newAdmission(k *Key, admit AdmitFunc, handle HandleFunc) *admission {
 	return &admission{key: k, admit: admit, handle: handle,
-		bound: map[[32]byte]string{}, failed: map[[32]byte]bool{}}
+		bound: map[[32]byte]string{}, streams: map[[32]byte]map[net.Conn]bool{}, dead: map[[32]byte]bool{}}
 }
 
 // serve takes one accepted stream from the tunnel whose client key is c.
 func (a *admission) serve(conn net.Conn, c [32]byte) {
 	a.mu.Lock()
 	peer, ok := a.bound[c]
+	if ok { // registered under the lock that retirement takes to close it
+		a.streams[c][conn] = true
+	}
 	a.mu.Unlock()
 	if ok {
+		defer a.forget(c, conn)
 		a.serveBound(stream.NewConn(conn), peer)
 		return
 	}
@@ -85,7 +90,7 @@ func (a *admission) serveBound(sc *stream.Conn, peer string) {
 func (a *admission) enter(c [32]byte, conn net.Conn) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.failed[c] {
+	if a.dead[c] {
 		return false
 	}
 	for _, u := range a.pending {
@@ -171,21 +176,35 @@ func (a *admission) verify(p []byte, c [32]byte) (peer, reason string) {
 
 func (a *admission) fail(c [32]byte) {
 	a.mu.Lock()
-	a.failed[c] = true
+	a.dead[c] = true
 	a.mu.Unlock()
 }
 
-// bind attributes the tunnel to peer. A peer has one dialed tunnel to us per
-// process, so an older binding for it belongs to a process that is gone.
+// bind attributes the tunnel to peer and retires any older tunnel of the same
+// peer: its open streams close and it is admitted no more, so exactly one
+// tunnel carries each peer's opens.
 func (a *admission) bind(c [32]byte, peer string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	for old, p := range a.bound {
-		if p == peer {
-			delete(a.bound, old)
+		if p != peer || old == c {
+			continue
 		}
+		delete(a.bound, old)
+		a.dead[old] = true
+		for conn := range a.streams[old] {
+			conn.Close()
+		}
+		delete(a.streams, old)
 	}
 	a.bound[c] = peer
+	a.streams[c] = map[net.Conn]bool{}
+}
+
+func (a *admission) forget(c [32]byte, conn net.Conn) {
+	a.mu.Lock()
+	delete(a.streams[c], conn)
+	a.mu.Unlock()
 }
 
 func writeResult(sc *stream.Conn, reason string) {
