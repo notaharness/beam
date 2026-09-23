@@ -18,7 +18,8 @@ const (
 // Exec serves an exec stream on the acceptor: it answers h, runs argv in its
 // own process group, and pumps stdin, stdout and stderr as channel-tagged data
 // frames until the process exits (close "exit" once output drains) or the
-// opener goes away (its input is closed and the group killed).
+// opener goes away (its input is closed and the group killed). The stream's
+// end kills the group in either case.
 func Exec(c *Conn, h Header, sp Spawn) {
 	cmd, stdin, stdout, stderr, ref := startExec(c, h, sp)
 	if ref != nil {
@@ -33,16 +34,20 @@ func Exec(c *Conn, h Header, sp Spawn) {
 	drained.Go(func() { pumpOutput(stderr, chanStderr, w) })
 	q := make(chan []byte, inputAhead)
 	go deliver(q, stdin)
-	openerDone := make(chan struct{})
+	openerDone := make(chan struct{}) // the opener has closed its side
+	tornDown := make(chan struct{})   // and the group got its SIGKILL
 	go func() {
-		defer close(openerDone)
+		defer close(tornDown)
 		feed(c, q, execFrame)
+		close(openerDone)
 		_ = stdin.Close() // frees a write the process was not reading
 		g.signal(syscall.SIGKILL)
 	}()
 	drained.Wait()
+	<-g.exited
+	w.finish(exitMsg(g.status), openerDone)
+	<-tornDown // the group, which may outlive its leader, before the reap
 	g.reap()
-	w.finish(exitMsg(cmd.ProcessState), openerDone)
 }
 
 func startExec(c *Conn, h Header, sp Spawn) (*exec.Cmd, io.WriteCloser, io.Reader, io.Reader, *refusal) {

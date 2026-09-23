@@ -128,10 +128,10 @@ func mergeEnv(base []string, over, inject map[string]string) []string {
 
 // exitMsg is the close frame for a finished process. A process killed by a
 // signal reports 128+signal as its exit code, as a shell does.
-func exitMsg(ps *os.ProcessState) CloseMsg {
-	code := ps.ExitCode()
+func exitMsg(ws syscall.WaitStatus) CloseMsg {
+	code := ws.ExitStatus()
 	msg := CloseMsg{Reason: "exit", ExitCode: &code}
-	if ws, ok := ps.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+	if ws.Signaled() {
 		code = 128 + int(ws.Signal())
 		name := unix.SignalName(ws.Signal())
 		msg.Signal = &name
@@ -141,10 +141,12 @@ func exitMsg(ps *os.ProcessState) CloseMsg {
 
 // group is a stream's process group. Its leader is reaped only after the
 // group's teardown: until then the leader, even exited, holds the group id,
-// so a signal to the group never reaches a process that reused it.
+// so a signal to the group never reaches a process that reused it. Its exit
+// status is read without reaping it.
 type group struct {
 	cmd    *exec.Cmd
-	exited chan struct{} // the leader has exited; it is not yet reaped
+	exited chan struct{}      // the leader has exited
+	status syscall.WaitStatus // its status, once exited
 
 	mu     sync.Mutex
 	reaped bool
@@ -153,7 +155,12 @@ type group struct {
 func newGroup(cmd *exec.Cmd) *group {
 	g := &group{cmd: cmd, exited: make(chan struct{})}
 	go func() {
-		_ = awaitExit(cmd.Process.Pid) // one that cannot be waited for has gone
+		ws, err := awaitExit(cmd.Process.Pid)
+		if err != nil { // it cannot be watched unreaped: reap it for its status, and signal it no more
+			g.reap()
+			ws = cmd.ProcessState.Sys().(syscall.WaitStatus)
+		}
+		g.status = ws
 		close(g.exited)
 	}()
 	return g
@@ -167,14 +174,15 @@ func (g *group) signal(sig syscall.Signal) {
 	}
 }
 
-// reap collects the exited leader, under the lock signals take: no signal to
-// its group follows the reap that frees the group id.
+// reap collects the leader, waiting for it to exit, under the lock signals
+// take: no signal to its group follows the reap that frees the group id.
 func (g *group) reap() {
-	<-g.exited
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	_ = g.cmd.Wait() // the status is in cmd.ProcessState
-	g.reaped = true
+	if !g.reaped {
+		_ = g.cmd.Wait() // its status is exitMsg's, read before
+		g.reaped = true
+	}
 }
 
 // inputAhead is how many of the opener's frames are read ahead of a process

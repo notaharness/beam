@@ -14,8 +14,8 @@ import (
 // PTY serves a pty stream on the acceptor: it answers h, runs argv (or the
 // login shell) on a new terminal in its own session, and pumps raw bytes both
 // ways. The opener resizes with control frames. When the process exits the
-// acceptor sends close "exit"; when the opener closes or goes away the session
-// gets SIGHUP, then SIGKILL after 5 s.
+// acceptor sends close "exit"; when the opener closes or goes away, before or
+// after that, the session gets SIGHUP, then SIGKILL after 5 s.
 func PTY(c *Conn, h Header, sp Spawn) {
 	cmd, f, ref := startPTY(c, h, sp)
 	if ref != nil {
@@ -33,11 +33,11 @@ func PTY(c *Conn, h Header, sp Spawn) {
 	}()
 	q := make(chan []byte, inputAhead)
 	go deliver(q, f)
-	killed := make(chan struct{}) // the group got its SIGKILL
-	openerDone := make(chan struct{})
+	openerDone := make(chan struct{}) // the opener has closed its side
+	killed := make(chan struct{})     // and the group got its SIGKILL
 	go func() {
-		defer close(openerDone)
 		feed(c, q, ptyFrame(f))
+		close(openerDone)
 		g.signal(syscall.SIGHUP)
 		f.Close() // frees a write the session was not reading
 		time.AfterFunc(killGrace, func() { g.signal(syscall.SIGKILL); close(killed) })
@@ -47,13 +47,9 @@ func PTY(c *Conn, h Header, sp Spawn) {
 	case <-output:
 	case <-time.After(time.Second):
 	}
-	select {
-	case <-openerDone: // the opener left first: the group is killed before the leader is reaped
-		<-killed
-	default:
-	}
+	w.finish(exitMsg(g.status), openerDone)
+	<-killed // the group, which may outlive its leader, before the reap
 	g.reap()
-	w.finish(exitMsg(cmd.ProcessState), openerDone)
 }
 
 func startPTY(c *Conn, h Header, sp Spawn) (*exec.Cmd, *os.File, *refusal) {

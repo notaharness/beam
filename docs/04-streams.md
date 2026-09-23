@@ -67,6 +67,10 @@ leader has already exited.
 Exit as for `pty`, after stdout and stderr drain. Opener close or connection loss closes
 stdin and kills the process group.
 
+For both, the process group ends with the stream: descendants still running after their
+leader exited get the same teardown once the opener closes (after `close "exit"` or not).
+A process meant to outlive the stream starts its own session.
+
 ## `msg`
 
 Opened by the dialer; carries mail **from the dialer to the acceptor only**. One per

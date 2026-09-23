@@ -204,6 +204,30 @@ func TestHangupThenKill(t *testing.T) {
 	waitGone(t, child)
 }
 
+// docs/04, D30: the group outlives a leader that exits first, and the opener's
+// end still tears it down: the exit close comes before the reap.
+func TestLeaderExitsFirst(t *testing.T) {
+	for _, kind := range []string{stream.KindExec, stream.KindPTY} {
+		t.Run(kind, func(t *testing.T) {
+			b := fleet(t, "beta")[0]
+			tun, _ := rawTunnel(t, b)
+			dir := t.TempDir()
+			os.WriteFile(dir+"/child.sh", []byte("trap '' HUP; echo $$ > "+dir+"/child; exec sleep 300\n"), 0o600)
+			s := rawOpen(t, tun, stream.Header{V: 1, Kind: kind, Cols: 80, Rows: 24, Argv: []string{"sh", "-c",
+				"sh " + dir + "/child.sh >/dev/null 2>&1 </dev/null & while [ ! -s " + dir + "/child ]; do sleep 0.1; done; exit 3"}})
+			if msg := readClose(t, s); msg.Reason != "exit" || msg.ExitCode == nil || *msg.ExitCode != 3 {
+				t.Fatalf("close %+v, want exit 3", msg)
+			}
+			child := waitPid(t, dir+"/child")
+			if ended(child) {
+				t.Fatal("the child ended with its leader")
+			}
+			s.Close()
+			waitGone(t, child)
+		})
+	}
+}
+
 // Losing the opener's machine hangs up the remote session once its silence
 // passes the 30 s liveness bound (docs/03).
 func TestConnectLossKillsSession(t *testing.T) {
