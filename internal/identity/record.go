@@ -98,6 +98,15 @@ func (r Record) Supersedes(s Record) bool {
 	return bytes.Compare(a[:], b[:]) > 0
 }
 
+// Fingerprint is a peer id's display form (docs/02): its first 16 characters
+// in groups of four.
+func Fingerprint(peerID string) string {
+	if len(peerID) < 16 {
+		return peerID
+	}
+	return peerID[0:4] + " " + peerID[4:8] + " " + peerID[8:12] + " " + peerID[12:16]
+}
+
 // PeerID is the lowercase hex of the first 16 bytes of SHA-256(nodePublic).
 func PeerID(nodePublic [32]byte) string {
 	h := sha256.Sum256(nodePublic[:])
