@@ -81,7 +81,13 @@ func TestWriteLineCap(t *testing.T) {
 }
 
 func TestReadLineErrors(t *testing.T) {
-	for _, in := range []string{"", "{\"v\":1", "not json\n"} {
+	for _, in := range []string{
+		"",
+		"{\"v\":1",
+		"not json\n",
+		"{\"v\":1,\"kind\":\"hello\"} junk\n", // one value, then garbage
+		"{\"v\":1,\"kind\":\"hello\"}{\"v\":2}\n", // two values on one line
+	} {
 		c := &Conn{r: bufio.NewReader(strings.NewReader(in))}
 		var h Header
 		if err := c.ReadLine(&h); err == nil {

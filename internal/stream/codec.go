@@ -4,7 +4,6 @@ package stream
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -92,8 +91,7 @@ func (c *Conn) ReadLine(v any) error {
 			return err
 		}
 	}
-	d := json.NewDecoder(bytes.NewReader(line))
-	return d.Decode(v)
+	return json.Unmarshal(line, v) // the whole line is one value
 }
 
 // WriteFrame writes one frame.
