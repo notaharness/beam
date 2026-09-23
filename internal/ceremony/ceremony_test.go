@@ -186,6 +186,27 @@ func TestResultAnswered(t *testing.T) {
 	}
 }
 
+// docs/02 Ceremonies: a result nobody waits for expires at the ceremony's
+// deadline; a wait after it hears ceremony-timeout, not the stale result.
+func TestAnsweredExpires(t *testing.T) {
+	defer SetTimeout(200 * time.Millisecond)()
+	a := identity.NewAuthenticator()
+	j, _ := json.Marshal(a)
+	t.Setenv("BEAM_TEST_AUTHENTICATOR", string(j))
+	c, err := Start(Request{Op: Get, Challenge: []byte("0123456789abcdef0123456789abcdef")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-c.TimedOut():
+	case <-time.After(5 * time.Second):
+		t.Fatal("an answered ceremony nobody waited for never expired")
+	}
+	if _, err := c.Wait(context.Background()); !errors.Is(err, ErrTimeout) {
+		t.Errorf("a wait after the deadline: %v, want %v", err, ErrTimeout)
+	}
+}
+
 // A request that stalls holds Close for a second at most, then is cut off.
 func TestCloseStalled(t *testing.T) {
 	c, err := Start(Request{Op: Get})

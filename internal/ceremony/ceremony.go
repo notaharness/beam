@@ -62,7 +62,9 @@ type Ceremony struct {
 	done     chan outcome
 	once     sync.Once
 	timer    *time.Timer   // the ceremony's one clock, from Start
-	timedOut chan struct{} // closed if the timeout ended it
+	mu       sync.Mutex    // orders a wait's take against the clock
+	taken    bool          // a wait has the outcome
+	timedOut chan struct{} // closed if the clock ran out before a wait took the outcome
 }
 
 type outcome struct {
@@ -85,11 +87,7 @@ func Start(req Request) (*Ceremony, error) {
 	rand.Read(state)
 	c := &Ceremony{req: req, state: b64(state), Port: ln.Addr().(*net.TCPAddr).Port, done: make(chan outcome, 1),
 		timedOut: make(chan struct{})}
-	c.timer = time.AfterFunc(Timeout, func() {
-		if c.finish(Result{}, ErrTimeout) {
-			close(c.timedOut)
-		}
-	})
+	c.timer = time.AfterFunc(Timeout, c.expire)
 	frag := url.Values{"op": {req.Op}, "state": {c.state}, "port": {strconv.Itoa(c.Port)}, "action": {req.Action},
 		"label": {req.Label}, "fingerprint": {req.Fingerprint}, "challenge": {b64(req.Challenge)}}
 	if req.Op == Create {
@@ -108,25 +106,51 @@ func Start(req Request) (*Ceremony, error) {
 }
 
 // Wait returns the page's result once it arrives, or why the ceremony ended
-// without one: its timeout, Timeout after Start; a callback with the wrong
+// without one: its timeout, Timeout after Start, which also takes a result
+// that arrived and was not waited for by then; a callback with the wrong
 // state; the page's own failure; or ctx's end (cancelled), unless one of the
 // others came with it. The listener is closed either way.
 func (c *Ceremony) Wait(ctx context.Context) (Result, error) {
 	defer c.Close()
 	select {
 	case o := <-c.done:
-		return o.r, o.err
+		return c.take(o)
 	case <-ctx.Done():
 		select {
 		case o := <-c.done:
-			return o.r, o.err
+			return c.take(o)
 		default:
 			return Result{}, ErrCancelled
 		}
 	}
 }
 
-// TimedOut is closed if the ceremony's timeout ended it.
+// take gives a wait the outcome, unless the clock ran out first.
+func (c *Ceremony) take(o outcome) (Result, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	select {
+	case <-c.timedOut:
+		return Result{}, ErrTimeout
+	default:
+	}
+	c.taken = true
+	return o.r, o.err
+}
+
+// expire is the clock running out: the ceremony ends ceremony-timeout if
+// nothing ended it before, and TimedOut closes unless a wait has taken the
+// outcome, so a result nobody waits for expires too.
+func (c *Ceremony) expire() {
+	c.finish(Result{}, ErrTimeout)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.taken {
+		close(c.timedOut)
+	}
+}
+
+// TimedOut is closed if the clock ran out before a wait took the outcome.
 func (c *Ceremony) TimedOut() <-chan struct{} { return c.timedOut }
 
 // Close ends the ceremony's listener and its clock. A request under way, the
@@ -140,14 +164,9 @@ func (c *Ceremony) Close() {
 	_ = c.srv.Close() // what the second did not end
 }
 
-// finish ends the ceremony with r or err, and reports whether this was its
-// end rather than a later one.
-func (c *Ceremony) finish(r Result, err error) (first bool) {
-	c.once.Do(func() {
-		c.done <- outcome{r, err}
-		first = true
-	})
-	return first
+// finish ends the ceremony with r or err, unless it has ended already.
+func (c *Ceremony) finish(r Result, err error) {
+	c.once.Do(func() { c.done <- outcome{r, err} })
 }
 
 // landing is /cb: its script reads the fragment the page navigated with,

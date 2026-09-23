@@ -723,6 +723,28 @@ func TestCeremonyTimeout(t *testing.T) {
 	c.Call("ceremony.cancel", nil, nil)
 }
 
+// docs/02 Ceremonies: a ceremony answered that nobody waits on ends at the
+// same deadline, and frees the daemon for the next.
+func TestCeremonyAnsweredUnwaited(t *testing.T) {
+	defer ceremony.SetTimeout(time.Second)()
+	m := blank(t, "fresh")
+	m.start(t)
+	c, err := control.Connect(m.paths(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	start := map[string]any{"label": "fresh"}
+	if err := c.Call("join.start", start, nil); err != nil { // the test authenticator answers at once
+		t.Fatal(err)
+	}
+	time.Sleep(2 * time.Second)
+	if err := c.Call("join.start", start, nil); err != nil {
+		t.Errorf("a start after one answered and not waited on expired: %v", err)
+	}
+	c.Call("ceremony.cancel", nil, nil)
+}
+
 // docs/06: one ceremony at a time, a *.wait answers only its own *.start,
 // and ceremony.cancel ends the one under way, closing its listener, so the
 // next can start.
