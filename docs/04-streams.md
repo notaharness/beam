@@ -66,7 +66,8 @@ leader has already exited.
 (opener→acceptor), `1` stdout, `2` stderr. `control {"kind":"stdin-eof"}` ends stdin.
 Exit as for `pty`, after stdout and stderr drain. Opener close or connection loss closes
 stdin and kills the process group with SIGKILL at once: `pty`'s SIGHUP and 5 s grace do
-not apply.
+not apply. Output then drains for at most 1 s more, as a process that left the group may
+hold it open.
 
 For both, the process group ends with the stream: descendants still running after their
 leader exited get the same teardown once the opener closes (after `close "exit"` or not).

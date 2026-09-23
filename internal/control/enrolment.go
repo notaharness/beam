@@ -15,7 +15,6 @@ import (
 	"github.com/notaharness/beam/internal/identity"
 	"github.com/notaharness/beam/internal/mailbox"
 	"github.com/notaharness/beam/internal/store"
-	"github.com/notaharness/beam/internal/stream"
 	"github.com/notaharness/beam/internal/transport"
 )
 
@@ -34,8 +33,7 @@ type enrolment struct {
 
 	writing sync.Mutex // one directory write at a time: a publish, or a pass over the queue
 
-	serving  sync.Mutex
-	ending   bool           // end has begun: no new stream is served
+	serving  sync.Mutex     // orders a stream's admission against end
 	handlers sync.WaitGroup // the streams served on e, until each has torn down
 }
 
@@ -43,29 +41,24 @@ type enrolment struct {
 // SIGHUP, its SIGKILL after 5 s, and its reap (docs/04).
 const teardown = 10 * time.Second
 
-// serve runs a stream's handler on e, unless e is ending, and counts it
-// until it returns.
-func (e *enrolment) serve(c *stream.Conn, handle func()) {
+// admitting counts a new stream on e, which the caller ends with
+// e.handlers.Done, unless e is ending.
+func (e *enrolment) admitting() bool {
 	e.serving.Lock()
-	if e.ending {
-		e.serving.Unlock()
-		c.Close()
-		return
+	defer e.serving.Unlock()
+	if e.ctx.Err() != nil {
+		return false
 	}
 	e.handlers.Add(1)
-	e.serving.Unlock()
-	defer e.handlers.Done()
-	handle()
+	return true
 }
 
 // end stops what runs on e and waits, up to teardown, for its streams to
-// tear down, so that their processes are gone before the daemon is; its
-// store stays open for the caller to close.
+// tear down; its store stays open for the caller to close.
 func (e *enrolment) end() {
 	e.serving.Lock()
-	e.ending = true
-	e.serving.Unlock()
 	e.cancel()
+	e.serving.Unlock()
 	e.node.Close()
 	done := make(chan struct{})
 	go func() { e.handlers.Wait(); close(done) }()

@@ -20,9 +20,14 @@ type granted struct {
 	kind string
 }
 
-// handle serves a stream an admitted peer opened here. Revocation and the
-// grant are read per open.
+// handle serves a stream an admitted peer opened here, unless e is ending.
+// Revocation and the grant are read per open.
 func (d *daemon) handle(e *enrolment, peerID string, h stream.Header, c *stream.Conn) {
+	if !e.admitting() {
+		c.Close()
+		return
+	}
+	defer e.handlers.Done()
 	switch h.Kind {
 	case stream.KindSync:
 		d.serveSync(e, peerID, c)

@@ -39,6 +39,8 @@ var (
 func TestMain(m *testing.M) {
 	// Connect-or-spawn runs this binary as `beam daemon --detach`.
 	if len(os.Args) > 1 && os.Args[1] == "daemon" {
+		devderp.Isolate()
+		devderp.ForceRelay()
 		os.Exit(cli.Main(os.Args[1:], os.Environ(), os.Stdin, os.Stdout, os.Stderr))
 	}
 	if len(os.Args) > 1 && os.Args[1] == "parent" {
