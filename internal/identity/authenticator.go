@@ -118,19 +118,23 @@ func (a *Authenticator) Sign(authData, clientData []byte) *Assertion {
 }
 
 // Attest is what a create for beam returns: the client data, and an
-// attestation object with no attestation statement whose authenticator data
-// (user present and verified, attested credential data) carries this
-// credential.
+// attestation object for beam with the user present and verified.
 func (a *Authenticator) Attest(challenge []byte) (clientData, attestationObject []byte) {
+	return ClientDataJSON("webauthn.create", challenge, Origin), a.AttestationObject(RPID, FlagUP|FlagUV)
+}
+
+// AttestationObject is an attestation object with no attestation statement
+// whose authenticator data, for rpID with flags, carries this credential.
+func (a *Authenticator) AttestationObject(rpID string, flags byte) []byte {
 	id, _ := base64.RawURLEncoding.DecodeString(a.CredentialID)
-	authData := AuthenticatorData(RPID, FlagUP|FlagUV|flagAT)
+	authData := AuthenticatorData(rpID, flags|flagAT)
 	authData = append(authData, make([]byte, 16)...) // AAGUID
 	authData = append(authData, byte(len(id)>>8), byte(len(id)))
 	authData = append(append(authData, id...), a.Credential().PublicKey...)
 	// CBOR {"fmt": "none", "attStmt": {}, "authData": authData}
 	att := []byte{0xa3, 0x63, 'f', 'm', 't', 0x64, 'n', 'o', 'n', 'e', 0x67, 'a', 't', 't', 'S', 't', 'm', 't', 0xa0,
 		0x68, 'a', 'u', 't', 'h', 'D', 'a', 't', 'a', 0x59, byte(len(authData) >> 8), byte(len(authData))}
-	return ClientDataJSON("webauthn.create", challenge, Origin), append(att, authData...)
+	return append(att, authData...)
 }
 
 // flagAT marks authenticator data that carries attested credential data.
