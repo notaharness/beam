@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"math/big"
 	"os"
+	"strings"
 
 	"github.com/notaharness/beam/internal/identity"
 	"github.com/tailscale/tailcat"
@@ -175,6 +176,56 @@ func main() {
 		return c[:]
 	}())
 	add("revoke signed with the member domain", confused, identity.BadAssertion)
+
+	// One otherwise valid, correctly signed vector per remaining check.
+	v2 := member(n0)
+	v2.V = 2
+	add("version 2", signed(v2), identity.BadEntry)
+	kind := member(n0)
+	kind.Kind = "admin"
+	add("unknown kind", signed(kind), identity.BadEntry)
+	upper := revoke
+	upper.PeerID = strings.ToUpper(n2.PeerID)
+	add("revoke naming a malformed peer id", signed(upper), identity.BadEntry)
+	labelled := revoke
+	labelled.Label = "buildbox"
+	add("revoke carrying a label", signed(labelled), identity.BadEntry)
+	notB64 := member(n0)
+	notB64.NodePublic = "!" + n0.NodePublic[1:]
+	add("node key not base64url", signed(notB64), identity.BadEntry)
+	short := member(n0)
+	short.NodePublic = n0.NodePublic[:42] // 31 bytes
+	add("node key of 31 bytes", signed(short), identity.BadEntry)
+	unparsed := member(n0)
+	unparsed.Address = "not an address"
+	add("address that does not parse", signed(unparsed), identity.BadEntry)
+	zeroKey := identity.Record{V: 1, Kind: identity.Member, PeerID: identity.PeerID([32]byte{}),
+		NodePublic: b64(make([]byte, 32)), Address: "not an address", Label: "buildbox", IssuedAt: 1758570000000}
+	add("zero node key and an address that does not parse", signed(zeroKey), identity.BadEntry) // AddressKey's zero key on error matches
+	empty := member(n0)
+	empty.Label = ""
+	add("empty label", signed(empty), identity.BadEntry)
+	add("no assertion", member(n0), identity.BadAssertion)
+	onlyID := signed(member(n0))
+	onlyID.Assertion.CredentialID = other.Credential().ID // the signature still verifies under the fleet key
+	add("credential id changed alone", onlyID, identity.WrongPasskey)
+	cross := member(n0)
+	cross.Assertion = a.Sign(uvData, []byte(`{"type":"webauthn.get","challenge":"`+b64(cross.Challenge())+
+		`","origin":"`+identity.Origin+`","crossOrigin":true}`))
+	add("cross-origin client data", cross, identity.BadAssertion)
+
+	// Several faults at once pin the order of the checks.
+	v2foreign := member(n0)
+	v2foreign.V = 2
+	other.SignRecord(&v2foreign)
+	add("version 2 signed by another credential", v2foreign, identity.BadEntry)
+	foreignRevoked := member(n2)
+	other.SignRecord(&foreignRevoked)
+	add("revoked member signed by another credential", foreignRevoked, identity.WrongPasskey)
+	badSigRevoked := signed(member(n2))
+	badSigRevoked.Assertion.Signature = badSig.Assertion.Signature
+	add("revoked member with a bad signature", badSigRevoked, identity.BadAssertion)
+	add("revoke of a revoked peer", signed(revoke), "")
 
 	e := json.NewEncoder(os.Stdout)
 	e.SetIndent("", "  ")

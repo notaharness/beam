@@ -109,6 +109,8 @@ func TestParseRecordRejects(t *testing.T) {
 		`{"v":1,"kind":"member","kind":"revoke","peerId":"a","issuedAt":1}`,
 		`{"v":1,"kind":"member","peerId":"a","issuedAt":9007199254740992}`,
 		`{"v":1,"kind":"member","peerId":"a","issuedAt":1.5}`,
+		`{"v":1,"kind":"member","peerId":"a","label":"\ud800","issuedAt":1}`,
+		"{\"v\":1,\"kind\":\"member\",\"peerId\":\"a\",\"label\":\"\xff\",\"issuedAt\":1}",
 		`[]`,
 	} {
 		if _, err := ParseRecord([]byte(in)); err != BadEntry {
@@ -123,14 +125,21 @@ func TestSupersedes(t *testing.T) {
 	if !a.Supersedes(b) || b.Supersedes(a) {
 		t.Error("the later issuedAt must win")
 	}
+	// On a tie the greater statement hash wins. The statements and their
+	// hashes are pinned, computed outside this package:
+	//   a  {"issuedAt":2,"kind":"member","label":"a","peerId":"x","v":1}  eaf5cefb…
+	//   b  {"issuedAt":2,"kind":"member","label":"b","peerId":"x","v":1}  ccfa21da…
 	b.IssuedAt = 2
-	ha, hb := a.StatementHash(), b.StatementHash()
-	winner, loser := a, b
-	if string(hb[:]) > string(ha[:]) {
-		winner, loser = b, a
+	for r, want := range map[*Record]string{
+		&a: "eaf5cefbf76006550660f739ac8c01676005d8119771d3dd0654a1f69161b1e3",
+		&b: "ccfa21da51b5e51cb4c8db20706d92feebbbc4a357e79acd23fdb075bb9fb063",
+	} {
+		if h := r.StatementHash(); hex.EncodeToString(h[:]) != want {
+			t.Errorf("%s: statement hash %x, want %s", r.Statement(), h, want)
+		}
 	}
-	if !winner.Supersedes(loser) || loser.Supersedes(winner) {
-		t.Error("on a tie the greater statement hash must win")
+	if !a.Supersedes(b) || b.Supersedes(a) {
+		t.Error("on a tie, a (the greater hash) must win")
 	}
 }
 

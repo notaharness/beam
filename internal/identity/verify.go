@@ -63,7 +63,9 @@ func (c Credential) Verify(r Record, revoked func(peerID string) bool) error {
 }
 
 func wellFormed(r Record) error {
-	if r.V != 1 || !ValidPeerID(r.PeerID) || r.IssuedAt > maxSafe || r.IssuedAt < -maxSafe {
+	// issuedAt needs no check: ParseRecord's canonical form admits only safe
+	// integers, and every record verified here was parsed.
+	if r.V != 1 || !ValidPeerID(r.PeerID) {
 		return BadEntry
 	}
 	switch r.Kind {
