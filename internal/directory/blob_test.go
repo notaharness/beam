@@ -3,9 +3,11 @@ package directory
 import (
 	"bytes"
 	"crypto/rand"
+	"encoding/json"
 	"testing"
 
 	"github.com/notaharness/beam/internal/identity"
+	"golang.org/x/crypto/chacha20poly1305"
 )
 
 func record(label string) identity.Record {
@@ -25,6 +27,13 @@ func TestSealOpen(t *testing.T) {
 	jh, jblob := Seal(kDir, fleet, junk)
 	flipped := bytes.Clone(blob)
 	flipped[len(flipped)-1] ^= 1
+	// junk sealed under r's statement hash: it authenticates, and only the
+	// hash of the record inside refuses it.
+	aead, _ := chacha20poly1305.NewX(kDir)
+	b, _ := json.Marshal(junk)
+	plain, _ := identity.Canonical(b)
+	nonce := make([]byte, chacha20poly1305.NonceSizeX)
+	relabelled := aead.Seal(nonce, nonce, plain, aad(fleet, h[:]))
 	for _, tc := range []struct {
 		name  string
 		kDir  []byte
@@ -40,6 +49,7 @@ func TestSealOpen(t *testing.T) {
 		{"altered", kDir, fleet, h[:], flipped, false},
 		{"short", kDir, fleet, h[:], blob[:10], false},
 		{"a blob sealed for another statement", kDir, fleet, h[:], jblob, false},
+		{"another statement under this one's hash", kDir, fleet, h[:], relabelled, false},
 	} {
 		got, err := Open(tc.kDir, tc.fleet, tc.hash, tc.blob)
 		if tc.ok != (err == nil) || (tc.ok && got.Label != r.Label) {
