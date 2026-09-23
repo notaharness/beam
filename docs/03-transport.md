@@ -66,12 +66,13 @@ the dialer opens a `hello` stream ([04](04-streams.md)) and the acceptor checks:
 Pass: bind `C → E.peerId` for this tunnel, pin `E` if new (and schedule a dial back),
 answer `ok`. A new binding for a peer retires its older tunnel: that tunnel's open
 streams close and it is treated as failed from then on, so exactly one tunnel carries a
-peer's opens. Fail: answer `refused` with a reason, close, and remember `C` as failed. Any other first stream from
-an unbound `C` is answered `unauthenticated` and closed; any stream after a failed hello
-is closed unread. Budgets: 16 concurrent unbound tunnels in hello, 5 s each, counted
-from the stream's arrival; beyond that the oldest is closed. Every stream's header must
-arrive within 5 s. tailcat keeps its own per-peer state for a client that handshook;
-beam cannot evict it and does not claim to.
+peer's opens. Fail: answer `refused` with a reason, close, and remember `C` as failed.
+Any other first stream from an unbound `C` is answered `unauthenticated` and closed; any
+stream after a failed hello is closed unread. Budgets: 16 concurrent unbound tunnels in
+hello, 5 s each, counted from the stream's arrival; beyond that the oldest is closed and
+counts as failed. A hello that verifies after its tunnel failed binds nothing. Every
+stream's header must arrive within 5 s. tailcat keeps its own per-peer state for a client
+that handshook; beam cannot evict it and does not claim to.
 
 The acceptor learns the peer behind a TCP connection from `Server.PeerEnv(local,
 remote)` (`TAILCAT_PEER_KEY=nodekey:…`), failing closed when absent, until upstream
