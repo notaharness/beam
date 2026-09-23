@@ -61,7 +61,9 @@ the dialer opens a `hello` stream ([04](04-streams.md)) and the acceptor checks:
    tunnel, not the frame, so a valid `(E, mac)` cannot be replayed from a different
    tunnel.
 3. **Not revoked.** `E.peerId` has no stored revocation, checked after any revocations
-   already received on this or other tunnels have been applied.
+   already received on this or other tunnels have been applied. The daemon checks this
+   with the entry, before possession: when both fail the refusal is `revoked` rather
+   than `possession`, which tells a dialer nothing a member does not know.
 
 Pass: bind `C → E.peerId` for this tunnel, pin `E` if new (and schedule a dial back),
 then answer `ok`; nothing before the pass acts on `E`. A new binding for a peer retires its older tunnel: that tunnel's open
@@ -94,8 +96,9 @@ are TCP's. No multiplexer. One port, kind in the header.
 
 - **Up.** For each member, create a `Client`, `DialTCPPort(7000)` and complete `hello`
   within one 20 s deadline (ended early by the caller's cancellation or by shutdown), then
-  open `sync`. `connected` means hello succeeded on *our* dialed tunnel;
-  the peer's own dial to us is independent and reported separately as `inbound`.
+  open `sync`. `connected` means hello succeeded on *our* dialed tunnel and its `sync`
+  is open with the dump and `end` sent, so the peer can be told things; the peer's own
+  dial to us is independent and reported separately as `inbound`.
 - **Liveness.** A `ping` control frame on the `sync` stream every 15 s; no reply within
   30 s closes the tunnel, and so does a `sync` write the peer has not taken 30 s after
   its last reply. The dialer keeps a tunnel exactly as long as its `sync`, so the
@@ -112,7 +115,7 @@ are TCP's. No multiplexer. One port, kind in the header.
 
 | State | Meaning |
 |---|---|
-| `connected` | hello succeeded on the tunnel this machine dialed |
+| `connected` | hello succeeded on the tunnel this machine dialed, and its `sync` is open with the dump sent |
 | `offline` | last dial failed or liveness lapsed; retrying |
 | `revoked` | refused at admission; never dialed |
 | `revoked-by-fleet` | the peer refused this machine's hello as `revoked`; not dialed again while the daemon runs. The refusal is advice, not a record: this machine holds no revocation of itself |
@@ -125,8 +128,9 @@ self-hosted `derper`. Tests use an in-process relay ([10](10-testing.md)).
 
 ## Footprint (measured, Go 1.27.1, linux/amd64)
 
-Binary 15–16.4 MB stripped across five targets; cold build 21.5 s; warm 0.14 s; module
-cache 479 MB; `CGO_ENABLED=0`.
+Binary 21.2–22.5 MB stripped across the four release targets (SQLite and go-webauthn
+included); at the M1 spike, before either, it was 15–16.4 MB with a 21.5 s cold build,
+0.14 s warm, and a 479 MB module cache; `CGO_ENABLED=0`.
 
 The milestone-1 spike (`TestFootprint` in `internal/transport`, without `-race`) runs
 one process per machine on the dev DERP, each with one `Server` and a `Client` per peer,
