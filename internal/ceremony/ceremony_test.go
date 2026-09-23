@@ -7,12 +7,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/notaharness/beam/internal/identity"
 )
@@ -158,6 +161,49 @@ func TestCallbacks(t *testing.T) {
 				t.Errorf("%v, want %v", err, tc.err)
 			}
 		})
+	}
+}
+
+// docs/02 Ceremonies: the page gets its answer from /cb/result although the
+// result ends the wait, and the wait closes the listener, at once.
+func TestResultAnswered(t *testing.T) {
+	for range 100 {
+		c, err := Start(Request{Op: Get})
+		if err != nil {
+			t.Fatal(err)
+		}
+		go c.Wait(context.Background())
+		f := url.Values{"state": {c.state}, "result": {"failed"}}
+		resp, err := http.PostForm("http://"+local(c)+"/cb/result", f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil || string(body) != "done, close this tab" {
+			t.Fatalf("the page got %q, %v", body, err)
+		}
+	}
+}
+
+// A request that stalls holds Close for a second at most, then is cut off.
+func TestCloseStalled(t *testing.T) {
+	c, err := Start(Request{Op: Get})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.Dial("tcp", local(c))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	fmt.Fprint(conn, "POST /cb/result HTTP/1.1\r\n")
+	time.Sleep(100 * time.Millisecond) // the server has read it
+	start := time.Now()
+	c.Close()
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := conn.Read(make([]byte, 1)); err != io.EOF || time.Since(start) > 2*time.Second {
+		t.Errorf("after %v: %v, want the connection closed", time.Since(start), err)
 	}
 }
 
