@@ -3,7 +3,6 @@
 package cli_test
 
 import (
-	"os"
 	"os/exec"
 	"syscall"
 	"testing"
@@ -22,14 +21,7 @@ func served(t *testing.T, dir, ptyScript, execScript string) (b *machine, d *exe
 	a.knows(t, b)
 	b.knows(t, a)
 	a.start(t)
-	d = exec.Command(os.Args[0], "daemon", "--derp-map", relay.MapURL, "--directory", dirURL)
-	d.Env, d.Stderr = append(os.Environ(), "BEAM_CONFIG_DIR="+b.dir), os.Stderr
-	if err := d.Start(); err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan struct{})
-	go func() { d.Wait(); close(done) }()
-	t.Cleanup(func() { d.Process.Kill(); <-done })
+	d, exited = b.process(t)
 	waitFor(t, 10*time.Second, "beta's socket", func() bool { return answering(b) })
 	waitState(t, a, b, "connected")
 
@@ -52,7 +44,7 @@ func served(t *testing.T, dir, ptyScript, execScript string) (b *machine, d *exe
 	t.Cleanup(func() { ac.Close() })
 	waitPid(t, dir+"/pty")
 	waitPid(t, dir+"/exec")
-	return b, d, done
+	return b, d, exited
 }
 
 // stubborn is a script that ignores SIGHUP and writes its pid to file.
