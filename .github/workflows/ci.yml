@@ -12,9 +12,27 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - name: worker
+        working-directory: worker
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          npm test
       - run: make lint
       - run: make crap
       - run: make dist
+      - name: directory contract against the worker
+        working-directory: worker
+        run: |
+          npx wrangler d1 execute beam --local --file schema.sql
+          npx wrangler dev --local --port 8799 &
+          for i in $(seq 60); do curl -s -o /dev/null http://127.0.0.1:8799/ && break; sleep 1; done
+          BEAM_WORKER_URL=http://127.0.0.1:8799 go test -tags "$(cat ../build-tags.txt),beamtest" ../internal/directory
 
   darwin:
     runs-on: macos-latest
