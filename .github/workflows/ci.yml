@@ -23,6 +23,7 @@ jobs:
           npm ci
           npx playwright install --with-deps chromium
           npm test
+      - run: node --test 'npm/**/*.test.js'
       - run: make lint
       - run: make crap
       - run: make dist
