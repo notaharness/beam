@@ -17,8 +17,20 @@ import (
 // DefaultURL is the worker.
 const DefaultURL = "https://beam.n10.is"
 
-// requestTimeout bounds one request to the worker.
-const requestTimeout = 20 * time.Second
+// The worker's bounds (docs/09): a page holds at most PageSize entries, a
+// fleet at most MaxEntries.
+const (
+	PageSize   = 500
+	MaxEntries = 5000
+)
+
+// A client's bounds on the worker: a request's time, a whole Read's, and a
+// response's size, that of a full page of the largest entries.
+const (
+	requestTimeout = 20 * time.Second
+	readTimeout    = time.Minute
+	maxBody        = PageSize << 14
+)
 
 // Client errors: the worker could not be reached or asked to wait
 // (Unavailable), the read token opens no fleet (Unauthorized), an append
@@ -115,13 +127,22 @@ func (c Client) Append(ctx context.Context, fleetID string, e Entry) (int64, err
 }
 
 // Read returns the whole directory readToken opens: every page's entries
-// under the first page's fleet and credential.
+// under the first page's fleet and credential. A worker that answers more
+// than its bounds allow, or pages without advancing, is unavailable.
 func (c Client) Read(ctx context.Context, readToken []byte) (Page, error) {
+	ctx, cancel := context.WithTimeout(ctx, readTimeout)
+	defer cancel()
 	var all Page
 	for since := int64(0); ; {
 		var p Page
 		if err := c.do(ctx, http.MethodGet, "/v1/entries?since="+strconv.FormatInt(since, 10), b64(readToken), nil, &p); err != nil {
 			return Page{}, err
+		}
+		switch {
+		case len(p.Entries) > PageSize || len(all.Entries)+len(p.Entries) > MaxEntries:
+			return Page{}, fmt.Errorf("%w: more entries than a directory holds", ErrUnavailable)
+		case p.Next != 0 && (p.Next <= since || len(p.Entries) < PageSize):
+			return Page{}, fmt.Errorf("%w: a page that does not advance", ErrUnavailable)
 		}
 		if since == 0 {
 			all = p
@@ -156,6 +177,7 @@ func (c Client) do(ctx context.Context, method, path, token string, body, res an
 		return fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	defer resp.Body.Close()
+	resp.Body = http.MaxBytesReader(nil, resp.Body, maxBody)
 	if err := status(resp); err != nil {
 		return err
 	}

@@ -17,12 +17,8 @@ import (
 	"github.com/notaharness/beam/internal/identity"
 )
 
-// Caps (docs/09).
-const (
-	maxBlob    = 8 << 10
-	maxEntries = 5000
-	pageSize   = 500
-)
+// maxBlob is the worker's cap on a sealed record (docs/09).
+const maxBlob = 8 << 10
 
 // Worker is an in-memory directory worker. The zero value is not usable; use
 // New.
@@ -143,8 +139,8 @@ func (w *Worker) read(rw http.ResponseWriter, r *http.Request) {
 	}
 	p := directory.Page{FleetID: f.id, CredentialID: f.cred.ID, CredentialPublicKey: b64(f.cred.PublicKey), Entries: []directory.Entry{}}
 	for _, e := range f.entries[min(since, int64(len(f.entries))):] {
-		if len(p.Entries) == pageSize {
-			p.Next = p.Entries[pageSize-1].Seq
+		if len(p.Entries) == directory.PageSize {
+			p.Next = p.Entries[directory.PageSize-1].Seq
 			break
 		}
 		if !w.withheld[e.StatementHash] {
@@ -175,7 +171,7 @@ func (w *Worker) appendEntry(rw http.ResponseWriter, r *http.Request) {
 		reply(rw, http.StatusOK, map[string]int64{"seq": seq})
 		return
 	}
-	if len(f.entries) == maxEntries {
+	if len(f.entries) == directory.MaxEntries {
 		fail(rw, http.StatusRequestEntityTooLarge, "fleet-full")
 		return
 	}
