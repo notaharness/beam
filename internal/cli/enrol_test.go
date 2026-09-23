@@ -306,6 +306,84 @@ func TestFleetReset(t *testing.T) {
 	connectedAll(t, a, b)
 }
 
+// docs/02 reset: a reset ends the ceremony under way, and one whose result is
+// already being handled commits nothing; one committing finishes first. The
+// machine ends reset.
+func TestResetEndsCeremony(t *testing.T) {
+	a := initFleet(t, "alpha")
+	b := join(t, "beta")
+	connectedAll(t, a, b)
+	rejoin := func(t *testing.T) *control.Client {
+		t.Helper()
+		if !b.status(t).Enrolled {
+			if r := b.beam("", "join", "--label", "beta"); r.code != 0 {
+				t.Fatalf("join: %+v", r)
+			}
+		}
+		c, err := control.Connect(b.paths(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { c.Close() })
+		if err := c.Call("join.start", map[string]any{"label": "beta"}, nil); err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	reset := func(t *testing.T) {
+		t.Helper()
+		if r := b.beam("reset\n", "fleet", "reset"); r.code != 0 {
+			t.Fatalf("reset: %+v", r)
+		}
+	}
+	reenrolled := func(t *testing.T) {
+		t.Helper()
+		if st := b.status(t); st.Enrolled {
+			t.Errorf("enrolled after the reset: %+v", st)
+		}
+		if _, err := os.Stat(filepath.Join(b.dir, "fleet.json")); !os.IsNotExist(err) {
+			t.Errorf("fleet.json: %v", err)
+		}
+	}
+	t.Run("waiting", func(t *testing.T) {
+		c := rejoin(t)
+		reset(t)
+		if err := c.Call("join.wait", nil, nil); code(err) != "ceremony-state" {
+			t.Errorf("join.wait after the reset: %v", err)
+		}
+		reenrolled(t)
+	})
+	t.Run("handling", func(t *testing.T) {
+		c := rejoin(t)
+		reached, release := pauseAt(t, b, "enrolling", b.id())
+		waited := make(chan error, 1)
+		go func() { waited <- c.Call("join.wait", nil, nil) }()
+		await(t, reached, "the join's result to be handled")
+		reset(t)
+		release()
+		if err := <-waited; code(err) != "ceremony-cancelled" {
+			t.Errorf("join.wait across the reset: %v", err)
+		}
+		reenrolled(t)
+	})
+	t.Run("committing", func(t *testing.T) {
+		c := rejoin(t)
+		reached, release := pauseAt(t, b, "committing", "")
+		go c.Call("join.wait", nil, nil)
+		await(t, reached, "the join to commit")
+		done := make(chan struct{})
+		go func() { reset(t); close(done) }()
+		select {
+		case <-done:
+			t.Error("the reset overtook the commit")
+		case <-time.After(300 * time.Millisecond):
+		}
+		release()
+		<-done
+		reenrolled(t)
+	})
+}
+
 // docs/03 "Addresses": a machine that moves to another DERP map re-joins
 // with the same key on a new address; its peers switch to it, and the older
 // entry still in the directory stays superseded.
@@ -417,13 +495,6 @@ func TestOneCeremonyAtATime(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	code := func(err error) string {
-		var oe *control.OpError
-		if errors.As(err, &oe) {
-			return oe.Code
-		}
-		return fmt.Sprint(err)
-	}
 	start := map[string]any{"label": "fresh"}
 	var first struct {
 		CeremonyURL string `json:"ceremonyUrl"`
@@ -450,4 +521,13 @@ func TestOneCeremonyAtATime(t *testing.T) {
 		}
 		return err != nil
 	})
+}
+
+// code is an op's error code, or the error.
+func code(err error) string {
+	var oe *control.OpError
+	if errors.As(err, &oe) {
+		return oe.Code
+	}
+	return fmt.Sprint(err)
 }

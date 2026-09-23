@@ -45,8 +45,14 @@ type daemon struct {
 	flow    *flow         // the ceremony under way, if any
 	pending chan struct{} // says a directory write was queued
 
+	// enrolling is held while the enrolment changes and while a ceremony
+	// commits, which it does only if gen is still the one it began in. Take
+	// it before mu.
+	enrolling sync.Mutex
+
 	mu           sync.Mutex
 	en           *enrolment // nil while unenrolled
+	gen          uint64     // counts changes of en, resets included
 	peers        map[string]*peerState
 	granted      map[string]map[*granted]bool // inbound pty, exec and msg streams, by peer
 	inbound      map[string]int               // open inbound sync streams, by peer
@@ -90,7 +96,10 @@ func Run(ctx context.Context, o Options) error {
 		sends: map[string]map[int64]chan sendResult{}, pending: make(chan struct{}, 1)}
 	go d.serveSocket(ln)
 	d.at("starting", "")
-	if _, err := d.enroll(); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	d.enrolling.Lock()
+	_, err = d.enroll()
+	d.enrolling.Unlock()
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	close(d.started)
@@ -128,7 +137,7 @@ func listen(path string) (net.Listener, error) {
 // enroll loads fleet.json, key.json and state.db, starts the transport and
 // dials every member, then reads the directory and retries queued writes
 // while enrolled. With no fleet.json it returns fs.ErrNotExist and the daemon
-// stays unenrolled.
+// stays unenrolled. d.enrolling must be held.
 func (d *daemon) enroll() (*enrolment, error) {
 	f, err := d.o.Paths.loadFleet()
 	if err != nil {
@@ -161,6 +170,7 @@ func (d *daemon) enroll() (*enrolment, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.en = e
+	d.gen++
 	go d.readDirectory(e)
 	go d.retryPending(e)
 	peers, err := st.Peers()
@@ -181,9 +191,30 @@ func (d *daemon) enrolment() *enrolment {
 
 func (d *daemon) isEnrolled() bool { return d.enrolment() != nil }
 
+// generation is the count of enrolment changes so far.
+func (d *daemon) generation() uint64 {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.gen
+}
+
+// commit runs a ceremony's commit if the enrolment has not changed since gen,
+// when the ceremony began, and holds off any change until it returns: a
+// ceremony a reset or another enrolment overtook commits nothing.
+func (d *daemon) commit(gen uint64, f func() error) error {
+	d.enrolling.Lock()
+	defer d.enrolling.Unlock()
+	if d.generation() != gen {
+		return fail("ceremony-cancelled", "the enrolment changed while the ceremony ran")
+	}
+	d.at("committing", "")
+	return f()
+}
+
 // unenroll ends the enrolment: dialers, tunnels, the directory loops, and
 // state.db. forget also empties it of the fleet and removes fleet.json (a
-// fleet reset); key.json and the daemon's socket stay.
+// fleet reset); key.json and the daemon's socket stay. d.enrolling must be
+// held.
 func (d *daemon) unenroll(forget bool) error {
 	d.mu.Lock()
 	e := d.en
@@ -192,6 +223,7 @@ func (d *daemon) unenroll(forget bool) error {
 		delete(d.peers, id)
 	}
 	d.en = nil
+	d.gen++
 	d.mu.Unlock()
 	if e == nil {
 		return nil

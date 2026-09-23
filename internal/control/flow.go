@@ -101,6 +101,11 @@ func ceremonyErr(err error) error {
 
 // opCeremonyCancel ends the ceremony under way; the next may start at once.
 func opCeremonyCancel(d *daemon, _ *clientConn, _ request) (any, error) {
+	d.endFlow()
+	return struct{}{}, nil
+}
+
+func (d *daemon) endFlow() {
 	d.mu.Lock()
 	f := d.flow
 	d.flow = nil
@@ -108,5 +113,4 @@ func opCeremonyCancel(d *daemon, _ *clientConn, _ request) (any, error) {
 	if f != nil {
 		f.cancel()
 	}
-	return struct{}{}, nil
 }

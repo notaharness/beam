@@ -18,6 +18,7 @@ const ackWait = 5 * time.Second
 // opInitStart is beam init (docs/02): a create for the fleet's passkey, then
 // a get that signs this machine's entry and yields the directory keys.
 func opInitStart(d *daemon, _ *clientConn, r request) (any, error) {
+	gen := d.generation()
 	if d.isEnrolled() {
 		return nil, fail("already-enrolled", "")
 	}
@@ -50,8 +51,8 @@ func opInitStart(d *daemon, _ *clientConn, r request) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		e, err := d.enrollAs(f, false)
-		if err != nil {
+		var e *enrolment
+		if err := d.commit(gen, func() (err error) { e, err = d.enrollAs(f, false); return err }); err != nil {
 			return nil, err
 		}
 		pub, err := d.publish(ctx, e, cc, entry)
@@ -62,6 +63,7 @@ func opInitStart(d *daemon, _ *clientConn, r request) (any, error) {
 // opJoinStart is beam join (docs/02): a get that signs this machine's entry
 // and yields the directory keys, then the directory read.
 func opJoinStart(d *daemon, _ *clientConn, r request) (any, error) {
+	gen := d.generation()
 	label, err := labelOr(r.Label)
 	if err != nil {
 		return nil, err
@@ -72,11 +74,11 @@ func opJoinStart(d *daemon, _ *clientConn, r request) (any, error) {
 	}
 	entry := memberEntry(k, label)
 	return d.begin("join", signing(entry, "Add "+label+" to your fleet"), func(ctx context.Context, cc *clientConn, got ceremony.Result) (any, error) {
-		return d.join(ctx, cc, entry, got)
+		return d.join(ctx, cc, gen, entry, got)
 	})
 }
 
-func (d *daemon) join(ctx context.Context, cc *clientConn, entry identity.Record, got ceremony.Result) (any, error) {
+func (d *daemon) join(ctx context.Context, cc *clientConn, gen uint64, entry identity.Record, got ceremony.Result) (any, error) {
 	kDir, tRead, err := got.DirectoryKeys()
 	if err != nil {
 		return nil, fail("prf-unsupported", "")
@@ -99,8 +101,9 @@ func (d *daemon) join(ctx context.Context, cc *clientConn, entry identity.Record
 	if err != nil {
 		return nil, err
 	}
-	e, err := d.enrollAs(f, rejoin)
-	if err != nil {
+	d.at("enrolling", entry.PeerID)
+	var e *enrolment
+	if err := d.commit(gen, func() (err error) { e, err = d.enrollAs(f, rejoin); return err }); err != nil {
 		return nil, err
 	}
 	for _, r := range records {
@@ -139,6 +142,7 @@ func (d *daemon) readFleet(ctx context.Context, kDir, tRead []byte, pinned *iden
 
 // opRevokeStart is beam revoke (docs/02): a get that signs the revocation.
 func opRevokeStart(d *daemon, e *enrolment, _ *clientConn, r request) (any, error) {
+	gen := d.generation() // an e already replaced has its store closed: nothing commits
 	id, err := e.resolve(r.Peer)
 	if err != nil {
 		return nil, err
@@ -159,10 +163,16 @@ func opRevokeStart(d *daemon, e *enrolment, _ *clientConn, r request) (any, erro
 		if err := e.cred.Verify(rec, nil); err != nil {
 			return nil, refusal(err)
 		}
-		if _, err := e.store.Revoke(rec, now()); err != nil {
+		err = d.commit(gen, func() error {
+			if _, err := e.store.Revoke(rec, now()); err != nil {
+				return err
+			}
+			d.applyRevocation(e, id)
+			return nil
+		})
+		if err != nil {
 			return nil, err
 		}
-		d.applyRevocation(e, id)
 		by := d.pushAcked(rec)
 		pub, err := d.publish(ctx, e, cc, rec)
 		return map[string]any{"local": true, "published": pub, "acknowledgedBy": by}, err
@@ -189,10 +199,14 @@ func (d *daemon) pushAcked(r identity.Record) int {
 	return by
 }
 
-// opFleetReset is beam fleet reset (docs/02).
+// opFleetReset is beam fleet reset (docs/02). It ends the ceremony under way,
+// and one already past its ceremony commits nothing.
 func opFleetReset(d *daemon, _ *clientConn, r request) (any, error) {
 	if r.Confirm != "reset" {
 		return nil, fail("params", `confirm must be "reset"`)
 	}
+	d.enrolling.Lock()
+	defer d.enrolling.Unlock()
+	d.endFlow()
 	return struct{}{}, d.unenroll(true)
 }

@@ -59,7 +59,7 @@ func (d *daemon) signed(cred identity.Credential, entry *identity.Record, got ce
 }
 
 // enrollAs writes fleet.json and enrolls with it, first ending the
-// enrolment a re-join replaces.
+// enrolment a re-join replaces. d.enrolling must be held.
 func (d *daemon) enrollAs(f *identity.Fleet, rejoin bool) (*enrolment, error) {
 	if rejoin {
 		if err := d.unenroll(false); err != nil {
