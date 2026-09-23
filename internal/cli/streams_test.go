@@ -150,8 +150,10 @@ func TestInputNeverRead(t *testing.T) {
 				tun, _ := rawTunnel(t, b)
 				sync := rawOpen(t, tun, stream.Header{V: 1, Kind: stream.KindSync})
 				pidFile := filepath.Join(t.TempDir(), "pid")
+				// A terminal in canonical mode drops input its line cannot hold; raw,
+				// it holds it back as a pipe does.
 				s := rawOpen(t, tun, stream.Header{V: 1, Kind: kind, Cols: 80, Rows: 24,
-					Argv: []string{"sh", "-c", "echo $$ > " + pidFile + "; exec sleep 300"}})
+					Argv: []string{"sh", "-c", "[ -t 0 ] && stty raw -echo; echo $$ > " + pidFile + "; exec sleep 300"}})
 				defer s.Close()
 				pid := waitPid(t, pidFile)
 				frame := make([]byte, 64<<10) // for exec, channel 0: stdin
