@@ -173,7 +173,7 @@ func opRevokeStart(d *daemon, e *enrolment, _ *clientConn, r request) (any, erro
 		if err != nil {
 			return nil, err
 		}
-		by := d.pushAcked(rec)
+		by := d.pushAcked(e, rec)
 		pub, err := d.publish(ctx, e, cc, rec)
 		return map[string]any{"local": true, "published": pub, "acknowledgedBy": by}, err
 	})
@@ -181,12 +181,12 @@ func opRevokeStart(d *daemon, e *enrolment, _ *clientConn, r request) (any, erro
 
 // pushAcked pushes r on every live sync stream and counts the peers that
 // read it within ackWait (docs/02: the pong to a ping sent after it).
-func (d *daemon) pushAcked(r identity.Record) int {
+func (d *daemon) pushAcked(e *enrolment, r identity.Record) int {
 	d.mu.Lock()
 	room := len(d.peers)
 	d.mu.Unlock()
 	acked := make(chan struct{}, room)
-	n, by := d.broadcast(r, acked), 0
+	n, by := d.broadcast(e, r, acked), 0
 	deadline := time.After(ackWait)
 	for by < n {
 		select {

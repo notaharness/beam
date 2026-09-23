@@ -256,7 +256,7 @@ func (d *daemon) open(e *enrolment, r request, h stream.Header) (any, error) {
 	if e.isRevoked(id) {
 		return nil, fail("revoked-peer", id)
 	}
-	return openResult{d.reserve(id, h)}, nil
+	return openResult{d.reserve(e, id, h)}, nil
 }
 
 func opPTYOpen(d *daemon, e *enrolment, _ *clientConn, r request) (any, error) {

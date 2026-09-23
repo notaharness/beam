@@ -176,6 +176,10 @@ func (d *daemon) serveSync(e *enrolment, peerID string, sc *stream.Conn) {
 		return
 	}
 	d.mu.Lock()
+	if e != d.en {
+		d.mu.Unlock()
+		return
+	}
 	d.inbound[peerID]++
 	d.mu.Unlock()
 	d.emitPeer(e, peerID)
@@ -211,86 +215,4 @@ func (d *daemon) syncFrameIn(e *enrolment, sc *stream.Conn, t stream.Type, p []b
 			_ = sc.WriteJSON(stream.Control, stream.Ctl{Kind: "pong", T: ctl.T}) // a lost stream ends the read loop
 		}
 	}
-}
-
-// learn verifies a record from any source and applies what is new: a
-// revocation ends the peer here; a member is pinned (or superseded) and
-// dialed. What is new is pushed on to every connected peer.
-func (d *daemon) learn(e *enrolment, raw json.RawMessage) {
-	r, err := identity.ParseRecord(raw)
-	if err != nil || e.cred.Verify(r, e.isRevoked) != nil {
-		return
-	}
-	var changed bool
-	if r.Kind == identity.Revoke {
-		changed, _ = e.store.Revoke(r, now())
-		if changed {
-			d.at("revoking", r.PeerID)
-			d.applyRevocation(e, r.PeerID)
-		}
-	} else if r.PeerID != e.self() {
-		changed = d.pin(e, r)
-	}
-	if changed {
-		d.broadcast(r, nil)
-	}
-}
-
-// pin stores a verified member and dials it: at its new address, if it
-// superseded the pinned entry with one. It reports whether it was new or
-// superseded the pinned entry.
-func (d *daemon) pin(e *enrolment, r identity.Record) bool {
-	old, known, _ := e.store.Peer(r.PeerID)
-	changed, err := e.store.Pin(r, now())
-	if err != nil || !changed {
-		return false
-	}
-	d.mu.Lock()
-	if known && old.Entry.Address != r.Address {
-		d.endDialerLocked(r.PeerID)
-	}
-	d.startDialerLocked(e, r.PeerID)
-	d.mu.Unlock()
-	if !known {
-		d.emit("peer.new", d.peerView(e, r.PeerID))
-	} else {
-		d.emitPeer(e, r.PeerID)
-	}
-	return true
-}
-
-func (e *enrolment) isRevoked(peerID string) bool {
-	r, err := e.store.IsRevoked(peerID)
-	return r || err != nil
-}
-
-// applyRevocation ends everything with a revoked peer on this machine.
-func (d *daemon) applyRevocation(e *enrolment, peerID string) {
-	d.mu.Lock()
-	d.stopPeerLocked(peerID)
-	d.mu.Unlock()
-	e.node.Drop(peerID) // its inbound tunnel, and every stream on it
-	d.emitPeer(e, peerID)
-}
-
-// broadcast pushes a record on every live sync stream and returns how many
-// it went to; acked, when set, hears from each peer that read it and needs
-// room for them all. A peer whose buffer is full loses its tunnel, and the
-// reconnect's full dump carries the record.
-func (d *daemon) broadcast(r identity.Record, acked chan<- struct{}) int {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	n := 0
-	for _, ps := range d.peers {
-		if ps.deltas == nil {
-			continue
-		}
-		select {
-		case ps.deltas <- delta{r, acked}:
-			n++
-		default:
-			ps.tunnel.Close()
-		}
-	}
-	return n
 }
