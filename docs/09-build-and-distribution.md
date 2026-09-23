@@ -88,7 +88,12 @@ CREATE TABLE entries (
 );
 ```
 
-Caps: 8 KiB per blob, 5,000 entries per fleet, 120 requests/min per fleet. No expiry.
+Caps: 16 KiB per request body, counted as it arrives whatever `Content-Length` says;
+8 KiB per blob; 5,000 entries per fleet, checked by the statement that allocates the
+seq; 120 requests/min per fleet. No expiry. The client holds the worker to the same
+bounds: a response at most a full page of the largest entries, at most 500 entries a
+page and 5,000 in all, a `next` only after a full page and past `since`, a minute for a
+whole read. A worker outside them is unavailable.
 
 ### Routes
 
@@ -101,8 +106,9 @@ Caps: 8 KiB per blob, 5,000 entries per fleet, 120 requests/min per fleet. No ex
 
 Assertion verification (`@simplewebauthn/server`): origin `https://beam.n10.is`, RP ID
 `beam.n10.is`, UV required, challenge as above, counter ignored, and the assertion's
-credential id must be the fleet's. A refused append is `403`, a blob over the cap or a
-full fleet `413`, and a fleet over its rate `429`, through Workers' rate-limit binding. A
+credential id must be the fleet's. A refused append is `403`, a body or a blob over its
+cap or a full fleet `413`, and a fleet over its rate `429`, through Workers' rate-limit
+binding. A
 revoked machine holds `T_read` and can read; it cannot append.
 
 ### Ceremony page headers

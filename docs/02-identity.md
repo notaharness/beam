@@ -189,12 +189,15 @@ nothing else.
    answers fastest, compute the address. The label defaults to the host name up to its
    first dot, cut to 64 characters; the fleet name to `beam`.
 2. `create` ceremony: registers the credential. Record `credentialId`,
-   `credentialPublicKey`, `fleetId`. Check `prf.enabled`.
+   `credentialPublicKey`, `fleetId`. Check `prf.enabled`. beam checks no attestation, so
+   this is where the page is trusted for the root, once ([01](01-model.md)); every later
+   ceremony on this machine verifies under the credential recorded here.
 3. `get` ceremony with the member challenge and PRF evaluation: yields the assertion
    over this machine's entry **and** the directory secret in one tap. Derive `K_dir`,
    `T_read`. Verify the entry locally.
-4. One request to the worker: register the fleet (`credentialPublicKey`,
-   `SHA-256(T_read)`) and append the entry. Write `fleet.json`.
+4. Queue the entry in `state.db`, then write `fleet.json`. One request to the worker:
+   register the fleet (`credentialPublicKey`, `SHA-256(T_read)`) with the entry, dequeued
+   once the worker has it; while the worker is unavailable it stays queued.
 
 Two taps, once per fleet.
 
@@ -208,24 +211,30 @@ Two taps, once per fleet.
 3. Fetch the directory with `T_read`, which alone names the fleet (`GET /v1/entries`; the
    joining machine cannot know `fleetId` yet). The response carries `fleetId`,
    `credentialId` and `credentialPublicKey`; verify this machine's own assertion under
-   them (a worker lying about the credential fails here, because the real passkey made
-   the assertion). Decrypt and verify every
+   them. A worker lying about the credential alone fails here; a page and a worker lying
+   together are the hostile page of [01](01-model.md), trusted for this one statement.
+   Decrypt and verify every
    record; refuse if this `peerId` is revoked. A token that opens no fleet is
    `wrong-passkey`.
-4. Encrypt and append this machine's entry. Write `fleet.json` and `state.db`. Dial
-   every member; each admits this machine on first contact ([03](03-transport.md)).
+4. Queue this machine's entry in `state.db`, then write `fleet.json`. Encrypt and append
+   the entry, dequeued once the worker has it. Dial every member; each admits this
+   machine on first contact ([03](03-transport.md)).
 
-One tap. On a machine that already has `fleet.json`, step 2 also checks the re-derived
-`K_dir` against the cached one (`wrong-passkey`).
+One tap. On a machine that already has `fleet.json` the root is pinned: step 2 also
+checks the re-derived `K_dir` against the cached one, and step 3 takes nothing from the
+directory's credential. The entry and every record verify under the cached one, so an
+assertion by any other credential is `wrong-passkey`.
 
 ### `beam revoke <peer>` — from any member
 
 1. Build the revocation statement and blob; a `get` ceremony signs it, displaying
    "Remove **oldlaptop** (…) from your fleet". Verify locally, including that the
    assertion's PRF output re-derives the cached `K_dir` (`wrong-passkey` otherwise).
-2. Apply locally: store the revocation, terminate the peer's tunnels and streams.
-3. Push it on every live `sync` stream. Append to the directory; on failure store as
-   pending and retry with backoff while the daemon runs.
+2. Apply locally: store the revocation and queue it for the directory in one
+   transaction; terminate the peer's tunnels and streams.
+3. Push it on every live `sync` stream. Append it to the directory and dequeue it once
+   the worker has it, or held it already; otherwise it stays queued and is retried with
+   backoff while the daemon runs, a restart included.
 4. Report `{ local: true, published: true | "pending", acknowledgedBy: n }`. `n` counts the
    peers whose sync answered, within 5 s, a ping sent right after the revocation: the
    stream is ordered, so that pong proves the peer read the revocation first.
@@ -235,7 +244,9 @@ One tap. On a machine that already has `fleet.json`, step 2 also checks the re-d
 Daemon-owned recovery for a lost passkey or a compromised fleet: closes every tunnel,
 deletes `fleet.json` and all peers, revocations and pending writes from `state.db`,
 keeps `key.json` (the machine's identity is not the problem) and the mailbox tables
-(queued mail to old peers is deleted with the peers). Prompts for confirmation. Then
+(queued mail to old peers is deleted with the peers). It ends the ceremony under way,
+and one already past its tap commits nothing (`ceremony-cancelled`): a ceremony commits
+only if the enrolment it began under is unchanged. Prompts for confirmation. Then
 `beam init` or `beam join` as appropriate.
 
 ## The peer table
