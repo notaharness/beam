@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -157,6 +158,8 @@ func TestSlotResults(t *testing.T) {
 		{"failed", func(c *Ceremony) []byte { return sealed(c, "result=failed") }, ErrFailed},
 		{"ok without a credential", func(c *Ceremony) []byte { return sealed(c, "result=ok") }, ErrBadResult},
 		{"not a form", func(c *Ceremony) []byte { return sealed(c, "result=%zz") }, ErrState},
+		{"no result", func(c *Ceremony) []byte { return sealed(c, "x=1") }, ErrState},
+		{"an unknown result", func(c *Ceremony) []byte { return sealed(c, "result=maybe") }, ErrState},
 		{"another key", func(c *Ceremony) []byte {
 			return seal(b64(other.PublicKey().Bytes()), c.slot, []byte("result=cancelled"))
 		}, ErrState},
@@ -197,6 +200,35 @@ func TestSlotReadRetries(t *testing.T) {
 	defer cancel()
 	if _, err := c.Wait(ctx); !errors.Is(err, ErrPRFUnsupported) {
 		t.Errorf("%v, want %v", err, ErrPRFUnsupported)
+	}
+}
+
+// A slot already read, whose result the daemon never got, ends the ceremony
+// ceremony-state at once rather than at its timeout.
+func TestSlotReadAlready(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusGone) }))
+	defer s.Close()
+	c := start(t, s.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := c.Wait(ctx); !errors.Is(err, ErrState) {
+		t.Errorf("%v, want %v", err, ErrState)
+	}
+}
+
+// A worker that ends each read at once with nothing is asked again at most
+// once a second, not in a busy loop.
+func TestSlotReadPaced(t *testing.T) {
+	var reads atomic.Int32
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reads.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer s.Close()
+	start(t, s.URL)
+	time.Sleep(1500 * time.Millisecond)
+	if n := reads.Load(); n < 1 || n > 2 {
+		t.Errorf("%d reads in 1.5 s", n)
 	}
 }
 

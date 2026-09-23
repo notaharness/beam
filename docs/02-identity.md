@@ -206,12 +206,15 @@ sealed = HPKE base mode, single shot (RFC 9180):
 ```
 
 4. Says what the slot answered: `201`, "done; the machine finishes on its own"; `409`,
-   the slot was answered from another device first ([01](01-model.md), The relayed
-   result), with what to do about it.
+   the slot was answered first, from another device or by an earlier try on this one
+   ([01](01-model.md), The relayed result), with what to do if it was not the owner's.
+   The page writes every result, `cancelled` and `failed` included, so the daemon ends
+   the ceremony as soon as the owner does.
 
 The daemon opens the sealed result with `sk` and the same `info`. A ciphertext that
 does not open ends the ceremony `ceremony-state`, as does a plaintext that is not a
-result. It then handles the result exactly as it arrived: `ok` results are verified, and
+form with one of the four result codes, and a slot read already (`410`: its result went
+to a read whose answer never arrived). It then handles the result exactly as it arrived: `ok` results are verified, and
 nothing is trusted because the page sent it. It verifies a `create` itself:
 `webauthn.create` over its challenge for `beam.n10.is` with user verification. The key
 pair and `readKey` are dropped when the ceremony ends, however it ends. Timeout five

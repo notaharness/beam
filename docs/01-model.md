@@ -132,8 +132,8 @@ write, so exactly one of them lands, and the machine gets it.
   there usually comes before an onlooker can scan the code and approve on a phone.
 
 The owner learns of it from their own page: their write is refused, and the page says
-the ceremony was answered from another device and that the machine must be reset
-(`beam fleet reset`) if it enrolled. The slot stays taken for the ceremony's five
+the ceremony was answered already and, unless they answered it themselves on another
+device, that the machine must be reset (`beam fleet reset`) if it enrolled. The slot stays taken for the ceremony's five
 minutes, so no write within the ceremony can be told it landed when it did not. The
 fleet fingerprint check catches the same thing later. Nothing prevents it: binding the
 answer to the machine needs a secret the onlooker cannot see, such as a code shown on
@@ -179,11 +179,12 @@ by N peers.
 ### Threat model
 
 **Defended against:** any network attacker including the DERP operator; the directory
-worker (hostile or breached) for everything but availability and metadata, ceremony
-results included; a stolen or
-compromised member adding or removing machines; a stolen member after revocation
-reaches each peer; a leaked address (the holder completes a handshake and is closed at
-admission); lookalike domains.
+worker's storage and API (hostile or breached) for everything but availability and
+metadata, ceremony results included, though whoever can change the worker can also
+change the page it serves (the ceremony page row above); a stolen or compromised member
+adding or removing machines; a stolen member after revocation reaches each peer; a
+leaked address (the holder completes a handshake and is closed at admission); lookalike
+domains.
 
 **Not defended against, by decision:** a stolen member before it is revoked, and what it
 did meanwhile; a hostile page during one ceremony, and at `init` for the root; an

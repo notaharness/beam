@@ -112,8 +112,10 @@ KiB per blob; 5,000 entries per fleet, checked by the statement that allocates t
 120 requests/min per fleet. No expiry for fleets and entries. A slot holds at most 8 KiB
 of sealed result and lives five minutes from its write, the ceremony's timeout: a row
 older than that is absent to every route, and each write deletes the expired ones. Slot
-routes are limited to 120 requests/min per client address (`CF-Connecting-IP`), through
-the same binding: a waiting daemon makes about three a minute and the page one. The
+reads and slot writes are each limited to 120 requests/min per client address
+(`CF-Connecting-IP`), through the same binding, counted apart so that reads cannot spend
+the page's one write; a waiting daemon makes about three reads a minute. A waiting read
+only reads the database; the one that takes the result writes once. The
 client holds the worker to the same bounds: a response at most a full page of the
 largest entries, at most 500 entries a page and 5,000 in all, a `next` only after a full
 page and past `since`, a minute for a whole read. A worker outside them is unavailable.

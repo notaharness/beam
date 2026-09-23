@@ -34,8 +34,10 @@ func parse(f url.Values) (Result, error) {
 		return Result{}, ErrPRFUnsupported
 	case "cancelled":
 		return Result{}, ErrCancelled
-	default:
+	case "failed":
 		return Result{}, ErrFailed
+	default:
+		return Result{}, ErrState // not a result
 	}
 	r := Result{CredentialID: f.Get("credentialId")}
 	for _, field := range []struct {

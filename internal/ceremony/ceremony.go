@@ -103,8 +103,11 @@ func Start(req Request, worker string) (*Ceremony, error) {
 // await ends the ceremony with what its slot brings, unless it ends first.
 func (c *Ceremony) await(ctx context.Context) {
 	sealed, err := readSlot(ctx, c.worker, c.slot, c.readKey)
-	if err == nil {
+	switch {
+	case err == nil:
 		c.finish(c.open(sealed))
+	case errors.Is(err, errRead):
+		c.finish(Result{}, ErrState)
 	}
 }
 

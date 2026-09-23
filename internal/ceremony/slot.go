@@ -5,6 +5,7 @@ import (
 	"crypto/hpke"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -45,19 +46,31 @@ func (c *Ceremony) open(sealed []byte) (Result, error) {
 	return parse(f)
 }
 
+// errRead is a slot read already: its result went to a read whose answer
+// never arrived, and will not come again.
+var errRead = errors.New("the slot was read already")
+
 // readSlot waits on the slot at worker until it holds a sealed result, and
-// takes it, or until ctx ends. A worker that fails to answer is asked again.
+// takes it, or until ctx ends or the slot turns out read already. A worker
+// that fails to answer is asked again after retry, and one that answers
+// nothing yet at most once a second.
 func readSlot(ctx context.Context, worker, slot string, readKey []byte) ([]byte, error) {
 	for {
+		began := time.Now()
 		sealed, err := readOnce(ctx, worker, slot, readKey)
-		if sealed != nil || ctx.Err() != nil {
-			return sealed, ctx.Err()
+		switch {
+		case sealed != nil || errors.Is(err, errRead):
+			return sealed, err
+		case ctx.Err() != nil:
+			return nil, ctx.Err()
 		}
+		pause := time.Second - time.Since(began)
 		if err != nil {
-			select {
-			case <-ctx.Done():
-			case <-time.After(retry):
-			}
+			pause = retry
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(pause):
 		}
 	}
 }
@@ -79,6 +92,8 @@ func readOnce(ctx context.Context, worker, slot string, readKey []byte) ([]byte,
 	case http.StatusOK:
 	case http.StatusNoContent:
 		return nil, nil
+	case http.StatusGone:
+		return nil, errRead
 	default:
 		return nil, fmt.Errorf("slot read: %s", resp.Status)
 	}

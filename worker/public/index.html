@@ -100,7 +100,7 @@ footer a { color: inherit; }
     const res = await fetch("/v1/slots/" + slot, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sealed: encode(sealed) }) });
     if (res.status === 201) return say("Done. The machine finishes on its own; you can close this page.");
     if (res.status === 409) {
-      return say(`This request was already answered from another device. If that was not you, someone who saw the code answered it: check ${label || "the machine"}, and if it enrolled, run beam fleet reset there.`);
+      return say(`This request was already answered from another device, or by an earlier try of yours. If you did not answer it before, someone who saw the code did: check ${label || "the machine"}, and if it enrolled, run beam fleet reset there.`);
     }
     say("beam.n10.is did not take the answer (" + res.status + "). Run the beam command again.");
   }
