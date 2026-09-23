@@ -24,13 +24,13 @@ async function slot() {
 // Each test speaks from an address of its own, so rates do not add up across
 // tests. A client in this isolate (inline) sees its fake timers; the others go
 // through a request of their own, as a real one does.
-function client(inline = false, ip = crypto.randomUUID()) {
+function client(inline = false, ip = crypto.randomUUID(), db = env.DB) {
   const send = (method: string, path: string, init: { body?: unknown; key?: Uint8Array | string } = {}) => {
     const headers: Record<string, string> = { "CF-Connecting-IP": ip, "Content-Type": "application/json" };
     if (init.key !== undefined) headers.Authorization = "Bearer " + (typeof init.key === "string" ? init.key : b64(init.key));
     const body = init.body === undefined ? undefined : typeof init.body === "string" ? init.body : JSON.stringify(init.body);
     const req = new Request("https://beam.n10.is" + path, { method, headers, body });
-    return inline ? worker.fetch(req, env) : exports.default.fetch(req);
+    return inline ? worker.fetch(req, { ...env, DB: db }) : exports.default.fetch(req);
   };
   return {
     write: (id: string, sealed: unknown) => send("POST", `/v1/slots/${id}`, { body: { sealed } }),
@@ -93,6 +93,27 @@ describe("docs/09 slots", () => {
     expect((await reading).status).toBe(204);
   });
 
+  // A waiting read only reads; one write takes the ciphertext once it is there.
+  it("writes to the database once per read that takes a result", async () => {
+    const writes: string[] = [];
+    const db = new Proxy(env.DB, {
+      get: (d, k) => k === "prepare"
+        ? (sql: string) => { if (!/^\s*SELECT/i.test(sql)) writes.push(sql); return d.prepare(sql); }
+        : Reflect.get(d, k).bind(d),
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    const c = client(true, undefined, db);
+    const s = await slot();
+    const waiting = c.read(s.id, s.key);
+    await vi.advanceTimersByTimeAsync(26_000);
+    expect((await waiting).status).toBe(204);
+    expect(writes).toEqual([]);
+    vi.useRealTimers();
+    await client().write(s.id, b64(random(10)));
+    expect((await c.read(s.id, s.key)).status).toBe(200);
+    expect(writes).toHaveLength(1);
+  });
+
   it("forgets a slot five minutes after its write", async () => {
     const c = client(true);
     const old = await slot();
@@ -126,16 +147,23 @@ describe("docs/09 slots", () => {
     for (const sealed of ["", "not base64!", 42, undefined]) {
       expect((await c.write(s.id, sealed)).status).toBe(400);
     }
-    expect((await c.send("POST", `/v1/slots/${s.id}`, { body: "{" })).status).toBe(400);
+    for (const body of ["{", "null", "[]", "7"]) {
+      expect(await answer(await c.send("POST", `/v1/slots/${s.id}`, { body }))).toEqual([400, { error: "params" }]);
+    }
     expect((await c.write(s.id, b64(random(10)))).status).toBe(201);
   });
 
-  it("allows 120 requests a minute per client address", async () => {
+  it("allows 120 writes and 120 reads a minute per client address, counted apart", async () => {
     const c = client();
-    const codes = [];
-    for (let i = 0; i < 121; i++) codes.push((await c.write((await slot()).id, b64(random(10)))).status);
-    expect(codes.slice(0, 119).every((code) => code === 201)).toBe(true);
-    expect(codes[120]).toBe(429);
+    const s = await slot();
+    const reads = [];
+    for (let i = 0; i < 121; i++) reads.push((await c.read(s.id, random(32))).status);
+    expect(reads.slice(0, 119).every((code) => code === 401)).toBe(true);
+    expect(reads[120]).toBe(429);
+    const writes = [];
+    for (let i = 0; i < 121; i++) writes.push((await c.write((await slot()).id, b64(random(10)))).status);
+    expect(writes.slice(0, 119).every((code) => code === 201)).toBe(true);
+    expect(writes[120]).toBe(429);
     expect((await client().write((await slot()).id, b64(random(10)))).status).toBe(201);
   });
 });
