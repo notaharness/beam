@@ -4,6 +4,7 @@ import (
 	"crypto/hmac"
 	"encoding/json"
 	"net"
+	"slices"
 	"sync"
 	"time"
 
@@ -24,80 +25,142 @@ type AdmitFunc func(entry json.RawMessage) (peerID string, nodePublic [32]byte, 
 // its version checked; the handler writes the response and owns c.
 type HandleFunc func(peerID string, h stream.Header, c *stream.Conn)
 
-// admission binds each tunnel's client key to a peer through hello.
+// admission binds each tunnel's client key to a peer through hello
+// (docs/03, Admission). A key it has seen has one record; a key without one
+// is unbound. Each operation makes its whole change under mu.
 type admission struct {
 	key    *Key
 	admit  AdmitFunc
 	handle HandleFunc
 
 	mu      sync.Mutex
-	bound   map[[32]byte]string            // client key → peer id
-	streams map[[32]byte]map[net.Conn]bool // open streams of each bound tunnel
-	dead    map[[32]byte]bool              // refused or superseded client keys
-	pending []unbound                      // tunnels in hello, oldest first
+	tunnels map[[32]byte]*tunnel
+	pending [][32]byte // the pending records' keys, oldest first: the eviction order
 
 	hook func(point string, c [32]byte) // tests pause here; nil otherwise
 }
 
-type unbound struct {
-	c    [32]byte
-	conn net.Conn
+type tunnel struct {
+	state   int
+	peer    string            // bound
+	hello   net.Conn          // pending
+	streams map[net.Conn]bool // bound
 }
 
+// Tunnel states.
+const (
+	pending = iota // its hello is under way
+	bound          // attributed to peer; carries streams
+	dead           // failed, evicted or superseded; carries nothing again
+)
+
+// Stream classes.
+const (
+	refused     = iota // close it unread
+	helloStream        // run hello on it
+	peerStream         // serve it for the bound peer
+)
+
 func newAdmission(k *Key, admit AdmitFunc, handle HandleFunc) *admission {
-	return &admission{key: k, admit: admit, handle: handle,
-		bound: map[[32]byte]string{}, streams: map[[32]byte]map[net.Conn]bool{}, dead: map[[32]byte]bool{}}
+	return &admission{key: k, admit: admit, handle: handle, tunnels: map[[32]byte]*tunnel{}}
 }
 
 // serve takes one accepted stream from the tunnel whose client key is c.
 func (a *admission) serve(conn net.Conn, c [32]byte) {
 	peer, class := a.classify(c, conn)
 	switch class {
-	case bound:
-		defer a.forget(c, conn)
+	case peerStream:
 		a.serveBound(stream.NewConn(conn), peer)
-	case inHello:
-		defer conn.Close()
-		defer a.leave(conn)
+	case helloStream:
 		conn.SetDeadline(time.Now().Add(helloTimeout))
 		a.hello(stream.NewConn(conn), c)
+		conn.Close()
 	default:
 		conn.Close()
+		return
+	}
+	a.leave(c, conn)
+}
+
+// classify decides what a new stream is and registers it in one step: the
+// first stream of an unbound key starts its hello, and a bound tunnel's
+// stream joins those retirement closes. A hello beyond the budget evicts the
+// oldest pending one first.
+func (a *admission) classify(c [32]byte, conn net.Conn) (peer string, class int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	t, seen := a.tunnels[c]
+	switch {
+	case !seen:
+		if len(a.pending) == maxUnbound {
+			a.kill(a.pending[0])
+		}
+		a.tunnels[c] = &tunnel{state: pending, hello: conn}
+		a.pending = append(a.pending, c)
+		return "", helloStream
+	case t.state == bound:
+		t.streams[conn] = true
+		return t.peer, peerStream
+	}
+	return "", refused
+}
+
+// finish settles c's hello once verification, done outside the lock, has a
+// verdict. Only a record still pending takes it: a pass leaves the budget
+// and binds in one step, superseding the peer's older tunnel so exactly one
+// tunnel carries its opens; a refusal fails c.
+func (a *admission) finish(c [32]byte, peer, reason string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	t := a.tunnels[c]
+	if t.state != pending {
+		return // evicted while it verified
+	}
+	a.dequeue(c)
+	if reason != "" {
+		*t = tunnel{state: dead}
+		return
+	}
+	for old, o := range a.tunnels {
+		if o.peer == peer { // only a bound record has a peer
+			a.kill(old)
+		}
+	}
+	*t = tunnel{state: bound, peer: peer, streams: map[net.Conn]bool{}}
+}
+
+// kill fails c's record, detaching and closing its connections: a pending
+// tunnel's hello, or a bound tunnel's streams.
+func (a *admission) kill(c [32]byte) {
+	t := a.tunnels[c]
+	if t.hello != nil {
+		t.hello.Close()
+	}
+	for conn := range t.streams {
+		conn.Close()
+	}
+	a.dequeue(c)
+	*t = tunnel{state: dead}
+}
+
+// leave unregisters a stream that classify admitted. A hello that ends while
+// its record is still pending had no verdict, so its key is unbound again.
+func (a *admission) leave(c [32]byte, conn net.Conn) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	switch t := a.tunnels[c]; t.state {
+	case pending:
+		a.dequeue(c)
+		delete(a.tunnels, c)
+	case bound:
+		delete(t.streams, conn)
 	}
 }
 
-// Stream classes.
-const (
-	refused = iota // dead, or its tunnel already has a hello under way
-	bound
-	inHello
-)
-
-// classify decides what a new stream is and registers it in one step under
-// the lock, so no bind or retirement can fall between the two. A new hello
-// beyond the budget evicts the oldest, whose tunnel counts as failed.
-func (a *admission) classify(c [32]byte, conn net.Conn) (string, int) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if peer, ok := a.bound[c]; ok {
-		a.streams[c][conn] = true // retirement closes it under this lock
-		return peer, bound
+func (a *admission) dequeue(c [32]byte) {
+	if i := slices.Index(a.pending, c); i >= 0 {
+		a.pending = slices.Delete(a.pending, i, i+1)
 	}
-	if a.dead[c] {
-		return "", refused
-	}
-	for _, u := range a.pending {
-		if u.c == c {
-			return "", refused
-		}
-	}
-	if len(a.pending) == maxUnbound {
-		a.dead[a.pending[0].c] = true
-		a.pending[0].conn.Close()
-		a.pending = a.pending[1:]
-	}
-	a.pending = append(a.pending, unbound{c, conn})
-	return "", inHello
 }
 
 func (a *admission) serveBound(sc *stream.Conn, peer string) {
@@ -116,17 +179,6 @@ func (a *admission) serveBound(sc *stream.Conn, peer string) {
 	a.handle(peer, h, sc)
 }
 
-func (a *admission) leave(conn net.Conn) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	for i, u := range a.pending {
-		if u.conn == conn {
-			a.pending = append(a.pending[:i], a.pending[i+1:]...)
-			return
-		}
-	}
-}
-
 // hello runs the acceptor's half of hello (docs/03, Admission).
 func (a *admission) hello(sc *stream.Conn, c [32]byte) {
 	var h stream.Header
@@ -141,26 +193,18 @@ func (a *admission) hello(sc *stream.Conn, c [32]byte) {
 		return
 	}
 	typ, p, err := sc.ReadFrame()
-	if err != nil || typ != stream.Data {
-		a.fail(c)
+	if err != nil {
 		return
 	}
-	peer, reason := a.verify(p, c)
+	peer, reason := a.verify(typ, p, c)
 	if a.hook != nil {
 		a.hook("admitted", c)
 	}
-	if reason != "" {
-		a.fail(c)
-		writeResult(sc, reason)
-		return
-	}
-	ok := a.bind(c, peer)
+	a.finish(c, peer, reason)
 	if a.hook != nil {
-		a.hook("bound", c)
+		a.hook("finished", c)
 	}
-	if ok {
-		writeResult(sc, "")
-	}
+	writeResult(sc, reason) // an evicted hello never hears it: eviction closed its stream
 }
 
 // firstStreamRefusal is why a tunnel's first stream is refused, if it is.
@@ -176,9 +220,9 @@ func firstStreamRefusal(h stream.Header) string {
 
 // verify checks membership, then possession of the key the entry names, with
 // the client key taken from the tunnel rather than the frame.
-func (a *admission) verify(p []byte, c [32]byte) (peer, reason string) {
+func (a *admission) verify(typ stream.Type, p []byte, c [32]byte) (peer, reason string) {
 	var f helloFrame
-	if json.Unmarshal(p, &f) != nil {
+	if typ != stream.Data || json.Unmarshal(p, &f) != nil {
 		return "", "bad-entry"
 	}
 	peer, s, reason := a.admit(f.Entry)
@@ -190,44 +234,6 @@ func (a *admission) verify(p []byte, c [32]byte) (peer, reason string) {
 		return "", "possession"
 	}
 	return peer, ""
-}
-
-func (a *admission) fail(c [32]byte) {
-	a.mu.Lock()
-	a.dead[c] = true
-	a.mu.Unlock()
-}
-
-// bind attributes the tunnel to peer and retires any older tunnel of the same
-// peer: its open streams close and it is admitted no more, so exactly one
-// tunnel carries each peer's opens. It refuses a tunnel that failed while its
-// hello was verified.
-func (a *admission) bind(c [32]byte, peer string) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.dead[c] { // evicted or retired while its hello verified
-		return false
-	}
-	for old, p := range a.bound {
-		if p != peer || old == c {
-			continue
-		}
-		delete(a.bound, old)
-		a.dead[old] = true
-		for conn := range a.streams[old] {
-			conn.Close()
-		}
-		delete(a.streams, old)
-	}
-	a.bound[c] = peer
-	a.streams[c] = map[net.Conn]bool{}
-	return true
-}
-
-func (a *admission) forget(c [32]byte, conn net.Conn) {
-	a.mu.Lock()
-	delete(a.streams[c], conn)
-	a.mu.Unlock()
 }
 
 func writeResult(sc *stream.Conn, reason string) {

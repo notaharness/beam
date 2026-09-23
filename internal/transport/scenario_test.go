@@ -248,10 +248,45 @@ func TestBadEntry(t *testing.T) {
 	if r := sendHello(t, c, helloFrame{Entry: json.RawMessage(`"junk"`)}); r.OK || r.Reason != "bad-entry" {
 		t.Errorf("junk entry: %+v, want refused bad-entry", r)
 	}
+
+	c = rawClient(t, b.key.Address())
+	sc := rawStream(t, c)
+	sc.WriteLine(stream.Header{V: 1, Kind: "hello"})
+	var r stream.Response
+	if err := sc.ReadLine(&r); err != nil || !r.OK {
+		t.Fatalf("hello header: %+v, %v", r, err)
+	}
+	a := NewKey(relay.Region)
+	_, entry := entryFor(a)
+	f, _ := json.Marshal(newHello(a, raw(c.PublicKey()), b.key.NodePublic(), entry))
+	sc.WriteFrame(stream.Control, f)
+	if _, p, err := sc.ReadFrame(); err != nil || json.Unmarshal(p, &r) != nil || r.OK || r.Reason != "bad-entry" {
+		t.Errorf("a valid hello in a control frame: %q, %v; want refused bad-entry", p, err)
+	}
 }
 
 // expectClosedUnread checks that the far side closed the stream: a clean EOF,
 // or a reset when it closed with our bytes unread.
+// expectOpen checks that sc is neither closed nor sent anything.
+func expectOpen(t *testing.T, sc *stream.Conn) {
+	t.Helper()
+	sc.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	var ne net.Error
+	if _, err := sc.Read(make([]byte, 1)); !errors.As(err, &ne) || !ne.Timeout() {
+		t.Errorf("read: %v, want the stream still open", err)
+	}
+}
+
+// expectRefused reads a refusal for reason, then the stream's close.
+func expectRefused(t *testing.T, sc *stream.Conn, reason string) {
+	t.Helper()
+	var r stream.Response
+	if err := sc.ReadLine(&r); err != nil || r.OK || r.Reason != reason {
+		t.Fatalf("got %+v, %v; want refused %s", r, err, reason)
+	}
+	expectClosedUnread(t, sc)
+}
+
 func expectClosedUnread(t *testing.T, sc *stream.Conn) {
 	t.Helper()
 	var ne net.Error
@@ -265,13 +300,16 @@ func TestUnboundStreams(t *testing.T) {
 	b := startMachine(t)
 
 	t.Run("first stream is not hello", func(t *testing.T) {
-		sc := rawStream(t, rawClient(t, b.key.Address()))
+		c := rawClient(t, b.key.Address())
+		sc := rawStream(t, c)
 		sc.WriteLine(stream.Header{V: 1, Kind: "sync"})
-		var r stream.Response
-		if err := sc.ReadLine(&r); err != nil || r.OK || r.Reason != "unauthenticated" {
-			t.Fatalf("got %+v, %v; want refused unauthenticated", r, err)
+		expectRefused(t, sc, "unauthenticated")
+
+		a := NewKey(relay.Region) // the tunnel is still unbound, so hello may follow
+		_, entry := entryFor(a)
+		if r := sendHello(t, c, newHello(a, raw(c.PublicKey()), b.key.NodePublic(), entry)); !r.OK {
+			t.Fatalf("hello after the refusal: %+v", r)
 		}
-		expectClosedUnread(t, sc)
 	})
 
 	t.Run("wrong version", func(t *testing.T) {
@@ -302,11 +340,23 @@ const (
 // A leaked address: the handshake completes but hello never comes.
 func TestHelloDeadline(t *testing.T) {
 	b := startMachine(t)
-	sc := rawStream(t, rawClient(t, b.key.Address()))
+	c := rawClient(t, b.key.Address())
+	sc := rawStream(t, c)
 	start := time.Now()
-	expectClosedUnread(t, sc)
+	sc.WriteLine(stream.Header{V: 1, Kind: "hello"})
+	var r stream.Response
+	if err := sc.ReadLine(&r); err != nil || !r.OK {
+		t.Fatalf("hello header: %+v, %v", r, err)
+	}
+	expectClosedUnread(t, sc) // the frame never comes
 	if d := time.Since(start); d < specHelloTimeout-500*time.Millisecond || d > specHelloTimeout+time.Second {
 		t.Errorf("closed after %v, want 5 s", d)
+	}
+
+	a := NewKey(relay.Region) // no verdict, so the tunnel is unbound again
+	_, entry := entryFor(a)
+	if r := sendHello(t, c, newHello(a, raw(c.PublicKey()), b.key.NodePublic(), entry)); !r.OK {
+		t.Fatalf("hello after the deadline: %+v", r)
 	}
 }
 
@@ -333,12 +383,8 @@ func TestHelloBudget(t *testing.T) {
 	}
 	open[0].SetReadDeadline(time.Now().Add(2 * time.Second))
 	expectClosedUnread(t, open[0])
-	for i := 1; i < len(open); i++ {
-		open[i].SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-		var ne net.Error
-		if _, err := open[i].Read(make([]byte, 1)); !errors.As(err, &ne) || !ne.Timeout() {
-			t.Errorf("client %d: %v, want still open", i, err)
-		}
+	for _, sc := range open[1:] {
+		expectOpen(t, sc)
 	}
 }
 
@@ -438,6 +484,25 @@ func TestDialAfterClose(t *testing.T) {
 			t.Fatal("a Dial in flight when the node closed returned a live tunnel")
 		}
 	})
+}
+
+// Close between a successful hello and registration: Dial reports ErrClosed
+// and the node holds no tunnel.
+func TestCloseAtRegistration(t *testing.T) {
+	b := startMachine(t)
+	a := startMachine(t)
+	a.node.beforeRegister = func() { a.node.Close() }
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	tun, err := a.node.Dial(ctx, b.key.Address())
+	if !errors.Is(err, ErrClosed) || tun != nil {
+		t.Fatalf("Dial: %v, %v; want ErrClosed and no tunnel", tun, err)
+	}
+	a.node.mu.Lock()
+	defer a.node.mu.Unlock()
+	if len(a.node.tunnels) != 0 {
+		t.Fatalf("%d tunnels registered after Close", len(a.node.tunnels))
+	}
 }
 
 // openEcho opens a stream on a raw client and returns it once accepted.
