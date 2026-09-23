@@ -47,15 +47,19 @@ func (win *window) take() bool {
 // taken queues the answer for a frame taken.
 func (win *window) taken() { win.acks <- struct{}{} }
 
-// answer writes the queued answers, giving each frame's place back just
-// before the opener can learn of it.
+// answer writes the queued answers. Each frame's place comes back under the
+// writer's lock, once nothing but the write stands before its taken, so
+// output the opener leaves unread cannot widen the window.
 func (win *window) answer(w *writer) {
 	for range win.acks {
-		win.mu.Lock()
-		win.n--
-		win.mu.Unlock()
-		_ = w.control(Ctl{Kind: "taken"}) // a lost opener ends feed
+		_ = w.taken(win.release) // a lost opener ends feed
 	}
+}
+
+func (win *window) release() {
+	win.mu.Lock()
+	win.n--
+	win.mu.Unlock()
 }
 
 // feed reads the opener's frames until its side ends or sends close, or it

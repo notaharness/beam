@@ -220,9 +220,13 @@ type writer struct {
 	c  *Conn
 }
 
-func (w *writer) control(ctl Ctl) error {
-	b, _ := json.Marshal(ctl)
-	return w.frame(Control, b)
+// taken writes a taken frame, calling release under the lock first.
+func (w *writer) taken(release func()) error {
+	b, _ := json.Marshal(Ctl{Kind: "taken"})
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	release()
+	return w.c.WriteFrame(Control, b)
 }
 
 func (w *writer) frame(t Type, p []byte) error {
