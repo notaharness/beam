@@ -74,13 +74,20 @@ test("refuses a version that is not canonical semver", (t) => {
   }
 });
 
-test("npm publishes each package at the version pack wrote", (t) => {
+test("npm publishes each package whole, at the version pack wrote", (t) => {
   const dir = inDist(t);
   const r = spawnSync(process.execPath, [pack, "1.2.3-rc.1"], { cwd: dir, encoding: "utf8" });
   assert.strictEqual(r.status, 0, r.stderr);
-  for (const p of ["beam", "beam-linux-x64"]) {
+  for (const p of ["beam", "beam-darwin-arm64", "beam-darwin-x64", "beam-linux-x64", "beam-linux-arm64"]) {
     const dry = spawnSync("npm", ["publish", "--dry-run", "--json", "--offline", "--tag", "next"], { cwd: path.join(dir, "dist", "npm", p), encoding: "utf8" });
     const out = JSON.parse(dry.stdout); // keyed by the package's name since npm 11.19
-    assert.strictEqual((out[`@notaharness/${p}`] ?? out).version, "1.2.3-rc.1", p);
+    const got = out[`@notaharness/${p}`] ?? out;
+    assert.strictEqual(got.version, "1.2.3-rc.1", p);
+    const files = Object.fromEntries(got.files.map((f) => [f.path, f.mode]));
+    const bin = p === "beam" ? ["bin/beam.js", "index.js"] : ["beam"];
+    assert.deepStrictEqual(Object.keys(files).sort(), ["LICENSE", "README.md", ...bin, "package.json"].sort(), p);
+    if (p !== "beam") {
+      assert.strictEqual(files.beam & 0o777, 0o755, `${p}: the binary's mode in the tarball`);
+    }
   }
 });
