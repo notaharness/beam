@@ -132,8 +132,9 @@ complexity 4 or below.
 
 ## CI
 
-Push (`.github/workflows/ci.yml`, one job `ci`, required on `main`): `make lint`,
+Push (`.github/workflows/ci.yml`): job `ci`, required on `main`: `make lint`,
 `make crap` (`go test -race` with coverage, then the CRAP gate), `make dist`
-(cross-compile four targets), worker vitest
-under miniflare, the Go directory client's contract test against miniflare, CSP hash
-check. Tag: build, GitHub release with binaries, publish the five npm packages.
+(cross-compile four targets), worker vitest under miniflare, the Go directory client's
+contract test against miniflare, CSP hash check. Job `darwin`: `make test` on macOS, where
+the process lifetimes (kqueue, not waitid) and the in-process daemons run for real. Tag:
+build, GitHub release with binaries, publish the five npm packages.
