@@ -176,8 +176,8 @@ func (d *daemon) openRemote(ctx context.Context, r *reservation) (*stream.Conn, 
 
 // pump carries the client's frames to the peer and the peer's frames to the
 // client, counting each taken the peer answers, until the peer sends its
-// close, its side ends without one (connection-lost), or the stream is
-// detached.
+// close, its side ends without one (connection-lost), the stream is detached,
+// or the peer answers taken with no input outstanding (window).
 func pump(ctx context.Context, cl *client, rc *stream.Conn) stream.CloseMsg {
 	stop := context.AfterFunc(ctx, func() {
 		rc.Close()
@@ -200,11 +200,25 @@ func pump(ctx context.Context, cl *client, rc *stream.Conn) stream.CloseMsg {
 			return stream.CloseMsg{Reason: "connection-lost"}
 		case t == stream.Close:
 			return stream.ParseClose(p)
-		case taken(t, p):
-			cl.outstanding.Add(-1)
+		case taken(t, p) && !cl.took():
+			return stream.CloseMsg{Reason: "window"}
 		}
 		if cl.ac.WriteFrame(t, p) != nil {
 			return stream.CloseMsg{Reason: "detached"} // the client has gone
+		}
+	}
+}
+
+// took counts an input frame answered taken, reporting false, and counting
+// nothing, if none was outstanding.
+func (cl *client) took() bool {
+	for {
+		n := cl.outstanding.Load()
+		if n == 0 {
+			return false
+		}
+		if cl.outstanding.CompareAndSwap(n, n-1) {
+			return true
 		}
 	}
 }
