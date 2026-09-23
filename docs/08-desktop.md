@@ -20,7 +20,8 @@ queue counts. Clicking a queue count opens `msg.queue`.
 
 First run (`status.enrolled == false`): one card, **Create a fleet** or **Join my
 fleet**, with a fleet name field for create. Each opens the ceremony URL with
-`shell.openExternal`, shows the stage names from [07](07-cli.md), handles the second
+`shell.openExternal` and draws it as a QR code beside the stages, so a phone can answer
+instead; it shows the stage names from [07](07-cli.md), handles the second
 `ceremony` event for init, and ends on the `*.wait` result. `prf-unsupported` shows
 "this passkey provider doesn't support what beam needs; try another".
 

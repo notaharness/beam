@@ -29,7 +29,10 @@ beam version
 
 ## Enrolment
 
-Each ceremony prints its URL and opens the browser when one is available. Output shows
+Each ceremony prints its URL, draws it as a QR code below when stdout is a terminal, and
+opens the browser when the machine has one (a display, and not an SSH session). The owner
+finishes in whichever they like: the browser that opened, or a phone that scanned the
+code. Nothing else differs between a desktop and a headless machine. Output shows
 stages: `starting daemon`, `preparing network`, `waiting for your passkey (create)`,
 `waiting for your passkey (sign)`, `reading directory`, `publishing`.
 
@@ -58,8 +61,23 @@ acknowledged by 2 of 3 peers      (offline peers learn when they connect)
 
 `beam fleet reset` asks `type "reset" to confirm`.
 
-On a headless machine a ceremony prints the URL and:
-`forward the port first: ssh -L 7xxx:127.0.0.1:7xxx <this machine>`.
+A ceremony shows:
+
+```
+waiting for your passkey (sign)
+  https://beam.n10.is/#op=get&slot=…&key=…&action=…
+  ▄▄▄▄▄▄▄ ▄ ▄▄ … (the QR code)
+scan with your phone or open the link; continue only on a page that shows this machine
+```
+
+The QR code encodes the URL byte for byte, at error correction level L, two modules
+per character cell with Unicode half blocks (`▀ ▄ █` and space), black on white by SGR
+colours whatever the terminal's theme, with a four-module quiet zone. A URL with an
+ASCII label fits version 13 (69 modules), 77 columns with the quiet zone, so an
+80-column terminal holds it; a long non-ASCII label can make it wider, and the URL
+above it still works. The page on the phone checks nothing against the terminal: the
+owner compares the action, machine and fingerprint it shows with what they ran
+([01](01-model.md), The relayed result).
 
 ## Streams
 

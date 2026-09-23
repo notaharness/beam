@@ -42,22 +42,38 @@ timeout before it connects ([03](03-transport.md), Footprint).
 Build tag `beamtest`. With `BEAM_TEST_AUTHENTICATOR=<json: credentialId, ES256 private
 key, prf secret>` set, ceremony ops skip the browser: they produce a WebAuthn-shaped
 assertion (correct `clientDataJSON` for origin `https://beam.n10.is`, `authenticatorData`
-with `rpIdHash` and UV) and a PRF value computed the way the spec defines it, then POST
-to the daemon's own `/cb/result`. Verification is not bypassed. This is a protocol
+with `rpIdHash` and UV) and a PRF value computed the way the spec defines it, seal the
+result to the ceremony's key as the page does, and write it to the ceremony's slot on the
+daemon's directory worker. The daemon waits on the slot, opens and verifies it as it
+would a phone's. Verification is not bypassed. This is a protocol
 fixture, not proof of any real authenticator's behaviour.
 
-## Browser callback
+## Browser ceremony
 
 A Playwright test drives real Chromium against the daemon's ceremony URL with the page
-served from `worker/public/` and a CDP virtual authenticator with PRF enabled, and checks
-that `/cb` lands the fragment and the daemon completes. This is the one boundary the test
-authenticator cannot exercise.
+served from `worker/public/` under its `_headers` and a CDP virtual authenticator with
+PRF enabled: a `create`, then a `get` with the credential it made. The page's slot write
+goes to the fake worker, and the test checks that the page reports `201` and the daemon
+opens, verifies and completes. That is also the HPKE interoperability test: the page's
+Web Crypto sealing against Go's `crypto/hpke`, which carries RFC 9180's vectors. This is
+the one boundary the test authenticator cannot exercise.
 
 ## Fake worker
 
-`internal/fakeworker` implements the routes, bearer check and assertion verification in
-memory. A contract test runs the Go client against the real worker under miniflare in
-CI so the fake cannot drift.
+`internal/fakeworker` implements the routes, bearer check, assertion verification and
+slots in memory. A contract test runs the Go directory and slot clients against the real
+worker under `wrangler dev` in CI so the fake cannot drift.
+
+## Worker
+
+vitest in workerd (`worker/test/`), against D1 and the rate-limit binding as miniflare
+provides them: every route's refusals and caps; for slots, a write then a read returns
+the ciphertext, a second write is `409` before and after the read, a second read is
+`410`, a read with any other key is `401`, a read waits for a write that comes while it
+waits, a row past five minutes is gone to both routes and deleted by the next write, a
+body or a ciphertext over its cap is `413`, and a client address past its rate is `429`.
+The page's policy is recomputed from its script and style, and `connect-src` is the slot
+prefix alone.
 
 ## Integration
 
@@ -68,11 +84,14 @@ bare member node (transport only) stands in for a daemon:
 
 | Scenario | Proves |
 |---|---|
-| init, join | admission on first contact in both directions; both pinned |
+| init, join | admission on first contact in both directions; both pinned; every result came through a slot |
 | third joins while second is offline; second returns | second admits third directly and also learns it via sync; one row |
 | second joins while worker withholds first's revocation of third | second admits third until the tombstone arrives by sync, then terminates; documents eventual revocation |
 | revoke while all tunnels are up | peers refuse within the sync delta, no reconnect needed |
-| revoke with worker down | local effect immediate; `published: "pending"`; append lands after worker returns |
+| revoke with worker refusing appends | local effect immediate; `published: "pending"`; append lands after worker takes appends again |
+| worker down during a ceremony | the ceremony waits on its slot and ends `ceremony-timeout`; nothing is committed |
+| onlooker answers first | a second authenticator seals its own result to the slot before the owner: on an enrolled machine `revoke` ends `bad-assertion` and commits nothing, and the owner's write is `409` |
+| junk in a slot | a ciphertext that does not open under the ceremony's key ends it `ceremony-state` |
 | leaked address, no entry | handshake completes, hello absent, closed within 5 s; 16-slot budget enforced |
 | possession | valid entry, wrong MAC → `possession`; replay of hello from another tunnel refused |
 | wrong passkey | assertion from a second credential → `wrong-passkey` at join; a revoke signed by an unrelated credential is refused |
@@ -92,7 +111,10 @@ the seeded keys never change.
 
 ## Manual, per release
 
-Real ceremonies on macOS Safari, Chrome on Linux, and phone-via-QR, each with `init` on a
-fresh dir and `join` on a second; check that the derived directory key matches across
+Real ceremonies on macOS Safari and Chrome on Linux through the opened browser, and on
+iOS Safari and Android Chrome by scanning the terminal's QR code from a headless machine
+(an SSH session), each with `init` on a fresh dir and `join` on a second, and one
+`revoke`; a scan of the code from a second phone after the first answered shows the
+page's "answered from another device"; check that the derived directory key matches across
 create/get and local/hybrid. Real NAT traversal between two networks; `beam peers` shows
 `direct` or `relay`.

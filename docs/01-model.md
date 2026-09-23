@@ -32,7 +32,8 @@ would be the same over any transport.
    pinned locally.
 3. **No server in the trust path.** The one hosted component stores ciphertext it cannot
    read containing statements it cannot forge, and verifies passkey assertions on writes
-   so only a tap can append. It is read at join and at daemon start, written at init,
+   so only a tap can append. It carries each ceremony's result back to the machine
+   sealed to a key it never sees. It is read at join and at daemon start, written at init,
    join and revoke, and never polled or consulted per connection. Its code is open.
 4. **Verify on contact, pin forever.** A machine proves membership the first time it
    connects to another by presenting its signed entry and proving possession of the key
@@ -52,7 +53,8 @@ would be the same over any transport.
   entries and revocations, and via the PRF extension yields the directory key.
 - **The directory**, an append-only log per fleet held by an open-source Cloudflare
   Worker at `beam.n10.is`. Entries are ciphertext; appends carry a passkey assertion the
-  worker verifies. The same worker serves the static ceremony page.
+  worker verifies. The same worker serves the static ceremony page and relays each
+  ceremony's sealed result from the page back to the daemon through a one-time slot.
 - **DERP relays**, Tailscale's public tailcat fleet or one we run.
 
 ### What each actor is authoritative for
@@ -61,8 +63,8 @@ would be the same over any transport.
 |---|---|---|---|
 | Node key | One machine's identity | Membership | That machine is impersonated until revoked. A shell-capable member is the owner's OS account on every machine it reaches, so a stolen member that was used before revocation may have copied other keys; see "Blast radius". |
 | Passkey | Membership and revocation, one statement per tap | Anything per connection | Total. The owner starts a new fleet. |
-| Directory worker | Storing and returning ciphertext; refusing writes that lack a valid assertion | Contents; membership; anything at runtime | Refuses to serve: init, join and publishing stall, and a starting daemon learns no revocation from it. Nothing at runtime waits on it. Cannot read an address, forge an entry or remove one a machine already holds. Sees blob sizes, timing and a fleet identifier. |
-| Ceremony page | Running one WebAuthn call honestly; at a machine's first enrolment, that machine's root | Anything beyond the operation being approved | Can substitute the statement being signed during that one tap, and can keep the PRF output (directory read access). Cannot sign a later statement. At a machine's first enrolment (`init`, a fresh `join`) it can substitute the root that machine pins. |
+| Directory worker | Storing and returning ciphertext; refusing writes that lack a valid assertion; holding a ceremony's sealed result until its daemon reads it | Contents; membership; ceremony results; anything at runtime | Refuses to serve: every ceremony, and so init, join and revoke, stalls, publishing stalls, and a starting daemon learns no revocation from it. Nothing at runtime waits on it. Cannot read an address, forge an entry or remove one a machine already holds. Cannot open, alter or replay a ceremony result; can drop one, or fill a slot with junk, which ends that ceremony. Sees blob and result sizes, timing, a fleet identifier, and the addresses of the browser and the machine in a ceremony. |
+| Ceremony page | Running one WebAuthn call honestly and sealing its result to the key in its URL; at a machine's first enrolment, that machine's root | Anything beyond the operation being approved | Can substitute the statement being signed during that one tap, and can keep the PRF output (directory read access). Cannot sign a later statement. At a machine's first enrolment (`init`, a fresh `join`) it can substitute the root that machine pins. |
 | A fleet machine's disk | Its pins, its mailbox, the directory key | Membership | Stolen: tunnel access until revoked; permanent read access to the directory. Cannot add or remove a machine. |
 | DERP relay | Delivery of encrypted packets; rendezvous | Contents; identity; membership | New connections stall while down. Cannot complete a handshake or join a tunnel it observes. |
 
@@ -99,6 +101,70 @@ credential and never take one from the page or the worker. The page has
 `Content-Security-Policy: default-src 'none'`, its source is public and its hash is
 pinned in CI; none of that is a cryptographic guarantee, and the spec does not claim one.
 
+### The relayed result
+
+The page returns a ceremony's result through a slot on the worker, sealed with HPKE to
+a key the daemon made for that ceremony and put in the URL's fragment
+([02](02-identity.md), Ceremonies). That is what lets a phone that scanned the terminal
+answer for a machine it cannot reach. The worker holds only ciphertext and never sees
+the key, so it cannot read a result, forge one or move one to another ceremony. What
+the relay changes is who can answer: **the URL is a capability to answer the ceremony**,
+and it now works from any device that has it, not only from a browser on the machine.
+Seeing it is enough; it names the slot and the key, and HPKE's base mode does not
+authenticate the sender.
+
+**An onlooker who answers first.** Someone who sees the QR code while it is on the
+screen (over a shoulder, on a screen share, in a photo) can run the same page with a
+passkey of their own and write to the slot before the owner does. The slot takes one
+write, so exactly one of them lands, and the machine gets it.
+
+- On a machine that holds its root, their answer fails verification under the pinned
+  credential: the ceremony ends `bad-assertion` or `wrong-passkey`. Denial of one
+  ceremony, nothing more.
+- At a machine's first enrolment it is the root substitution above, done by the
+  onlooker instead of the page: at `init` the machine pins their credential as its
+  root; at a fresh `join` it joins their fleet on the real worker (anyone can register
+  one). Either way their root can then admit machines of theirs, which get a shell on
+  this one under the default grant.
+
+The owner learns of it from their own page: their write is refused, and the page says
+the ceremony was answered from another device and that the machine must be reset
+(`beam fleet reset`) if it enrolled. The slot stays taken for the ceremony's five
+minutes, so no write within the ceremony can be told it landed when it did not. The
+fleet fingerprint check catches the same thing later. Nothing prevents it: binding the
+answer to the machine needs a secret the onlooker cannot see, such as a code shown on
+the phone and typed into the terminal, and beam leaves that out for now. Show the QR
+code where only you can see it.
+
+**A URL the owner did not start.** A ceremony URL or QR code someone else made (sent
+as "scan this to finish setting up", or put in place of the real one) carries their key
+and their slot, and whatever challenge and text they chose. If the owner approves it,
+the sealed result goes to them: the PRF output, so `K_dir` and `T_read` and with them
+the fleet's addresses and labels for as long as it exists, and an assertion over the
+one statement the page showed. If that statement adds their machine, they append it and
+the machine is a member, with a shell on every other. If they reuse the owner's real
+challenge and only swap the key, they learn the directory key and can re-seal the
+result to the real slot, so the ceremony completes and nothing looks wrong. This is the
+hostile page's exposure from "The ceremony as the trusted moment", with the page
+honest: one statement per tap, which the page displays, and permanent directory read.
+The defence is the owner's: approve only a ceremony you started just now, whose action,
+machine and fingerprint match what the terminal shows. The page says so.
+
+**Loopback proved presence; the relay does not.** A result delivered to
+`127.0.0.1` could only come from a browser that reaches the machine's loopback, which
+proved the approver was at the machine or had forwarded its port, and made both attacks
+above impossible. beam keeps one path, the relay, for every ceremony, the local browser
+included:
+
+- The exposure to a URL the owner did not start comes from the page being able to
+  return a result through a slot at all. A loopback path kept beside it for machines
+  with a browser would not remove that; it would only keep a second path.
+- What loopback would still buy on a desktop is protection from an onlooker at first
+  enrolment, where the URL opens in the local browser at once and is never drawn for a
+  camera. That onlooker has to read a URL of several hundred characters off the screen
+  and answer before the owner's first tap; the owner's page tells them if they did.
+- A headless machine, which is where this is for, gets the relay either way.
+
 ### Blast radius
 
 The default grant gives every member a shell on every other member as the daemon's
@@ -124,13 +190,17 @@ by N peers.
 ### Threat model
 
 **Defended against:** any network attacker including the DERP operator; the directory
-worker (hostile or breached) for everything but availability and metadata; a stolen or
+worker (hostile or breached) for everything but availability and metadata, ceremony
+results included; a stolen or
 compromised member adding or removing machines; a stolen member after revocation
 reaches each peer; a leaked address (the holder completes a handshake and is closed at
 admission); lookalike domains.
 
 **Not defended against, by decision:** a stolen member before it is revoked, and what it
-did meanwhile; a hostile page during one ceremony, and at `init` for the root; loss of
+did meanwhile; a hostile page during one ceremony, and at `init` for the root; an
+onlooker who scans a ceremony's QR code and answers before the owner, which at a first
+enrolment roots the machine in their fleet (the owner's page reports it); a ceremony URL
+the owner did not start and approves anyway; loss of
 the passkey with no synced copy; metadata at the relay and the worker; a second human;
 transport-level resource exhaustion by an address holder beyond what tailcat itself
 bounds.
