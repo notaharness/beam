@@ -259,6 +259,9 @@ func TestRevocationOnLiveSync(t *testing.T) {
 	if r := c.beam("", "exec", "beta", "--", "true"); r.code != 1 || !strings.Contains(r.err, "revoked") || time.Since(start) > 5*time.Second {
 		t.Errorf("revoked machine's exec: %+v after %v, want revoked at once", r, time.Since(start))
 	}
+	if r := c.beam("", "msg", "send", "beta", "x"); r.code != 1 || r.err != "rejected: revoked-peer\n" {
+		t.Errorf("revoked machine's msg send: %+v, want rejected: revoked-peer", r)
+	}
 
 	// docs/03 admission step 3: the hello itself is refused, before any
 	// stream, for the revoked machine's own key and entry.

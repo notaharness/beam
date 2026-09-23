@@ -51,7 +51,7 @@ func opMsgSend(d *daemon, _ *clientConn, r request) (any, error) {
 	case err != nil:
 		d.o.Logf("msg.send to %s: %v", r.To, err)
 		return sendResult{Outcome: rejected, To: r.To, Reason: mailbox.StorageFailure}, nil
-	case p.Revoked:
+	case p.Revoked || d.revokedByFleet(to):
 		return sendResult{Outcome: rejected, To: to, Reason: "revoked-peer"}, nil
 	}
 	encoding := r.Encoding

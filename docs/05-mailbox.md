@@ -76,7 +76,7 @@ it does not block the queue; `queue-full`, `storage-failure` and unknown reasons
 |---|---|---|
 | `delivered` | recipient daemon stored it and acked | done |
 | `stored` | on this machine's disk; delivery pending (peer offline, or no ack within 10 s) | **success**; do not resend |
-| `rejected` | nothing stored: `unknown-peer`, `revoked-peer`, `invalid-topic`, `payload-too-large`, `queue-full`, `storage-failure`; or refused for good by the recipient within the 10 s (`payload-too-large`, `invalid-envelope`), and kept only in quarantine | failure |
+| `rejected` | nothing stored: `unknown-peer`, `revoked-peer` (revoked here, or refusing this machine as revoked), `invalid-topic`, `payload-too-large`, `queue-full`, `storage-failure`; or refused for good by the recipient within the 10 s (`payload-too-large`, `invalid-envelope`), and kept only in quarantine | failure |
 
 `stored` carries `pendingReason: "offline" | "no-ack"`. Every surface reports it as:
 
