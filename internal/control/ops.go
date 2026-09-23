@@ -70,9 +70,10 @@ type derpStatus struct {
 }
 
 type peerCounts struct {
-	Connected int `json:"connected"`
-	Offline   int `json:"offline"`
-	Revoked   int `json:"revoked"`
+	Connected      int `json:"connected"`
+	Offline        int `json:"offline"`
+	Revoked        int `json:"revoked"`
+	RevokedByFleet int `json:"revokedByFleet"`
 }
 
 func opStatus(d *daemon, _ *clientConn, _ request) (any, error) {
@@ -91,6 +92,8 @@ func opStatus(d *daemon, _ *clientConn, _ request) (any, error) {
 			res.Peers.Connected++
 		case stateRevoked:
 			res.Peers.Revoked++
+		case stateRevokedByFleet:
+			res.Peers.RevokedByFleet++
 		default:
 			res.Peers.Offline++
 		}

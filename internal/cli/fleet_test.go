@@ -242,8 +242,16 @@ func TestRevocationOnLiveSync(t *testing.T) {
 		t.Errorf("exec to a revoked machine: %+v, want revoked-peer", r)
 	}
 
-	if r := c.beam("", "exec", "beta", "--", "true"); r.code != 1 {
-		t.Errorf("revoked machine's exec: %+v, want refused", r)
+	// The revoked machine hears it from each peer's hello refusal: it stops
+	// dialing them and says so.
+	waitState(t, c, a, "revoked-by-fleet")
+	waitState(t, c, b, "revoked-by-fleet")
+	if r := c.beam("", "status"); !strings.Contains(r.out, "this machine is revoked: 2 peers refuse it") {
+		t.Errorf("the revoked machine's status: %+v", r)
+	}
+	start := time.Now()
+	if r := c.beam("", "exec", "beta", "--", "true"); r.code != 1 || !strings.Contains(r.err, "revoked") || time.Since(start) > 5*time.Second {
+		t.Errorf("revoked machine's exec: %+v after %v, want revoked at once", r, time.Since(start))
 	}
 
 	// docs/03 admission step 3: the hello itself is refused, before any

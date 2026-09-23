@@ -43,7 +43,7 @@ type status struct {
 		Region string `json:"region"`
 	} `json:"derp"`
 	Peers struct {
-		Connected, Offline, Revoked int
+		Connected, Offline, Revoked, RevokedByFleet int
 	} `json:"peers"`
 }
 
@@ -70,6 +70,9 @@ func runStatus(e *env) int {
 	}
 	fmt.Fprintf(e.stdout, "this machine: %s (%s) · fleet %s… · relay %s\n", s.Label, fingerprint(s.PeerID), s.FleetID[:4], s.DERP.Region)
 	fmt.Fprintf(e.stdout, "peers: %d connected, %d offline, %d revoked\n", s.Peers.Connected, s.Peers.Offline, s.Peers.Revoked)
+	if n := s.Peers.RevokedByFleet; n > 0 {
+		fmt.Fprintf(e.stdout, "this machine is revoked: %d peers refuse it\n", n)
+	}
 	return 0
 }
 

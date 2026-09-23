@@ -43,7 +43,7 @@ does.
 
 | op | request | result |
 |---|---|---|
-| `status` | | `{ version, ready, enrolled, peerId, label, fleetId?, address?, derp: { region, source }, peers: { connected, offline, revoked } }` |
+| `status` | | `{ version, ready, enrolled, peerId, label, fleetId?, address?, derp: { region, source }, peers: { connected, offline, revoked, revokedByFleet } }` |
 | `events.subscribe` | | `{}` |
 | `daemon.shutdown` | | `{}` then exit |
 

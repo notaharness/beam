@@ -160,7 +160,10 @@ func (d *daemon) relay(ctx context.Context, r *reservation, cl *client) stream.C
 
 func (d *daemon) openRemote(ctx context.Context, r *reservation) (*stream.Conn, stream.CloseMsg) {
 	tun, ok := d.tunnelTo(ctx, r.peer)
-	if !ok {
+	switch {
+	case !ok && d.revokedByFleet(r.peer):
+		return nil, stream.CloseMsg{Reason: "revoked"}
+	case !ok:
 		return nil, stream.CloseMsg{Reason: "offline"}
 	}
 	rc, err := tun.Open(ctx, r.h)

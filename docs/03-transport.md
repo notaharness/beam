@@ -104,7 +104,8 @@ are TCP's. No multiplexer. One port, kind in the header.
   keepalives and `Server.Status()` are advisory.
 - **Retry.** Exponential backoff 2 s → 5 min with jitter, forever while the daemon runs;
   reset on inbound contact from that peer, on a learned entry for it, and on
-  `msg.send` to it. There is no give-up state: queued mail must eventually flow. A learned
+  `msg.send` to it. There is no give-up state, but for a peer that refuses this machine
+  as revoked: queued mail must eventually flow. A learned
   entry with a new address closes the tunnel to the old one and dials the new.
 - **Path.** `Server.Status()` gives `CurAddr` or `Relay` for inbound peers; the `Client`
   has no equivalent, so `path` is reported for the inbound tunnel or as `unknown`.
@@ -114,6 +115,7 @@ are TCP's. No multiplexer. One port, kind in the header.
 | `connected` | hello succeeded on the tunnel this machine dialed |
 | `offline` | last dial failed or liveness lapsed; retrying |
 | `revoked` | refused at admission; never dialed |
+| `revoked-by-fleet` | the peer refused this machine's hello as `revoked`; not dialed again while the daemon runs. The refusal is advice, not a record: this machine holds no revocation of itself |
 
 ## DERP
 

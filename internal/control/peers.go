@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"errors"
 	"math/rand/v2"
 	"time"
 
@@ -18,11 +19,14 @@ const (
 	pongTimeout = 30 * time.Second
 )
 
-// Peer states (docs/03).
+// Peer states (docs/03). revoked-by-fleet is the peer refusing this
+// machine's hello as revoked: advice, not a record, but that peer will not
+// take this machine again, so it is not dialed again while the daemon runs.
 const (
-	stateConnected = "connected"
-	stateOffline   = "offline"
-	stateRevoked   = "revoked"
+	stateConnected      = "connected"
+	stateOffline        = "offline"
+	stateRevoked        = "revoked"
+	stateRevokedByFleet = "revoked-by-fleet"
 )
 
 // peerState is this machine's dialed side of one peer.
@@ -110,7 +114,14 @@ func (d *daemon) tryPeer(ctx context.Context, peerID string, ps *peerState) bool
 	dctx, cancel := context.WithTimeout(ctx, dialTimeout)
 	tun, err := d.node.Dial(dctx, p.Entry.Address)
 	cancel()
-	if err != nil {
+	var ref *transport.Refused
+	switch {
+	case errors.As(err, &ref) && ref.Reason == "revoked":
+		d.o.Logf("%s refuses this machine as revoked; not dialing it again", peerID[:8])
+		d.setState(ps, stateRevokedByFleet, nil, nil)
+		ps.cancel()
+		return false
+	case err != nil:
 		d.o.Logf("dial %s: %v", peerID[:8], err)
 		d.setState(ps, stateOffline, nil, nil)
 		return false
@@ -125,7 +136,7 @@ func (d *daemon) tryPeer(ctx context.Context, peerID string, ps *peerState) bool
 func (d *daemon) tunnelTo(ctx context.Context, peerID string) (*transport.Tunnel, bool) {
 	d.mu.Lock()
 	ps, ok := d.peers[peerID]
-	if !ok || ps.state == stateConnected {
+	if !ok || ps.state == stateConnected || ps.state == stateRevokedByFleet {
 		defer d.mu.Unlock()
 		return ps.tunnelIfOK(ok)
 	}
@@ -172,4 +183,13 @@ func (d *daemon) stopPeerLocked(peerID string) {
 		close(ps.changed)
 		ps.changed = make(chan struct{})
 	}
+}
+
+// revokedByFleet reports whether a peer refused this machine's hello as
+// revoked.
+func (d *daemon) revokedByFleet(peerID string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	ps, ok := d.peers[peerID]
+	return ok && ps.state == stateRevokedByFleet
 }
