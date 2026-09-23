@@ -76,13 +76,16 @@ Every ceremony op returns a `ceremonyUrl` the client opens or prints; the matchi
 | `join.start` | `{ label }` | `{ ceremonyUrl }` |
 | `join.wait` | | `{ peerId, fleetId, members: n, published: true \| "pending" }` |
 | `revoke.start` | `{ peer }` | `{ ceremonyUrl }` |
-| `revoke.wait` | | `{ local: true, published: true \| "pending", acknowledgedBy: n }` |
+| `revoke.wait` | | `{ local: true, published: true \| "pending", acknowledgedBy: n }`; `n` as [02](02-identity.md) defines it |
 | `ceremony.cancel` | | `{}` |
 | `fleet.reset` | `{ confirm: "reset" }` | `{}` |
 
-`published: "pending"` means the directory append is queued in `state.db` and retried;
-event `directory.published { kind, peerId }` fires when it lands. `join` fails outright
-with `directory-unavailable` because it cannot proceed without the read.
+While a `*.wait` runs, its client also gets `stage { stage }` events as the daemon reaches
+`reading directory` and `publishing` ([07](07-cli.md)). A `*.wait` without its `*.start`
+under way is `ceremony-state`. `published: "pending"` means the directory append is queued
+in `state.db` and retried (a write the worker refuses outright is dropped from the queue
+and logged); event `directory.published { kind, peerId }` fires when it lands. `join`
+fails outright with `directory-unavailable` because it cannot proceed without the read.
 
 ### Messages
 

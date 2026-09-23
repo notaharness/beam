@@ -13,9 +13,9 @@ peerId = lowercase hex of SHA-256(nodePublic)[0:16]          32 characters, 128 
 Displayed as the first 16 characters in groups of four. Stored, keyed and compared in
 full. Validated as exactly 32 lowercase hex characters wherever it arrives from outside.
 
-A `label` is a human name chosen at join, defaulting to the hostname: 1–64 Unicode
-scalar values, none of `/ \ { }` or C0/C1 controls. Rejected, never rewritten. Labels
-may collide; disambiguation is by id.
+A `label` is a human name chosen at join, defaulting to the short host name: 1–64
+Unicode scalar values, none of `/ \ { }` or C0/C1 controls. Rejected, never rewritten.
+Labels may collide; disambiguation is by id.
 
 ## The passkey and what it yields
 
@@ -124,13 +124,14 @@ record is:
 ```
 statementHash = SHA-256(canonical(statement))
 blob          = nonce(24) ‖ XChaCha20-Poly1305(K_dir, nonce,
-                  aad = "beam-dir:v1" ‖ fleetId ‖ statementHash,
+                  aad = "beam-dir:v1" ‖ fleetId (64 hex characters) ‖ statementHash,
                   plaintext = canonical(entry or revocation, assertion included))
 ```
 
-An append sends `{ statementHash, blob, assertion }`. The worker verifies the assertion
-under the fleet's registered credential with `challenge = SHA-256(domain ‖ statementHash)`,
-which it can compute without the plaintext, and stores all three. So **appending needs a
+An append sends `{ kind, statementHash, blob, assertion }`. The worker verifies the
+assertion under the fleet's registered credential with `challenge = SHA-256(domain ‖
+statementHash)` for the domain of `kind`, which it can compute without the plaintext, and
+stores the last three. So **appending needs a
 tap**; a revoked machine holding `K_dir` and `T_read` can read forever and never write.
 Readers decrypt, check that the statement inside hashes to `statementHash` (a compromised
 daemon could append a valid assertion with an unrelated blob; that costs one slot and is
@@ -154,13 +155,19 @@ The page:
    `navigator.credentials.get({ publicKey: { rpId: "beam.n10.is", challenge, userVerification: "required", extensions: { prf: { eval: { first: salt } } } } })`.
    After `create` it checks `getClientExtensionResults().prf?.enabled === true` and
    fails with `prf-unsupported` otherwise.
-3. Navigates to `http://127.0.0.1:<port>/cb#state=…&result=…`.
+3. Navigates to `http://127.0.0.1:<port>/cb#state=…&result=…` followed, for `ok`, by the
+   call's output: `credentialId`, `clientDataJSON` and, for `create`, `attestationObject`;
+   for `get`, `authenticatorData`, `signature` and `prf` (`prf.results.first`), each
+   unpadded base64url.
 
 Fragments are not sent in HTTP requests, so the daemon serves a landing page at `/cb`
 (`Cache-Control: no-store`) whose inline script reads `location.hash`, clears it, and
-`POST`s the payload to `/cb/result` on the same loopback origin. The daemon validates
-`state`, handles the result, answers "done, close this tab", and closes the listener.
-Timeout five minutes. Result codes: `ok`, `prf-unsupported`, `cancelled`, `failed`.
+`POST`s the payload to `/cb/result` on the same loopback origin. The daemon answers only
+requests that name `127.0.0.1:<port>` as their host, validates `state` (another ends the
+ceremony `ceremony-state`), handles the result, answers "done, close this tab", and closes
+the listener. It verifies a `create` itself: `webauthn.create` over its challenge for
+`beam.n10.is` with user verification. Timeout five minutes. Result codes: `ok`,
+`prf-unsupported`, `cancelled`, `failed`.
 
 Page CSP: `default-src 'none'; script-src 'sha256-…'; style-src 'sha256-…'`. It makes no
 requests. The daemon's `/cb` page has the same policy plus `connect-src 'self'`.
@@ -178,7 +185,9 @@ nothing else.
 
 ### `beam init [--label NAME] [--fleet-name NAME]` — first machine
 
-1. Generate `key.json`; fetch the DERP map; pick a region; compute the address.
+1. Generate `key.json` if absent: fetch the DERP map, home the key on the region that
+   answers fastest, compute the address. The label defaults to the host name up to its
+   first dot, cut to 64 characters; the fleet name to `beam`.
 2. `create` ceremony: registers the credential. Record `credentialId`,
    `credentialPublicKey`, `fleetId`. Check `prf.enabled`.
 3. `get` ceremony with the member challenge and PRF evaluation: yields the assertion
@@ -191,13 +200,18 @@ Two taps, once per fleet.
 
 ### `beam join [--label NAME]` — every other machine; also re-join after an address change
 
-1. Generate `key.json` if absent; compute the address; build the statement.
+1. Generate `key.json` if absent, or home its node key again on the region that answers
+   fastest when its region is not on the daemon's DERP map ([03](03-transport.md)); compute
+   the address; build the statement.
 2. `get` ceremony with the member challenge and PRF evaluation: assertion plus
    directory secret. Derive `K_dir`, `T_read`.
-3. Fetch the directory with `T_read`. The response carries `credentialId` and
-   `credentialPublicKey`; verify this machine's own assertion under them (a worker lying
-   about the credential fails here, because the real passkey made the assertion).
-   Decrypt and verify every record; refuse if this `peerId` is revoked.
+3. Fetch the directory with `T_read`, which alone names the fleet (`GET /v1/entries`; the
+   joining machine cannot know `fleetId` yet). The response carries `fleetId`,
+   `credentialId` and `credentialPublicKey`; verify this machine's own assertion under
+   them (a worker lying about the credential fails here, because the real passkey made
+   the assertion). Decrypt and verify every
+   record; refuse if this `peerId` is revoked. A token that opens no fleet is
+   `wrong-passkey`.
 4. Encrypt and append this machine's entry. Write `fleet.json` and `state.db`. Dial
    every member; each admits this machine on first contact ([03](03-transport.md)).
 
@@ -212,7 +226,9 @@ One tap. On a machine that already has `fleet.json`, step 2 also checks the re-d
 2. Apply locally: store the revocation, terminate the peer's tunnels and streams.
 3. Push it on every live `sync` stream. Append to the directory; on failure store as
    pending and retry with backoff while the daemon runs.
-4. Report `{ local: true, published: true | "pending", acknowledgedBy: n }`.
+4. Report `{ local: true, published: true | "pending", acknowledgedBy: n }`. `n` counts the
+   peers whose sync answered, within 5 s, a ping sent right after the revocation: the
+   stream is ordered, so that pong proves the peer read the revocation first.
 
 ### `beam fleet reset`
 

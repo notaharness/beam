@@ -73,7 +73,7 @@ CREATE TABLE fleets (
   fleet_id       TEXT PRIMARY KEY,   -- 64 hex, SHA-256(credential public key)
   credential_id  TEXT NOT NULL,
   credential_pk  BLOB NOT NULL,      -- COSE
-  read_hash      BLOB NOT NULL,      -- SHA-256(T_read)
+  read_hash      BLOB NOT NULL UNIQUE, -- SHA-256(T_read)
   created_at     INTEGER NOT NULL
 );
 CREATE TABLE entries (
@@ -96,12 +96,14 @@ Caps: 8 KiB per blob, 5,000 entries per fleet, 120 requests/min per fleet. No ex
 |---|---|---|
 | `GET /` | none | ceremony page |
 | `POST /v1/fleets` | body | `{ credentialId, credentialPublicKey, readToken, first: { statementHash, blob, assertion } }`. Verifies `first.assertion` under `credentialPublicKey` with challenge `SHA-256("beam-member:v1" ‖ statementHash)`, creates the fleet with `read_hash = SHA-256(readToken)`, stores the entry. `409` if the fleet exists. |
-| `GET /v1/fleets/:id/entries?since=` | `Authorization: Bearer <T_read>` (compared by hash) | `{ credentialId, credentialPublicKey, entries: [ { seq, statementHash, blob, assertion } ], next? }`, ≤ 500 per page |
-| `POST /v1/fleets/:id/entries` | the assertion in the body | `{ statementHash, blob, assertion }`. Verifies the assertion with the member or revoke domain (both are tried; the daemon says which via `kind`). `201 { seq }`; `200 { seq }` if `statementHash` already exists. |
+| `GET /v1/entries?since=` | `Authorization: Bearer <T_read>`; the fleet is the one whose `read_hash` is `SHA-256(T_read)` | `{ fleetId, credentialId, credentialPublicKey, entries: [ { seq, statementHash, blob, assertion } ], next? }`, ≤ 500 per page, `seq > since`. Every token that opens no fleet, malformed or unknown, gets the same `401`. |
+| `POST /v1/fleets/:id/entries` | the assertion in the body | `{ kind, statementHash, blob, assertion }`. Verifies the assertion with the domain of `kind` (`member` or `revoke`). `201 { seq }`; `200 { seq }` if `statementHash` already exists; `404` for an unknown fleet. |
 
 Assertion verification (`@simplewebauthn/server`): origin `https://beam.n10.is`, RP ID
-`beam.n10.is`, UV required, challenge as above, counter ignored. A revoked machine holds
-`T_read` and can read; it cannot append.
+`beam.n10.is`, UV required, challenge as above, counter ignored, and the assertion's
+credential id must be the fleet's. A refused append is `403`, a blob over the cap or a
+full fleet `413`, and a fleet over its rate `429`, through Workers' rate-limit binding. A
+revoked machine holds `T_read` and can read; it cannot append.
 
 ### Ceremony page headers
 
@@ -112,9 +114,10 @@ X-Frame-Options: DENY
 Cache-Control: public, max-age=300
 ```
 
-CI recomputes the hashes. Deploy is `wrangler deploy` from `worker/` with Hermann's
-Cloudflare account; DNS for `beam.n10.is` is a Cloudflare-managed record pointing at the
-worker.
+The page is a static asset (`worker/public/`) and these headers live in its `_headers`;
+a worker test recomputes the hashes. Deploy is `wrangler deploy` from `worker/` with
+Hermann's Cloudflare account, `beam.n10.is` a custom domain of the worker;
+`worker/README.md` has the commands.
 
 ## Lint
 
