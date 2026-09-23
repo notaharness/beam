@@ -15,10 +15,12 @@ import (
 	"time"
 
 	"github.com/notaharness/beam/internal/control"
+	"github.com/notaharness/beam/internal/devderp"
 	"github.com/notaharness/beam/internal/identity"
 	"github.com/notaharness/beam/internal/stream"
 	"github.com/notaharness/beam/internal/transport"
 	"golang.org/x/sys/unix"
+	"tailscale.com/tailcfg"
 	"tailscale.com/types/logger"
 )
 
@@ -169,6 +171,56 @@ func TestSupersession(t *testing.T) {
 	if l := b.peers(t)[a.id()].Label; l != "alpha2" {
 		t.Errorf("after the older entry: %s, want alpha2", l)
 	}
+}
+
+// docs/10 "supersession": a re-join at a new address moves the peers' tunnels
+// there even while the old address still answers; alias and grant stay.
+func TestNewAddressReplacesTunnel(t *testing.T) {
+	ms := fleet(t, "alpha", "beta")
+	a, b := ms[0], ms[1]
+	waitState(t, a, b, "connected")
+	for _, args := range [][]string{{"peer", "alias", "beta", "bee"}, {"peer", "grant", "bee", "msg"}} {
+		if r := a.beam("", args...); r.code != 0 {
+			t.Fatalf("%v: %+v", args, r)
+		}
+	}
+	relay2, err := devderp.Start(logger.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(relay2.Close)
+	moved := &machine{dir: t.TempDir(), key: onRelay(t, b.key, relay2.Region), entry: b.entry}
+	moved.entry.Address, moved.entry.IssuedAt = moved.key.Address(), b.entry.IssuedAt+1
+	owner.SignRecord(&moved.entry)
+	moved.writeFleet(t)
+	writeJSON(t, filepath.Join(moved.dir, "key.json"), moved.key)
+	moved.start(t) // beta re-joined through another relay; the old beta runs on
+	push(t, a, moved.entry)
+	waitFor(t, 30*time.Second, "alpha to reach beta's new address", func() bool {
+		r := a.beam("", "exec", "bee", "--", "sh", "-c", "echo $BEAM_DIR")
+		return r.code == 0 && strings.TrimSpace(r.out) == moved.dir
+	})
+	if v := a.peers(t)[b.id()]; v.Alias == nil || *v.Alias != "bee" || v.Grant != "msg" {
+		t.Errorf("after the move: %+v, want alias bee and grant msg", v)
+	}
+}
+
+// onRelay is k reached through another relay: the same node key at a new
+// address.
+func onRelay(t *testing.T, k *transport.Key, region *tailcfg.DERPRegion) *transport.Key {
+	t.Helper()
+	b, _ := json.Marshal(k)
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	m["Public"].(map[string]any)["Region"] = []*tailcfg.DERPRegion{region}
+	b, _ = json.Marshal(m)
+	moved := new(transport.Key)
+	if err := json.Unmarshal(b, moved); err != nil {
+		t.Fatal(err)
+	}
+	return moved
 }
 
 // docs/10 "revoke while all tunnels are up": peers refuse within the sync

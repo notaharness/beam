@@ -149,6 +149,18 @@ func (ps *peerState) tunnelIfOK(ok bool) (*transport.Tunnel, bool) {
 	return ps.tunnel, true
 }
 
+// endDialerLocked ends dialing a peer, its tunnel included, so that a new
+// dialer can take the peer's new address. d.mu must be held.
+func (d *daemon) endDialerLocked(peerID string) {
+	if ps, ok := d.peers[peerID]; ok {
+		ps.cancel()
+		if ps.tunnel != nil {
+			ps.tunnel.Close()
+		}
+		delete(d.peers, peerID)
+	}
+}
+
 // stopPeerLocked ends dialing a revoked peer. d.mu must be held.
 func (d *daemon) stopPeerLocked(peerID string) {
 	if ps, ok := d.peers[peerID]; ok {

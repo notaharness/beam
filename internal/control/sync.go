@@ -196,15 +196,19 @@ func (d *daemon) learn(raw json.RawMessage) {
 	}
 }
 
-// pin stores a verified member and dials it. It reports whether it was new or
+// pin stores a verified member and dials it: at its new address, if it
+// superseded the pinned entry with one. It reports whether it was new or
 // superseded the pinned entry.
 func (d *daemon) pin(r identity.Record) bool {
-	_, known, _ := d.store.Peer(r.PeerID)
+	old, known, _ := d.store.Peer(r.PeerID)
 	changed, err := d.store.Pin(r, now())
 	if err != nil || !changed {
 		return false
 	}
 	d.mu.Lock()
+	if known && old.Entry.Address != r.Address {
+		d.endDialerLocked(r.PeerID)
+	}
 	d.startDialerLocked(r.PeerID)
 	d.mu.Unlock()
 	if !known {
