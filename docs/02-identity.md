@@ -46,8 +46,11 @@ fleetId = lowercase hex of SHA-256(credentialPublicKey COSE bytes)      64 chara
 
 ## `$BEAM_DIR`
 
-`$BEAM_CONFIG_DIR`, else `$XDG_CONFIG_HOME/beam`, else `~/.config/beam`. Config files are
-written temp → `0600` → rename. The database is SQLite with WAL.
+`$BEAM_CONFIG_DIR`, else `$XDG_CONFIG_HOME/beam`, else `~/.config/beam`; the socket is
+`$BEAM_SOCKET`, else `run/beam.sock` in it ([06](06-control-socket.md)). Every path beam
+uses is absolute: a relative `BEAM_CONFIG_DIR`, `BEAM_SOCKET` or `HOME` is an error, and a
+relative `XDG_CONFIG_HOME` is ignored, as the XDG Base Directory spec says. Config files
+are written temp → `0600` → rename. The database is SQLite with WAL.
 
 ```
 $BEAM_DIR/

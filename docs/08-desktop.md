@@ -6,6 +6,10 @@ identity code lives in n10.
 
 ## Process model
 
+The desktop leaves `BEAM_CONFIG_DIR` and `BEAM_SOCKET` unset, so that it and the CLI find
+the same daemon, or sets them to absolute paths ([02](02-identity.md)) for the daemon it
+spawns and every process it starts.
+
 The desktop owns the lifetime of a daemon it started, and of no other:
 
 - On start it connects to the socket. A daemon that answers was started by someone else

@@ -5,7 +5,6 @@ package control
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,25 +28,42 @@ var maxSocket = len(syscall.RawSockaddrUnix{}.Path) - 1
 // ResolvePaths applies docs/02 and docs/06: $BEAM_CONFIG_DIR, else
 // $XDG_CONFIG_HOME/beam, else ~/.config/beam; the socket is $BEAM_SOCKET, else
 // run/beam.sock in that directory, and no longer than a socket address holds.
+// Every path is absolute: a relative $BEAM_CONFIG_DIR, $BEAM_SOCKET or $HOME
+// is refused, and a relative $XDG_CONFIG_HOME ignored, as the XDG spec says.
 func ResolvePaths(getenv func(string) string) (Paths, error) {
-	dir := getenv("BEAM_CONFIG_DIR")
-	switch {
-	case dir != "":
-	case getenv("XDG_CONFIG_HOME") != "":
-		dir = filepath.Join(getenv("XDG_CONFIG_HOME"), "beam")
-	case getenv("HOME") != "":
-		dir = filepath.Join(getenv("HOME"), ".config", "beam")
-	default:
-		return Paths{}, errors.New("no BEAM_CONFIG_DIR, XDG_CONFIG_HOME or HOME")
+	dir, err := configDir(getenv)
+	if err != nil {
+		return Paths{}, err
 	}
 	sock := getenv("BEAM_SOCKET")
-	if sock == "" {
+	switch {
+	case sock == "":
 		sock = filepath.Join(dir, "run", "beam.sock")
+	case !filepath.IsAbs(sock):
+		return Paths{}, fmt.Errorf("BEAM_SOCKET is not an absolute path: %s", sock)
 	}
 	if len(sock) > maxSocket {
 		return Paths{}, fmt.Errorf("socket path too long (%d bytes, at most %d): %s; set BEAM_SOCKET to a shorter one", len(sock), maxSocket, sock)
 	}
 	return Paths{Dir: dir, Socket: sock}, nil
+}
+
+// configDir is $BEAM_DIR, from the first of the three that applies.
+func configDir(getenv func(string) string) (string, error) {
+	if dir := getenv("BEAM_CONFIG_DIR"); dir != "" {
+		if !filepath.IsAbs(dir) {
+			return "", fmt.Errorf("BEAM_CONFIG_DIR is not an absolute path: %s", dir)
+		}
+		return dir, nil
+	}
+	if xdg := getenv("XDG_CONFIG_HOME"); filepath.IsAbs(xdg) {
+		return filepath.Join(xdg, "beam"), nil
+	}
+	home := getenv("HOME")
+	if !filepath.IsAbs(home) {
+		return "", fmt.Errorf("no BEAM_CONFIG_DIR or XDG_CONFIG_HOME, and HOME is not an absolute path: %q", home)
+	}
+	return filepath.Join(home, ".config", "beam"), nil
 }
 
 func (p Paths) file(name string) string { return filepath.Join(p.Dir, name) }
