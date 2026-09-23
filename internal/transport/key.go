@@ -4,6 +4,8 @@
 package transport
 
 import (
+	"errors"
+
 	"github.com/tailscale/tailcat"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
@@ -38,4 +40,17 @@ func (k *Key) NodePublic() [32]byte {
 // raw is a node public key's 32 bytes.
 func raw(k key.NodePublic) [32]byte {
 	return [32]byte(k.AppendTo(nil))
+}
+
+// AddressKey returns the node key an address reaches. It refuses an address
+// that does not parse or carries no pre-shared key.
+func AddressKey(address string) ([32]byte, error) {
+	ci, err := tailcat.ParseAddr(tailcat.Addr(address))
+	if err != nil {
+		return [32]byte{}, err
+	}
+	if ci.PresharedKey.IsZero() {
+		return [32]byte{}, errors.New("address has no pre-shared key")
+	}
+	return raw(ci.ServerPublic.NodePublic), nil
 }

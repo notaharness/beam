@@ -123,11 +123,10 @@ func (r *Refused) Error() string {
 // Dial brings up a tunnel to address and completes hello on it, within 20 s,
 // ctx, and the node's life.
 func (n *Node) Dial(ctx context.Context, address string) (*Tunnel, error) {
-	ci, err := tailcat.ParseAddr(tailcat.Addr(address))
+	r, err := AddressKey(address)
 	if err != nil {
 		return nil, err
 	}
-	r := raw(ci.ServerPublic.NodePublic)
 	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
 	defer cancel()
 	defer context.AfterFunc(n.ctx, cancel)()
