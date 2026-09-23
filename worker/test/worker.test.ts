@@ -29,10 +29,10 @@ async function fleet() {
 
 // entry is a statement of kind signed by auth: its hash, a blob and the
 // assertion over SHA-256("beam-<kind>:v1" ‖ hash).
-async function entry(auth: Authenticator, kind: string, blob = random(200), flags?: number) {
+async function entry(auth: Authenticator, kind: string, blob = random(200), flags?: number, as?: Parameters<Authenticator["assert"]>[2]) {
   const hash = random(32);
   const challenge = await sha256(new Uint8Array([...new TextEncoder().encode(`beam-${kind}:v1`), ...hash]));
-  return { kind, statementHash: b64(hash), blob: b64(blob), assertion: await auth.assert(challenge, flags) };
+  return { kind, statementHash: b64(hash), blob: b64(blob), assertion: await auth.assert(challenge, flags, as) };
 }
 
 async function register(f: Awaited<ReturnType<typeof fleet>>, first?: Awaited<ReturnType<typeof entry>>) {
@@ -91,6 +91,26 @@ describe("docs/09 routes", () => {
     expect((await append(await entry(f.auth, "member", random(10), 0x01))).status).toBe(403); // no user verification
     expect((await append({ ...member, kind: undefined })).status).toBe(400);
     expect((await append(member, (await fleet()).id)).status).toBe(404);
+  });
+
+  // Each vector breaks one check of an otherwise valid assertion.
+  it("refuses an assertion that fails any one check", async () => {
+    const f = await fleet();
+    await register(f);
+    const append = async (e: unknown) => (await call("POST", `/v1/fleets/${f.id}/entries`, e)).status;
+    expect(await append(await entry(f.auth, "member"))).toBe(201);
+    const impostor = await Authenticator.create(f.auth.credentialId);
+    const renamed = await entry(f.auth, "member");
+    renamed.assertion = { ...renamed.assertion, credentialId: b64(random(16)) };
+    for (const e of [
+      renamed,
+      await entry(f.auth, "member", undefined, undefined, { type: "webauthn.create" }),
+      await entry(f.auth, "member", undefined, undefined, { origin: "https://beam.n10.is.example" }),
+      await entry(f.auth, "member", undefined, undefined, { rpId: "n10.is" }),
+      await entry(impostor, "member"),
+    ]) {
+      expect(await append(e)).toBe(403);
+    }
   });
 });
 
