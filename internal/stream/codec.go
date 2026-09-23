@@ -4,9 +4,10 @@ package stream
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -82,17 +83,11 @@ func ParseClose(p []byte) CloseMsg {
 	return m
 }
 
-// Marshal is v as every JSON line and payload beam writes: without
-// encoding/json's HTML escaping, so text goes out as it is and a stored
-// envelope as it is stored (docs/05).
+// Marshal is v as every JSON line and payload beam writes: encoding/json's
+// semantics without its escaping of markup or of U+2028 and U+2029, so text
+// goes out as it is and a stored envelope as it is stored (docs/05).
 func Marshal(v any) ([]byte, error) {
-	var b bytes.Buffer
-	e := json.NewEncoder(&b)
-	e.SetEscapeHTML(false)
-	if err := e.Encode(v); err != nil {
-		return nil, err
-	}
-	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
+	return jsonv2.Marshal(v, json.DefaultOptionsV1(), jsontext.EscapeForHTML(false), jsontext.EscapeForJS(false))
 }
 
 // WriteJSON writes v as the payload of a frame of type t.

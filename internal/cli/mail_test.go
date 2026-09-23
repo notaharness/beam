@@ -462,21 +462,32 @@ func TestMsgOneStreamPerTunnel(t *testing.T) {
 	})
 }
 
-// D34: a payload of markup characters travels as it is stored, never
-// HTML-escaped past a control line: in msg.send, in the mail event and in a
-// msg.queue page.
+// D34: a payload of markup or line separators travels as it is stored,
+// never escaped past a control line: in msg.send, in the mail event and in a
+// msg.queue page. The second is 960,000 bytes as stored.
 func TestMsgMarkupPayload(t *testing.T) {
 	ms := fleet(t, "alpha", "beta")
 	a, b := ms[0], ms[1]
 	waitState(t, a, b, "connected")
-	payload := strings.Repeat("<", mailbox.MaxPayload)
-	if r := a.beam(payload, "msg", "send", "beta", "-"); r.out != "delivered to beta\n" {
-		t.Fatalf("send: %d, %.200s", r.code, r.err)
-	}
-	if q := queue(t, b, "--which", "inbound"); len(q) != 1 || !strings.Contains(q[0], `"payload":"`+payload+`"`) {
-		t.Errorf("queue: %d lines, %.200s", len(q), q)
-	}
-	if _, next := subscribeMail(t, b, nil); next().Payload != payload {
-		t.Error("the mail event is not the payload")
+	for _, payload := range []string{
+		strings.Repeat("<", mailbox.MaxPayload),
+		strings.Repeat("\x01", 140000) + strings.Repeat("\u2028\u2029", 20000),
+	} {
+		if r := a.beam(payload, "msg", "send", "beta", "-"); r.out != "delivered to beta\n" {
+			t.Fatalf("send: %d, %.200s", r.code, r.err)
+		}
+		var item struct{ Envelope mailbox.Envelope }
+		if q := queue(t, b, "--which", "inbound"); len(q) != 1 || json.Unmarshal([]byte(q[0]), &item) != nil || item.Envelope.Payload != payload {
+			t.Fatalf("queue: %d lines, %.200s", len(q), q)
+		}
+		c, next := subscribeMail(t, b, nil)
+		e := next()
+		if e.Payload != payload {
+			t.Fatal("the mail event is not the payload")
+		}
+		if err := c.Call("msg.ack", map[string]any{"envelopeId": e.ID}, nil); err != nil {
+			t.Fatal(err)
+		}
+		c.Close()
 	}
 }

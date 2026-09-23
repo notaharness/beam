@@ -28,10 +28,10 @@ refused before anything else, naming `BEAM_SOCKET`.
 
 ## Two kinds of connection
 
-**Control**: newline-delimited JSON without HTML escaping, ≤ 1 MiB per line, `{ id, op,
-… }` → `{ id, ok, result | error, detail? }`, out-of-order replies allowed, events (each a
-line `{ event, data }`) only after `events.subscribe`. A client that leaves a line unread
-for 10 s is disconnected.
+**Control**: newline-delimited JSON that escapes neither markup nor U+2028/U+2029, ≤ 1 MiB
+per line, `{ id, op, … }` → `{ id, ok, result | error, detail? }`, out-of-order replies
+allowed, events (each a line `{ event, data }`) only after `events.subscribe`. A client
+that leaves a line unread for 10 s is disconnected.
 
 **Attach**: first line `{ "attach": "<streamId>" }`, then the frame format from
 [04](04-streams.md) verbatim in both directions, `taken` included. The daemon relays frames

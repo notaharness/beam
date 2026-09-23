@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -265,4 +266,13 @@ func TestHeaderLinesAroundTheCap(t *testing.T) {
 			t.Fatalf("%d bytes: %v, want ErrTooLarge", n+1, err)
 		}
 	})
+}
+
+// docs/05: beam's JSON escapes neither markup nor line separators, so text
+// goes out no larger than it came.
+func TestMarshalUnescaped(t *testing.T) {
+	b, err := Marshal(map[string]any{"s": "<a & b>\u2028\u2029", "raw": json.RawMessage("\"\u2028<\"")})
+	if want := "{\"raw\":\"\u2028<\",\"s\":\"<a & b>\u2028\u2029\"}"; err != nil || string(b) != want {
+		t.Errorf("%s, %v; want %s", b, err, want)
+	}
 }
