@@ -104,7 +104,7 @@ func (e *env) detach(p control.Paths, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(p.Dir, 0o700); err != nil {
+	if err := p.Private(); err != nil {
 		return err
 	}
 	logFile, err := os.OpenFile(filepath.Join(p.Dir, "daemon.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
