@@ -62,7 +62,7 @@ would be the same over any transport.
 | Node key | One machine's identity | Membership | That machine is impersonated until revoked. A shell-capable member is the owner's OS account on every machine it reaches, so a stolen member that was used before revocation may have copied other keys; see "Blast radius". |
 | Passkey | Membership and revocation, one statement per tap | Anything per connection | Total. The owner starts a new fleet. |
 | Directory worker | Storing and returning ciphertext; refusing writes that lack a valid assertion | Contents; membership; anything at runtime | Refuses to serve: init, join and publishing stall, and a starting daemon learns no revocation from it. Nothing at runtime waits on it. Cannot read an address, forge an entry or remove one a machine already holds. Sees blob sizes, timing and a fleet identifier. |
-| Ceremony page | Running one WebAuthn call honestly | Anything beyond the operation being approved | Can substitute the statement being signed during that one tap, and can keep the PRF output (directory read access). Cannot sign a later statement. |
+| Ceremony page | Running one WebAuthn call honestly; at `init`, the root | Anything beyond the operation being approved | Can substitute the statement being signed during that one tap, and can keep the PRF output (directory read access). Cannot sign a later statement. At `init` it can substitute the root itself. |
 | A fleet machine's disk | Its pins, its mailbox, the directory key | Membership | Stolen: tunnel access until revoked; permanent read access to the directory. Cannot add or remove a machine. |
 | DERP relay | Delivery of encrypted packets; rendezvous | Contents; identity; membership | New connections stall while down. Cannot complete a handshake or join a tunnel it observes. |
 
@@ -77,7 +77,18 @@ machine it holds the key of, or remove one of the owner's. It gets one statement
 tap and none after: there is no seed to keep and no future signing authority. What it
 keeps is the directory key, which reads addresses and labels for as long as the fleet
 exists. That is the full exposure, and it is accepted: this is the relying-party trust
-every passkey system has, bounded to one operation. The page has
+every passkey system has, bounded to one operation.
+
+Fleet creation is the one tap where the page is trusted for more. `init`'s `create` is
+where the root comes from, and beam checks no attestation (verifying one would mean
+trusting an attestation CA, which beam does not). A hostile page at `init` can return a
+credential it holds itself; the machine pins it as the fleet's root, and the page can
+then sign any statement for as long as the fleet exists. The owner would notice only by
+the fleet fingerprint. So the page is trusted for the root once, at creation. Every
+later ceremony on an enrolled machine is bound to that pinned root: a re-join and a
+revoke verify under the cached credential and never take one from the page or the
+worker. A fresh join has no root to bind to and trusts the page for its one statement,
+as above. The page has
 `Content-Security-Policy: default-src 'none'`, its source is public and its hash is
 pinned in CI; none of that is a cryptographic guarantee, and the spec does not claim one.
 
@@ -112,9 +123,10 @@ reaches each peer; a leaked address (the holder completes a handshake and is clo
 admission); lookalike domains.
 
 **Not defended against, by decision:** a stolen member before it is revoked, and what it
-did meanwhile; a hostile page during one ceremony; loss of the passkey with no synced
-copy; metadata at the relay and the worker; a second human; transport-level resource
-exhaustion by an address holder beyond what tailcat itself bounds.
+did meanwhile; a hostile page during one ceremony, and at `init` for the root; loss of
+the passkey with no synced copy; metadata at the relay and the worker; a second human;
+transport-level resource exhaustion by an address holder beyond what tailcat itself
+bounds.
 
 ## Out of scope
 
