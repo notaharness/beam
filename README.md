@@ -1,24 +1,96 @@
 # beam
 
-beam connects the machines one person owns and carries three kinds of stream between
-them: a `pty`, an `exec` with an exit code, and durable `msg` envelopes. It replaces SSH
-as the way one of your machines reaches another. It does not replace tmux, which still
-holds processes and their identity, and it knows nothing about repositories, worktrees
-or agents. Those live above it, in n10.
+beam is a simple utility built on [tailcat](https://github.com/tailscale/tailcat) that
+lets you pool the machines you own. Open a shell, run a command, or send a durable
+message from one machine to another. A single Go binary provides the daemon and CLI.
 
-beam is a single Go binary: a daemon plus CLI subcommands, in the style of `tailscale`
-and `tailcat`. The transport is [tailcat](https://github.com/tailscale/tailcat):
-WireGuard tunnels with NAT traversal and DERP relay, without Tailscale's control plane.
-Trust is rooted in one WebAuthn passkey per person; every membership and every
-revocation is a statement that passkey signed directly, so only a tap can add or remove a
-machine. The one hosted piece is an open-source Cloudflare Worker at `beam.n10.is` that
-serves the passkey ceremony page and stores a directory it cannot read.
+It pairs naturally with tmux: keep an agent session running on another machine and
+attach when you need it. beam handles reaching the machine; tmux keeps the session.
+You can offload work from your laptop without moving the agent's working directory or
+process back and forth.
 
-## Status
+beam is part of [notaharness](https://github.com/notaharness), a project making small,
+reusable components for working with agents. The
+[orchestra plugin](https://github.com/notaharness/plugins/tree/main/orchestra) is one
+way to use it: orchestra gives each agent a tmux session and a git worktree, with
+conventions for reporting to a supervising conversation. beam mandates no agent,
+orchestrator or program. Use it with those conventions, your own scripts, or an
+interactive shell.
 
-Design for a prototype. Nothing here is built yet and nothing is in use anywhere, so
-there is no compatibility to keep: every choice below is made on its merits. These
-documents are what to review before building starts.
+## Pairing and privacy
+
+The Cloudflare worker at [beam.n10.is](https://beam.n10.is) is free for anyone to use
+for pairing their machines, for as long as its 10 GB D1 database has capacity. It serves
+the passkey ceremony page and an encrypted, append-only directory.
+
+Your machines' directory entries are encrypted with keys derived from **your passkey**.
+The worker stores ciphertext it cannot read. Shells, commands and messages travel
+between your machines over encrypted tunnels; the directory worker does not carry
+them. The [trust model](docs/01-model.md) describes what the service can see and what
+you trust during a pairing ceremony.
+
+## Install and quick start
+
+The implementation is a prototype. The npm package is prepared for release but has not
+been published yet. Once released, install it on each machine (macOS or Linux, arm64
+or x64):
+
+```sh
+npm install -g @notaharness/beam
+```
+
+On the first machine, create your fleet and its passkey:
+
+```sh
+beam init --label laptop
+```
+
+On the second, join using the same passkey:
+
+```sh
+beam join --label buildbox
+```
+
+The commands open a browser or print a ceremony URL. On a headless machine, follow the
+printed SSH port-forward instruction before opening the URL on your local machine.
+The daemon starts when needed; `beam peers` shows whether the machines have connected.
+
+From the laptop:
+
+```sh
+beam peers
+beam connect buildbox
+beam exec buildbox -- uname -a
+beam msg send buildbox --topic jobs 'ready'
+```
+
+On buildbox, `beam msg listen --topic jobs laptop` receives messages from the laptop.
+Messages are queued durably when they cannot be delivered immediately.
+
+With tmux installed on buildbox, start or reattach an agent's session there:
+
+```sh
+beam connect buildbox -- tmux new-session -A -s agents
+```
+
+Run your agent inside that session. Detach from tmux and reconnect with the same
+command; the session stays on buildbox. See [the CLI](docs/07-cli.md) for grants,
+revocation, queue inspection and the other commands.
+
+## Technical gist
+
+Each machine keeps a WireGuard node key; 128 bits of its hash form its `peerId`.
+The fleet's passkey signs membership entries and revocations directly as WebAuthn
+assertions. A `get` ceremony also evaluates the passkey's PRF, from which the daemon
+derives the directory encryption key and read token. Entries go into the worker's
+encrypted, append-only directory, read at join and daemon start. tailcat supplies NAT
+traversal and DERP relay without Tailscale's control plane: each machine runs a Server
+with its node key and dials through Clients with ephemeral keys. On first contact, the
+receiver verifies the signed entry and proof of possession of the node key it names,
+then admits and pins the peer. No directory request is needed per connection. TCP
+streams inside the tunnels carry `pty`, `exec` and durable `msg` envelopes; a local
+socket exposes them to the CLI and other programs. Revocations propagate over live
+peer connections and through the directory to machines that were offline.
 
 ## Documents
 
@@ -37,20 +109,6 @@ Read in order. Each file owns one concern and cross-references the others.
 | 9 | [docs/09-build-and-distribution.md](docs/09-build-and-distribution.md) | Module layout, build flags, platform matrix, npm packages, the worker and its API, versioning, CI. |
 | 10 | [docs/10-testing.md](docs/10-testing.md) | Unit tests, the in-process dev DERP, the software authenticator, the fake worker, and how n10's e2e suites drive a real daemon. |
 | 11 | [docs/11-decisions.md](docs/11-decisions.md) | The decision register, the milestone gate, and the open questions. |
-
-## One paragraph for the impatient
-
-Every machine has one WireGuard node key; 128 bits of its hash is the machine's
-`peerId`. The owner has one passkey. Joining is one tap on the new machine: the passkey
-signs the machine's entry as a WebAuthn assertion and, in the same assertion, yields the
-key that encrypts the fleet directory. The entry goes, encrypted, to an append-only log
-on an open-source worker that verifies the assertion but cannot read the entry. The new
-machine reads everyone's addresses from that log and dials them; each completes a
-WireGuard handshake, receives the signed entry plus a proof that the dialer holds the
-key it names, verifies, and pins. From then on nobody consults anyone. Streams are TCP
-through the tunnel; the daemon exposes one local socket for the CLI, n10 desktop and
-scripts. Revoking is another tap, pushed to connected peers at once and to the rest as
-they connect.
 
 ## Licence
 
