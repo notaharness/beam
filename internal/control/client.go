@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 
@@ -35,8 +36,8 @@ type Event struct {
 
 // Connect connects to the daemon at p, starting one with `beam daemon
 // --detach` when none listens (docs/06, connect-or-spawn). env is the spawned
-// daemon's environment. A spawn that loses the lock race exits; the winner's
-// socket appears all the same.
+// daemon's environment. A daemon that loses the lock race exits in its own
+// session; the winner's socket appears all the same.
 func Connect(p Paths, env []string) (*Client, error) {
 	c, err := Dial(p)
 	if err == nil {
@@ -51,13 +52,18 @@ func Connect(p Paths, env []string) (*Client, error) {
 	}
 	cmd := exec.Command(exe, "daemon", "--detach")
 	cmd.Env = env
-	spawnErr := cmd.Run() // losing a race to start still leaves a daemon to reach
+	if out, err := cmd.CombinedOutput(); err != nil { // it refused to start, and says why
+		if msg := strings.TrimSpace(string(out)); msg != "" {
+			return nil, errors.New(msg)
+		}
+		return nil, err
+	}
 	for deadline := time.Now().Add(spawnWait); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
 		if c, err = Dial(p); err == nil {
 			return c, nil
 		}
 	}
-	return nil, errors.Join(spawnErr, err)
+	return nil, err
 }
 
 // Dial connects to the daemon at p if one listens.

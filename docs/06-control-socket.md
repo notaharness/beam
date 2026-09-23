@@ -22,7 +22,8 @@ Linux, 103 on macOS) is refused before anything else, naming `BEAM_SOCKET`.
   `--detach` starts `beam daemon` with the same options but `--detach` in a new session,
   its output appended to `$BEAM_DIR/daemon.log`, and returns 0 without waiting for it. A
   daemon that loses the lock race logs `another daemon holds $BEAM_DIR` there and exits
-  1; the helper connects to the winner either way.
+  1; the helper connects to the winner either way. One that `--detach` refuses to start
+  ([02](02-identity.md), private to its user) fails the helper at once with its reason.
 - **Shutdown.** `daemon.shutdown`, SIGTERM or SIGINT stop the daemon, whoever started
   it; so does the end of its stdin for one started with `--exit-with-parent`
   ([07](07-cli.md)). Stopping, the daemon closes its socket first, lets a fleet reset or
