@@ -9,9 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -214,8 +212,9 @@ func TestRevokeLive(t *testing.T) {
 	}
 }
 
-// docs/10 "revoke with worker down": the revocation takes effect here at
-// once, is reported pending, and lands once the worker returns.
+// docs/10 "revoke with worker down": the worker goes down after the tap; the
+// revocation takes effect here at once, is reported pending, and lands once
+// the worker returns.
 func TestRevokeWorkerDown(t *testing.T) {
 	a := initFleet(t, "alpha")
 	c := join(t, "gamma")
@@ -226,9 +225,14 @@ func TestRevokeWorkerDown(t *testing.T) {
 	}
 	defer events.Close()
 	events.Call("events.subscribe", nil, nil)
-	worker.SetDown(true)
+	reached, release := pauseAt(t, a, "publishing", c.id())
 	defer worker.SetDown(false)
-	if r := a.beam("", "revoke", "gamma"); r.code != 0 || !strings.Contains(r.out, "publication pending; will retry") {
+	revoked := make(chan result, 1)
+	go func() { revoked <- a.beam("", "revoke", "gamma") }()
+	await(t, reached, "the revocation's publishing")
+	worker.SetDown(true)
+	release()
+	if r := <-revoked; r.code != 0 || !strings.Contains(r.out, "publication pending; will retry") {
 		t.Fatalf("revoke: %+v", r)
 	}
 	waitState(t, a, c, "revoked")
@@ -746,8 +750,7 @@ func TestCeremonyAnsweredUnwaited(t *testing.T) {
 }
 
 // docs/06: one ceremony at a time, a *.wait answers only its own *.start,
-// and ceremony.cancel ends the one under way, closing its listener, so the
-// next can start.
+// and ceremony.cancel ends the one under way, so the next can start.
 func TestOneCeremonyAtATime(t *testing.T) {
 	m := blank(t, "fresh")
 	m.start(t)
@@ -757,14 +760,9 @@ func TestOneCeremonyAtATime(t *testing.T) {
 	}
 	defer c.Close()
 	start := map[string]any{"label": "fresh"}
-	var first struct {
-		CeremonyURL string `json:"ceremonyUrl"`
-	}
-	if err := c.Call("join.start", start, &first); err != nil {
+	if err := c.Call("join.start", start, nil); err != nil {
 		t.Fatal(err)
 	}
-	u, _ := url.Parse(first.CeremonyURL)
-	frag, _ := url.ParseQuery(u.Fragment)
 	for _, step := range []struct{ op, want string }{
 		{"join.start", "busy"},
 		{"init.wait", "ceremony-state"},
@@ -775,13 +773,6 @@ func TestOneCeremonyAtATime(t *testing.T) {
 			t.Errorf("%s: %s, want %s", step.op, got, step.want)
 		}
 	}
-	waitFor(t, 5*time.Second, "the cancelled ceremony's listener to close", func() bool {
-		conn, err := net.Dial("tcp", "127.0.0.1:"+frag.Get("port"))
-		if err == nil {
-			conn.Close()
-		}
-		return err != nil
-	})
 }
 
 // code is an op's error code, or the error.

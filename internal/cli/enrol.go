@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -13,6 +12,7 @@ import (
 
 	"github.com/notaharness/beam/internal/control"
 	"github.com/notaharness/beam/internal/identity"
+	"golang.org/x/term"
 )
 
 // runInit is `beam init [--label NAME] [--fleet-name NAME]` (docs/07).
@@ -153,18 +153,18 @@ func (e *env) ceremony(op string, params map[string]any, first string, out any) 
 	return c.Call(op+".wait", nil, out)
 }
 
-// show shows a ceremony's URL and opens the browser when there is one; on a
-// headless machine it says how to forward the ceremony's port first.
+// show shows a ceremony's URL: as a QR code for a phone when stdout is a
+// terminal, then as text, the fallback, on every output; and opens the
+// browser when there is one (docs/07).
 func (e *env) show(ceremonyURL, kind string) {
-	fmt.Fprintf(e.stdout, "waiting for your passkey (%s)\n  %s\n", kind, ceremonyURL)
-	if browser := e.browser(); browser != "" && exec.Command(browser, ceremonyURL).Start() == nil {
-		return
+	fmt.Fprintf(e.stdout, "waiting for your passkey (%s)\n", kind)
+	if f, ok := e.stdout.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
+		_ = drawQR(e.stdout, ceremonyURL) // the URL follows either way
 	}
-	u, _ := url.Parse(ceremonyURL)
-	frag, _ := url.ParseQuery(u.Fragment)
-	host, _ := os.Hostname()
-	port := frag.Get("port")
-	fmt.Fprintf(e.stdout, "forward the port first: ssh -L %s:127.0.0.1:%s %s\n", port, port, host)
+	fmt.Fprintf(e.stdout, "%s\nscan with your phone or open the link; approve only a page that shows what you ran\n", ceremonyURL)
+	if browser := e.browser(); browser != "" {
+		_ = exec.Command(browser, ceremonyURL).Start() // the URL is printed
+	}
 }
 
 // browser is the command that opens a URL here, or "" on a machine without
