@@ -7,15 +7,8 @@ import (
 	"text/tabwriter"
 
 	"github.com/notaharness/beam/internal/control"
+	"github.com/notaharness/beam/internal/identity"
 )
-
-// fingerprint is a peer id's display form: 16 characters in groups of four.
-func fingerprint(id string) string {
-	if len(id) < 16 {
-		return id
-	}
-	return id[0:4] + " " + id[4:8] + " " + id[8:12] + " " + id[12:16]
-}
 
 // jsonFlag parses a command's only flag, --json.
 func (e *env) jsonFlag(name string) (bool, bool) {
@@ -68,7 +61,7 @@ func runStatus(e *env) int {
 		fmt.Fprintf(e.stdout, "daemon %s · not enrolled: run beam init or beam join\n", s.Version)
 		return 0
 	}
-	fmt.Fprintf(e.stdout, "this machine: %s (%s) · fleet %s… · relay %s\n", s.Label, fingerprint(s.PeerID), s.FleetID[:4], s.DERP.Region)
+	fmt.Fprintf(e.stdout, "this machine: %s (%s) · fleet %s… · relay %s\n", s.Label, identity.Fingerprint(s.PeerID), s.FleetID[:4], s.DERP.Region)
 	fmt.Fprintf(e.stdout, "peers: %d connected, %d offline, %d revoked\n", s.Peers.Connected, s.Peers.Offline, s.Peers.Revoked)
 	if n := s.Peers.RevokedByFleet; n > 0 {
 		fmt.Fprintf(e.stdout, "this machine is revoked: %d peers refuse it\n", n)
@@ -120,7 +113,7 @@ func (e *env) printPeers(peers []control.PeerView) {
 		if p.Inbound {
 			inbound = "yes"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%d/%d/%d\n", name, fingerprint(p.PeerID), p.State, inbound, p.Path,
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%d/%d/%d\n", name, identity.Fingerprint(p.PeerID), p.State, inbound, p.Path,
 			p.Grant, p.Queue.Outbound, p.Queue.Inbound, p.Queue.Refused)
 	}
 	w.Flush()
