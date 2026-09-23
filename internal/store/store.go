@@ -1,5 +1,5 @@
-// Package store is state.db (docs/02, docs/05): pinned peers, revocations and
-// pending directory writes on SQLite in WAL mode. Mailbox tables join in M3.
+// Package store is state.db (docs/02, docs/05): pinned peers, revocations,
+// pending directory writes and the mailbox, on SQLite in WAL mode.
 package store
 
 import (
@@ -56,7 +56,7 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := db.Exec(schema); err != nil {
+	if _, err := db.Exec(schema + mailboxSchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("state.db: %w", err)
 	}
