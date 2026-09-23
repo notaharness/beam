@@ -3,6 +3,7 @@ package mailbox
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"path/filepath"
 	"testing"
@@ -63,6 +64,41 @@ func TestFlushResendsUnackedHead(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the acked head was not settled")
+	}
+}
+
+// docs/05 Delivery: a recipient whose grant refuses the msg stream is asked
+// again after refusedWait with no new mail, and the head then goes out.
+func TestFlushNotGrantedRetriesLater(t *testing.T) {
+	defer func(was time.Duration) { refusedWait = was }(refusedWait)
+	refusedWait = 200 * time.Millisecond
+	st, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if _, err := st.Pin(knownB, 1); err != nil {
+		t.Fatal(err)
+	}
+	e, _ := New(peerA, peerB, "", "later", UTF8, 1)
+	if _, err := st.Enqueue(peerB, 1, func(seq int64) ([]byte, error) { e.Seq = seq; b, _ := e.Marshal(); return b, nil }); err != nil {
+		t.Fatal(err)
+	}
+	ours, theirs := net.Pipe()
+	opens := 0 // open runs on the flusher's goroutine alone
+	open := func(context.Context) (*stream.Conn, error) {
+		if opens++; opens == 1 {
+			return nil, fmt.Errorf("%w: grant", ErrNotGranted)
+		}
+		return stream.NewConn(ours), nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go Flush(ctx, st, peerB, open, make(chan struct{}), func(int64, string) {}) // never woken
+	peer := stream.NewConn(theirs)
+	peer.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if _, p, err := peer.ReadFrame(); err != nil || idOf(p) != e.ID {
+		t.Fatalf("got %q, %v; want %s once the wait is over", p, err, e.ID)
 	}
 }
 

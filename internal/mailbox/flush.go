@@ -19,11 +19,12 @@ const retryEvery = 2 * time.Second
 const writeTimeout = 30 * time.Second
 
 // refusedWait is how long the flusher waits, short of new mail, to open a msg
-// stream the peer refused (its grant) again.
-const refusedWait = 5 * time.Minute
+// stream the peer's grant refused again; only tests change it.
+var refusedWait = 5 * time.Minute
 
-// ErrRefused is an open of the msg stream that the peer refused.
-var ErrRefused = errors.New("the peer refuses the msg stream")
+// ErrNotGranted is an open of the msg stream that the peer's grant refused.
+// Any other failed open is retried as an unacked head is.
+var ErrNotGranted = errors.New("the peer's grant refuses the msg stream")
 
 // Flush delivers peer's outbound queue while ctx lives (the life of the
 // tunnel this machine dialed): it opens the msg stream once there is mail,
@@ -70,7 +71,7 @@ type flusher struct {
 func (f *flusher) deliver(ctx context.Context, seq int64, env []byte) {
 	if err := f.send(ctx, env); err != nil {
 		f.close()
-		if !errors.Is(err, ErrRefused) {
+		if !errors.Is(err, ErrNotGranted) {
 			sleep(ctx, retryEvery)
 			return
 		}

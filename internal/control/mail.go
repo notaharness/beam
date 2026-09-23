@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strconv"
 	"time"
 
@@ -143,17 +142,6 @@ func (d *daemon) settled(peer string) func(seq int64, reason string) {
 	}
 }
 
-// refused answers every msg.send waiting on peer, whose flusher the peer
-// has just refused the msg stream, that its mail is stored, and why.
-func (d *daemon) refused(peer, reason string) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	for seq, done := range d.sends[peer] {
-		done <- sendResult{Outcome: stored, PendingReason: reason}
-		delete(d.sends[peer], seq)
-	}
-}
-
 // wakeFlusher tells peer's flusher there is mail and resets its dial
 // backoff. It reports whether the peer is connected.
 func (d *daemon) wakeFlusher(peer string) bool {
@@ -172,8 +160,8 @@ func (d *daemon) wakeFlusher(peer string) bool {
 }
 
 // flush runs peer's flusher on the tunnel this machine dialed, for as long as
-// ctx lives. A refusal of the msg stream is the peer's grant: the flusher
-// waits for new mail rather than retrying, and the sends waiting hear why.
+// ctx lives. A refusal of the msg stream is answered by its reason
+// (msgRefused).
 func (d *daemon) flush(ctx context.Context, peer string, ps *peerState, tun *transport.Tunnel) {
 	open := func(ctx context.Context) (*stream.Conn, error) {
 		sc, err := tun.Open(ctx, stream.Header{V: 1, Kind: stream.KindMsg})
@@ -181,9 +169,7 @@ func (d *daemon) flush(ctx context.Context, peer string, ps *peerState, tun *tra
 		if !errors.As(err, &ref) {
 			return sc, err
 		}
-		d.at("msg-refused", peer)
-		d.refused(peer, ref.Reason)
-		return nil, fmt.Errorf("%w: %s", mailbox.ErrRefused, ref.Reason)
+		return nil, d.msgRefused(peer, ref.Reason)
 	}
 	mailbox.Flush(ctx, d.store, peer, open, ps.wake, d.settled(peer))
 }

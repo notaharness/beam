@@ -315,6 +315,29 @@ func TestMsgRejected(t *testing.T) {
 	}
 }
 
+// docs/05 Outcomes: a recipient that refuses the msg stream because it has
+// revoked this machine answers msg.send rejected, revoked-peer, and the
+// envelope is kept only in quarantine, with the recipient's reason.
+func TestMsgRefusedRevoked(t *testing.T) {
+	ms := fleet(t, "alpha", "beta")
+	a, b := ms[0], ms[1]
+	waitState(t, a, b, "connected")
+	reached, release := pauseAt(t, b, "revoking", a.id()) // stored, the tunnel not yet dropped
+	sc := forward(t, b, revocation(a))
+	defer sc.Close()
+	await(t, reached, "beta to store alpha's revocation")
+	if r := a.beam("", "msg", "send", "beta", "x"); r.code != 1 || r.err != "rejected: revoked-peer\n" {
+		t.Errorf("send to a recipient that revoked this machine: %+v, want rejected: revoked-peer", r)
+	}
+	release()
+	if q := queue(t, a); len(q) != 0 {
+		t.Errorf("outbound: %v, want nothing", q)
+	}
+	if q := queue(t, a, "--which", "quarantine"); len(q) != 1 || !strings.Contains(q[0], `"reason":"revoked"`) {
+		t.Errorf("quarantine: %v, want the envelope, revoked", q)
+	}
+}
+
 // sqlite runs f in one transaction on m's state.db, its daemon stopped.
 func sqlite(t *testing.T, m *machine, f func(*sql.Tx) error) {
 	t.Helper()

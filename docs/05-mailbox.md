@@ -65,9 +65,15 @@ recognised as a duplicate only if it was actually stored.
 
 One flusher per recipient, on the tunnel this machine dialed to it. Triggers: the peer
 becoming `connected`, a new `outbound` row while connected, and a 2 s retry for an
-unacked head while the tunnel lives. Strictly sequential: head, ack, delete, next. A
-recipient that refuses the `msg` stream itself (its grant for this machine is `none`)
-is asked again on new mail, or after 5 min, not every 2 s; the queue stays.
+unacked head while the tunnel lives. Strictly sequential: head, ack, delete, next.
+
+A recipient can refuse the `msg` stream itself ([04](04-streams.md)). For `grant` (its
+grant for this machine is `none`) it is asked again on new mail, or after 5 min, not
+every 2 s; the queue stays, and the sends waiting answer `stored` with `pendingReason:
+"grant"`. For `revoked` it has revoked this machine: the sends waiting answer `rejected:
+revoked-peer`, their envelopes quarantined with that reason. Any other refusal (`limit`,
+or a reason this version does not know) is retried every 2 s like an unacked head, and
+the sends wait on.
 
 Permanent refusals (`payload-too-large`, `invalid-envelope`) quarantine the envelope so
 it does not block the queue; `queue-full`, `storage-failure` and unknown reasons retry.
@@ -78,7 +84,7 @@ it does not block the queue; `queue-full`, `storage-failure` and unknown reasons
 |---|---|---|
 | `delivered` | recipient daemon stored it and acked | done |
 | `stored` | on this machine's disk; delivery pending (peer offline, its grant refusing mail, or no ack within 10 s) | **success**; do not resend |
-| `rejected` | nothing stored: `unknown-peer`, `revoked-peer` (revoked here, or refusing this machine as revoked), `invalid-topic`, `payload-too-large`, `queue-full`, `storage-failure`; or refused for good by the recipient within the 10 s (`payload-too-large`, `invalid-envelope`), and kept only in quarantine | failure |
+| `rejected` | nothing stored: `unknown-peer`, `revoked-peer` (revoked here, or refusing this machine as revoked), `invalid-topic`, `payload-too-large`, `queue-full`, `storage-failure`; or refused for good by the recipient within the 10 s (`payload-too-large`, `invalid-envelope`, or the stream refused as `revoked`), and kept only in quarantine | failure |
 
 `stored` carries `pendingReason: "offline" | "grant" | "no-ack"`. Every surface reports it as:
 
