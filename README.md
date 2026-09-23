@@ -51,6 +51,10 @@ On the second, join using the same passkey:
 beam join --label buildbox
 ```
 
+After joining, compare the `fleet xxxx xxxx xxxx xxxx` fingerprint in the output with
+`beam status` on the first machine. They must match. If they differ, run
+`beam fleet reset` on the joining machine.
+
 The commands open a browser or print a ceremony URL. On a headless machine, follow the
 printed SSH port-forward instruction before opening the URL on your local machine.
 The daemon starts when needed; `beam peers` shows whether the machines have connected.
