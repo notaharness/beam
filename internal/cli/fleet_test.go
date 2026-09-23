@@ -427,6 +427,41 @@ func TestUnenrolled(t *testing.T) {
 	}
 }
 
+// docs/06: the socket is up before the transport. While the daemon starts,
+// status answers at once and not enrolled; every other op waits for the start
+// rather than finding the daemon unenrolled.
+func TestOpWhileStarting(t *testing.T) {
+	a := fleet(t, "alpha", "beta")[0]
+	a.stop()
+	arrived, released := make(chan struct{}), make(chan struct{})
+	var once, done sync.Once
+	release := func() { done.Do(func() { close(released) }) }
+	control.SetHook(func(_, p, _ string) {
+		if p == "starting" {
+			once.Do(func() { close(arrived); <-released })
+		}
+	})
+	t.Cleanup(func() { control.SetHook(nil) })
+	a.start(t)
+	t.Cleanup(release) // before the daemon's stop, which waits for its start
+	await(t, arrived, "the daemon to start")
+	var s struct{ Enrolled, Ready bool }
+	if r := a.beam("", "status", "--json"); r.code != 0 || json.Unmarshal([]byte(r.out), &s) != nil || s.Enrolled || s.Ready {
+		t.Errorf("status while starting: %+v", r)
+	}
+	answered := make(chan result, 1)
+	go func() { answered <- a.beam("", "peers") }()
+	select {
+	case r := <-answered:
+		t.Fatalf("peers answered before the daemon started: %+v", r)
+	case <-time.After(300 * time.Millisecond):
+	}
+	release()
+	if r := <-answered; r.code != 0 || !strings.Contains(r.out, "beta") {
+		t.Errorf("peers: %+v", r)
+	}
+}
+
 // docs/10 "daemon lock": connect-or-spawn with no daemon starts one; racing
 // spawns leave one daemon and every client connected to it.
 func TestConnectOrSpawn(t *testing.T) {

@@ -32,9 +32,10 @@ type Options struct {
 // daemon is one running beam daemon. Unenrolled, it has no store or node and
 // serves only the socket.
 type daemon struct {
-	o    Options
-	ctx  context.Context
-	stop context.CancelFunc
+	o       Options
+	ctx     context.Context
+	stop    context.CancelFunc
+	started chan struct{} // closed once the start has enrolled, or found no fleet.json
 
 	// Set once by enroll.
 	key   *transport.Key
@@ -73,13 +74,15 @@ func Run(ctx context.Context, o Options) error {
 	defer ln.Close()
 	ctx, stop := context.WithCancel(ctx)
 	defer stop()
-	d := &daemon{o: o, ctx: ctx, stop: stop,
+	d := &daemon{o: o, ctx: ctx, stop: stop, started: make(chan struct{}),
 		peers: map[string]*peerState{}, shells: map[string]map[*shell]bool{}, inbound: map[string]int{},
 		reservations: map[string]*reservation{}, active: map[string]context.CancelFunc{}, subscribers: map[*clientConn]bool{}}
 	go d.serveSocket(ln)
+	d.at("starting", "")
 	if err := d.enroll(); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
+	close(d.started)
 	<-ctx.Done()
 	d.close()
 	return nil

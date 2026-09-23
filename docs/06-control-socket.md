@@ -13,6 +13,7 @@ processes; `BEAM_CONFIG_DIR` selects the directory and therefore the default pat
 - **Unenrolled state.** With no `fleet.json` the daemon serves the socket and answers
   `status`, the ceremony ops and `daemon.shutdown`; everything else is `not-enrolled`.
   The socket is ready before transport starts; `status.ready` reports transport state.
+  `status` answers at once; every other op waits until the daemon has started.
 - **Connect-or-spawn**, one shared helper used by the CLI and the desktop: connect; on
   `ECONNREFUSED`/`ENOENT` run `beam daemon --detach`, wait ≤ 5 s for the socket, connect.
   A spawn that loses the lock race exits 1 and the helper simply connects to the winner.

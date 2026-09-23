@@ -28,7 +28,17 @@ var enrolledOps = map[string]opFunc{
 	"stream.close": opStreamClose,
 }
 
+// op runs r. Every op but status waits for the daemon's start: the socket is
+// up before the transport (docs/06), and an op meanwhile would find the
+// daemon unenrolled that is about to be enrolled.
 func (d *daemon) op(cc *clientConn, r request) (any, error) {
+	if r.Op != "status" {
+		select {
+		case <-d.started:
+		case <-d.ctx.Done():
+			return nil, fail("internal", "the daemon stopped while starting")
+		}
+	}
 	if f, ok := anytimeOps[r.Op]; ok {
 		return f(d, cc, r)
 	}
