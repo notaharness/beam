@@ -66,6 +66,15 @@ func (w *Worker) Withhold(statementHash [32]byte) {
 	w.mu.Unlock()
 }
 
+// WithholdLast leaves fleetID's newest entry out of reads.
+func (w *Worker) WithholdLast(fleetID string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if f := w.fleets[fleetID]; f != nil && len(f.entries) > 0 {
+		w.withheld[f.entries[len(f.entries)-1].StatementHash] = true
+	}
+}
+
 // Len is how many entries fleetID's directory holds.
 func (w *Worker) Len(fleetID string) int {
 	w.mu.Lock()
