@@ -160,9 +160,17 @@ worker under `wrangler dev`. Job `darwin`: `make test` on macOS, where the proce
 lifetimes (kqueue, not waitid) and the in-process daemons run for real. The `ci` job also
 runs the npm packages' node tests.
 
-Tag (`.github/workflows/release.yml`, on `v*`): `npm/version.mjs` reads the tag, and the
-job stops at one that is not canonical. Then `make dist`, `npm/pack.mjs`, and a check that
-`npm publish --dry-run` would publish every package at the version the binary prints;
-only then a GitHub release with the four binaries, marked a prerelease for a prerelease
-tag, and `npm publish` with provenance of the platform packages and last the shim, under
-`next` for a prerelease. It needs the `NPM_TOKEN` secret.
+Tag (`.github/workflows/release.yml`, on `v*`), two jobs. `release`: `npm/version.mjs`
+reads the tag, and the job stops at one that is not canonical. Then `make dist`,
+`npm/pack.mjs`, and a check that `npm publish --dry-run` would publish every package at
+the version the binary prints; only then a GitHub release with the four binaries, marked
+a prerelease for a prerelease tag. `publish`, its own job so that it can be re-run alone:
+packs the same binaries, handed over as a workflow artifact, and publishes the platform
+packages and last the shim, with provenance, under `next` for a prerelease. It
+authenticates through npm's trusted publishing (OIDC: `id-token: write`, npm 11.5.1 or
+later, which Node 24 has), each package naming `notaharness/beam` and `release.yml` as
+its trusted publisher. A package with none yet, at the first release, is published with
+the `NPM_TOKEN` secret, which npm falls back to while it is set. Run by hand from `main`
+(`workflow_dispatch`) with a version, the workflow rehearses that release: no GitHub
+release, whose the token is if there is one, and `npm publish --dry-run`. CONTRIBUTING.md
+has the steps.
