@@ -11,6 +11,7 @@ require (
 	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.46.0
 	modernc.org/sqlite v1.59.0
+	pgregory.net/rapid v1.3.0
 	tailscale.com v1.103.0-pre.0.20260916030321-a2263542f260
 )
 
