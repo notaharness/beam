@@ -2,7 +2,10 @@ package stream
 
 import (
 	"bufio"
+	"errors"
 	"os/exec"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -50,6 +53,51 @@ func TestExitedBeforeWatch(t *testing.T) {
 	_ = cmd.Wait()
 }
 
+// A watcher that fails leaves the stream's teardown intact: the group is
+// killed while its leader still holds the id, never waited on under the lock
+// signals take, and the leader is reaped for its status.
+func TestWatcherFails(t *testing.T) {
+	broken := errors.New("watcher failed")
+	for _, tc := range []struct {
+		name   string
+		script string
+		watch  func(int) (syscall.WaitStatus, error)
+		want   func(syscall.WaitStatus) bool
+	}{
+		{"before the exit", "sleep 30",
+			func(int) (syscall.WaitStatus, error) { return 0, broken },
+			func(ws syscall.WaitStatus) bool { return ws.Signaled() && ws.Signal() == syscall.SIGKILL }},
+		{"after the exit", "exit 7",
+			func(pid int) (syscall.WaitStatus, error) { _, _ = awaitExit(pid); return 0, broken },
+			func(ws syscall.WaitStatus) bool { return ws.Exited() && ws.ExitStatus() == 7 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd, out := start(t, "sleep 30 & echo $!; "+tc.script)
+			child := childPid(t, out)
+			g := watchGroup(cmd, tc.watch)
+			select {
+			case <-g.exited:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the stream never learned the leader ended")
+			}
+			if !tc.want(g.status) {
+				t.Errorf("status %v", g.status)
+			}
+			signalled := make(chan struct{})
+			go func() { g.signal(syscall.SIGKILL); g.reap(); close(signalled) }()
+			select {
+			case <-signalled:
+			case <-time.After(5 * time.Second):
+				t.Fatal("teardown blocked")
+			}
+			waitUntil(t, "the group's child to die", func() bool { return syscall.Kill(child, 0) != nil })
+			if syscall.Kill(cmd.Process.Pid, 0) == nil {
+				t.Error("the leader was not reaped")
+			}
+		})
+	}
+}
+
 // start runs script in its own process group, its stdout piped.
 func start(t *testing.T, script string) (*exec.Cmd, *bufio.Reader) {
 	t.Helper()
@@ -64,6 +112,17 @@ func start(t *testing.T, script string) (*exec.Cmd, *bufio.Reader) {
 	}
 	t.Cleanup(func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) })
 	return cmd, bufio.NewReader(out)
+}
+
+// childPid reads the pid the script printed first.
+func childPid(t *testing.T, out *bufio.Reader) int {
+	t.Helper()
+	line, err := out.ReadString('\n')
+	pid, perr := strconv.Atoi(strings.TrimSpace(line))
+	if err != nil || perr != nil {
+		t.Fatalf("child pid %q: %v", line, err)
+	}
+	return pid
 }
 
 func waitUntil(t *testing.T, what string, ok func() bool) {

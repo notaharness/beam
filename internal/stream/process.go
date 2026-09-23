@@ -154,17 +154,36 @@ type group struct {
 }
 
 func newGroup(cmd *exec.Cmd) *group {
+	return watchGroup(cmd, awaitExit)
+}
+
+// watchGroup is newGroup with the leader's exit learned from watch.
+func watchGroup(cmd *exec.Cmd, watch func(pid int) (syscall.WaitStatus, error)) *group {
 	g := &group{cmd: cmd, exited: make(chan struct{})}
 	go func() {
-		ws, err := awaitExit(cmd.Process.Pid)
-		if err != nil { // it cannot be watched unreaped: reap it for its status, and signal it no more
-			g.reap()
-			ws = cmd.ProcessState.Sys().(syscall.WaitStatus)
+		ws, err := watch(cmd.Process.Pid)
+		if err != nil {
+			ws = g.killAndReap()
 		}
 		g.status = ws
 		close(g.exited)
 	}()
 	return g
+}
+
+// killAndReap ends a group whose leader cannot be watched unreaped: the group
+// gets SIGKILL while the leader still holds its id, no signal follows, and
+// the leader is reaped for its status, outside the lock, since it may not
+// have died yet.
+func (g *group) killAndReap() syscall.WaitStatus {
+	g.mu.Lock()
+	if !g.reaped {
+		_ = syscall.Kill(-g.cmd.Process.Pid, syscall.SIGKILL)
+		g.reaped = true
+	}
+	g.mu.Unlock()
+	_ = g.cmd.Wait()
+	return g.cmd.ProcessState.Sys().(syscall.WaitStatus)
 }
 
 func (g *group) signal(sig syscall.Signal) {
