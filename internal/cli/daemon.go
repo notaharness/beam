@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -38,7 +39,7 @@ func runDaemon(e *env) int {
 		return e.fail(err)
 	}
 	if *detach {
-		if err := e.detach(p, e.args); err != nil {
+		if err := e.detach(p, detached(fs)); err != nil {
 			return e.fail(err)
 		}
 		return 0
@@ -85,7 +86,19 @@ func lifeline(stdin io.Reader) bool {
 	return err == nil && st.Mode()&(os.ModeNamedPipe|os.ModeSocket) != 0
 }
 
-// detach starts `beam daemon` with args but --detach in a new session.
+// detached is the arguments of the daemon --detach starts: the options that
+// were set, but --detach, whatever its spelling.
+func detached(fs *flag.FlagSet) []string {
+	args := []string{"daemon"}
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name != "detach" {
+			args = append(args, "--"+f.Name+"="+f.Value.String())
+		}
+	})
+	return args
+}
+
+// detach starts beam with args in a new session.
 func (e *env) detach(p control.Paths, args []string) error {
 	exe, err := os.Executable()
 	if err != nil {
@@ -99,13 +112,7 @@ func (e *env) detach(p control.Paths, args []string) error {
 		return err
 	}
 	defer logFile.Close()
-	var rest []string
-	for _, a := range args {
-		if a != "--detach" && a != "-detach" {
-			rest = append(rest, a)
-		}
-	}
-	cmd := exec.Command(exe, append([]string{"daemon"}, rest...)...)
+	cmd := exec.Command(exe, args...)
 	cmd.Env, cmd.Stdout, cmd.Stderr = e.vars, logFile, logFile
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
