@@ -137,8 +137,8 @@ Readers decrypt, check that the statement inside hashes to `statementHash` (a co
 daemon could append a valid assertion with an unrelated blob; that costs one slot and is
 discarded), then verify the record as in "The membership entry".
 
-The directory is read at join and at daemon start, appended at join and revoke with
-retry from `state.db` while the daemon runs, and never polled. No runtime behaviour
+The directory is read at join and at daemon start, written at init, join and revoke
+with retry from `state.db` while the daemon runs, and never polled. No runtime behaviour
 waits on it.
 
 ## Ceremonies
