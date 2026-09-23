@@ -28,6 +28,13 @@ func NewKey(region *tailcfg.DERPRegion) *Key {
 	return &Key{*pk}
 }
 
+// OnRegion is k's node key homed on region: the same peer at a new address.
+func (k *Key) OnRegion(region *tailcfg.DERPRegion) *Key {
+	moved := *k
+	moved.pk.Public.Region = []*tailcfg.DERPRegion{region}
+	return &moved
+}
+
 // MarshalJSON is key.json: tailcat's PrivateKey, region included.
 func (k *Key) MarshalJSON() ([]byte, error) {
 	return json.Marshal(k.pk)
