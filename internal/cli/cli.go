@@ -76,7 +76,7 @@ const usage = `usage:
   beam peer grant <peer> all|msg|none
   beam connect <peer> [--cwd PATH] [-- argv...]
   beam exec    <peer> [--cwd PATH] [--env K=V]... -- argv...
-  beam msg send   <peer> [--topic T] [--base64] <payload|->
+  beam msg send   <peer> [--topic T] [--base64] [--json] <payload|->
   beam msg listen [--topic T] [<peer>...]
   beam msg queue  [<peer>] [--which outbound|inbound|refused|quarantine]
   beam version

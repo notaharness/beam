@@ -1,7 +1,8 @@
 # 07 · CLI
 
 One binary. Every subcommand but `daemon` and `version` is a client of the control socket
-and uses the shared connect-or-spawn helper. `--json` prints the socket result. Exit
+and uses the shared connect-or-spawn helper. `status`, `peers` and `msg send` take
+`--json`, which prints the socket result as it is, the exit code unchanged. Exit
 codes: `0`; `1` beam error (token on stderr); `2` usage; `connect` and `exec` exit with
 the remote status (`128+signal` for a signal).
 
@@ -19,7 +20,7 @@ beam peer grant <peer> all|msg|none
 
 beam connect <peer> [--cwd PATH] [-- argv...]
 beam exec    <peer> [--cwd PATH] [--env K=V]... -- argv...
-beam msg send   <peer> [--topic T] [--base64] <payload|->
+beam msg send   <peer> [--topic T] [--base64] [--json] <payload|->
 beam msg listen [--topic T] [<peer>...]
 beam msg queue  [<peer>] [--which outbound|inbound|refused|quarantine]
 

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"net"
 	"path/filepath"
 	"strconv"
@@ -94,10 +95,16 @@ func TestMsgDelivered(t *testing.T) {
 	if r := a.beam("\x00\x01bytes", "msg", "send", "beta", "--base64", "-"); r.code != 0 || r.out != "delivered to beta\n" {
 		t.Fatalf("send --base64: %+v", r)
 	}
+	var res map[string]string
+	if r := a.beam("", "msg", "send", "beta", "--json", "as json"); r.code != 0 || json.Unmarshal([]byte(r.out), &res) != nil ||
+		!maps.Equal(res, map[string]string{"outcome": "delivered", "to": b.id()}) {
+		t.Fatalf("send --json: %+v", r)
+	}
 	c, next := subscribeMail(t, b, nil)
 	for _, want := range []mailbox.Envelope{
 		{From: a.id(), To: b.id(), Seq: 1, Topic: "orchestra", Payload: "hello", Encoding: "utf8"},
 		{From: a.id(), To: b.id(), Seq: 2, Payload: base64.RawURLEncoding.EncodeToString([]byte("\x00\x01bytes")), Encoding: "base64"},
+		{From: a.id(), To: b.id(), Seq: 3, Payload: "as json", Encoding: "utf8"},
 	} {
 		e := next()
 		if want.ID, want.CreatedAt = e.ID, e.CreatedAt; e != want {
@@ -282,6 +289,11 @@ func TestMsgRejected(t *testing.T) {
 		return err
 	})
 	a.start(t)
+	var res map[string]string
+	if r := a.beam("", "msg", "send", "gone", "--json", "x"); r.code != 1 || json.Unmarshal([]byte(r.out), &res) != nil ||
+		!maps.Equal(res, map[string]string{"outcome": "rejected", "to": gone.id(), "reason": "revoked-peer"}) {
+		t.Errorf("send --json, rejected: %+v", r)
+	}
 	for _, tc := range []struct {
 		stdin, reason string
 		args          []string

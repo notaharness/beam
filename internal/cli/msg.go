@@ -21,47 +21,65 @@ func runMsg(e *env) int {
 	return sub(e)
 }
 
-// runMsgSend is `beam msg send <peer> [--topic T] [--base64] <payload|->`.
+// runMsgSend is `beam msg send <peer> [--topic T] [--base64] [--json]
+// <payload|->`.
 func runMsgSend(e *env) int {
-	if len(e.args) == 0 {
-		return e.fail(errUsage)
+	params, asJSON, err := msgSendParams(e)
+	if err != nil {
+		return e.fail(err)
 	}
-	peer := e.args[0]
-	fs := e.flags("msg send")
-	topic := fs.String("topic", "", "")
-	b64 := fs.Bool("base64", false, "")
-	if fs.Parse(e.args[1:]) != nil || fs.NArg() != 1 {
-		return e.fail(errUsage)
-	}
-	payload := []byte(fs.Arg(0))
-	if fs.Arg(0) == "-" {
-		var err error
-		if payload, err = io.ReadAll(e.stdin); err != nil {
-			return e.fail(err)
-		}
-	}
-	params := map[string]any{"to": peer, "topic": *topic, "payload": string(payload), "encoding": "utf8"}
-	if *b64 {
-		params["payload"], params["encoding"] = base64.RawURLEncoding.EncodeToString(payload), "base64"
+	var raw json.RawMessage
+	if err := e.call("msg.send", params, &raw); err != nil {
+		return e.fail(err)
 	}
 	var res struct {
 		Outcome       string `json:"outcome"`
 		PendingReason string `json:"pendingReason"`
 		Reason        string `json:"reason"`
 	}
-	if err := e.call("msg.send", params, &res); err != nil {
-		return e.fail(err)
-	}
-	switch res.Outcome {
-	case "delivered":
+	_ = json.Unmarshal(raw, &res) // the daemon's own result
+	peer := params["to"].(string)
+	switch {
+	case asJSON:
+		e.printJSON(raw)
+	case res.Outcome == "delivered":
 		fmt.Fprintf(e.stdout, "delivered to %s\n", peer)
-	case "stored":
+	case res.Outcome == "stored":
 		fmt.Fprintf(e.stdout, storedSays[res.PendingReason], peer)
 	default:
 		fmt.Fprintf(e.stderr, "rejected: %s\n", res.Reason)
+	}
+	if res.Outcome != "delivered" && res.Outcome != "stored" {
 		return 1
 	}
 	return 0
+}
+
+// msgSendParams reads msg send's arguments as msg.send's params, and --json.
+func msgSendParams(e *env) (map[string]any, bool, error) {
+	if len(e.args) == 0 {
+		return nil, false, errUsage
+	}
+	peer := e.args[0]
+	fs := e.flags("msg send")
+	topic := fs.String("topic", "", "")
+	b64 := fs.Bool("base64", false, "")
+	asJSON := fs.Bool("json", false, "")
+	if fs.Parse(e.args[1:]) != nil || fs.NArg() != 1 {
+		return nil, false, errUsage
+	}
+	payload := []byte(fs.Arg(0))
+	if fs.Arg(0) == "-" {
+		var err error
+		if payload, err = io.ReadAll(e.stdin); err != nil {
+			return nil, false, err
+		}
+	}
+	params := map[string]any{"to": peer, "topic": *topic, "payload": string(payload), "encoding": "utf8"}
+	if *b64 {
+		params["payload"], params["encoding"] = base64.RawURLEncoding.EncodeToString(payload), "base64"
+	}
+	return params, *asJSON, nil
 }
 
 // storedSays is what `beam msg send` says of mail stored for a peer, by its
