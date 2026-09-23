@@ -55,8 +55,9 @@ type result struct {
 	cov, crap float64
 }
 
-// run scores every function in the module at root against profile and writes
-// a report. It reports false if any function exceeds the limit.
+// run scores every function in the module at root that the build under
+// profile compiled (its file is in the profile; another OS's is not) and
+// writes a report. It reports false if any function exceeds the limit.
 func run(root string, profile io.Reader, out io.Writer) (bool, error) {
 	module, err := modulePath(root)
 	if err != nil {
@@ -72,7 +73,11 @@ func run(root string, profile io.Reader, out io.Writer) (bool, error) {
 	}
 	var results []result
 	for _, f := range fns {
-		cov := coverage(f, blocks[path.Join(module, f.file)])
+		fb, built := blocks[path.Join(module, f.file)]
+		if !built {
+			continue
+		}
+		cov := coverage(f, fb)
 		results = append(results, result{f, cov, score(f.comp, cov)})
 	}
 	sort.Slice(results, func(i, j int) bool { return results[i].crap > results[j].crap })

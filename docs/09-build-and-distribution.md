@@ -123,7 +123,8 @@ worker.
 at 300 lines, both excluding tests. Suppressions carry a reason.
 
 `make crap`: runs `make test`, which writes `cover.out` over the whole module
-(`-coverpkg=./...`), then scores every non-test function with Savoia's CRAP metric,
+(`-coverpkg=./...`), then scores every non-test function that build compiled (not, say,
+another OS's) with Savoia's CRAP metric,
 `complexity² × (1 − coverage)³ + complexity`, complexity counted as `gocyclo` counts it.
 Any function above 30 (crap4j's threshold) fails the build. A complexity-12 function
 therefore needs at least half its statements covered; an untested one must stay at

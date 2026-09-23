@@ -44,6 +44,7 @@ func TestRun(t *testing.T) {
 		"a/a_test.go":             "package a\n\nfunc TestIgnored() { if true {} }\n",
 		"node_modules/x/x.go":     "package x\n\nfunc Skipped() { if true {} }\n",
 		"a/testdata/fixture/f.go": "package f\n\nfunc Skipped() { if true {} }\n",
+		"b/b_other.go":            strings.Replace(complexSrc, "package a", "package b", 1), // outside the build: not in the profile
 	})
 	for _, tc := range []struct {
 		name    string
