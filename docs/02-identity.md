@@ -67,8 +67,9 @@ $BEAM_DIR/
 
 - `$BEAM_DIR`, `run/` and the socket's directory are created `0700` when missing. One
   that exists must be owned by the user running beam and writable by no one else.
-- Each of the files above that exists, `state.db-wal` and `state.db-shm` included, must
-  be owned by the user and grant nothing to group or others.
+- Each of the files above that exists but the socket, which the daemon replaces,
+  `state.db-wal` and `state.db-shm` included, must be owned by the user and grant nothing
+  to group or others.
 
 Anything else is refused before it is used: exit 1, naming the path, its owner or mode,
 and the fix. beam changes no permissions itself, since the directory may be shared (a

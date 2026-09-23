@@ -3,7 +3,6 @@
 package cli_test
 
 import (
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,21 +20,20 @@ import (
 func TestPrivateDirs(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
-		setup func(m *machine) (path string, vars []string)
+		mode  os.FileMode
+		setup func(m *machine) (path, socket string)
 	}{
-		{"$BEAM_DIR writable by others", func(m *machine) (string, []string) { return m.dir, nil }},
-		{"run writable by group", func(m *machine) (string, []string) {
-			return filepath.Join(m.dir, "run"), nil
-		}},
-		{"the socket's directory writable by others", func(m *machine) (string, []string) {
-			dir := filepath.Join(shortTemp(t), "s")
+		{"$BEAM_DIR writable by others", 0o777, func(m *machine) (string, string) { return m.dir, "" }},
+		{"run writable by group", 0o770, func(m *machine) (string, string) { return filepath.Join(m.dir, "run"), "" }},
+		{"the socket's directory writable by others", 0o777, func(m *machine) (string, string) {
+			dir := filepath.Join(beamDir(t), "s")
 			os.Mkdir(dir, 0o700)
-			return dir, []string{"BEAM_SOCKET=" + filepath.Join(dir, "beam.sock")}
+			return dir, filepath.Join(dir, "beam.sock")
 		}},
-		{"key.json readable by others", func(m *machine) (string, []string) { return filepath.Join(m.dir, "key.json"), nil }},
-		{"fleet.json readable by group", func(m *machine) (string, []string) { return filepath.Join(m.dir, "fleet.json"), nil }},
-		{"state.db readable by group", func(m *machine) (string, []string) { return filepath.Join(m.dir, "state.db"), nil }},
-		{"daemon.log readable by others", func(m *machine) (string, []string) { return filepath.Join(m.dir, "daemon.log"), nil }},
+		{"key.json readable by others", 0o644, func(m *machine) (string, string) { return filepath.Join(m.dir, "key.json"), "" }},
+		{"fleet.json readable by group", 0o640, func(m *machine) (string, string) { return filepath.Join(m.dir, "fleet.json"), "" }},
+		{"state.db readable by group", 0o640, func(m *machine) (string, string) { return filepath.Join(m.dir, "state.db"), "" }},
+		{"daemon.log readable by others", 0o644, func(m *machine) (string, string) { return filepath.Join(m.dir, "daemon.log"), "" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := newMachine(t, "alpha")
@@ -43,16 +41,13 @@ func TestPrivateDirs(t *testing.T) {
 			for _, f := range []string{"state.db", "daemon.log"} {
 				os.WriteFile(filepath.Join(m.dir, f), nil, 0o600)
 			}
-			path, vars := tc.setup(m)
-			mode := os.FileMode(0o777)
-			if st, _ := os.Stat(path); !st.IsDir() {
-				mode = 0o644
+			path, socket := tc.setup(m)
+			vars := []string{"BEAM_CONFIG_DIR=" + m.dir, "HOME=" + os.Getenv("HOME"), "PATH=" + os.Getenv("PATH")}
+			p := m.paths()
+			if socket != "" {
+				vars, p.Socket = append(vars, "BEAM_SOCKET="+socket), socket
 			}
-			if strings.Contains(tc.name, "group") {
-				mode &^= 0o007
-				mode |= 0o020
-			}
-			if err := os.Chmod(path, mode); err != nil {
+			if err := os.Chmod(path, tc.mode); err != nil {
 				t.Fatal(err)
 			}
 			defer os.Chmod(path, 0o700) // so the test's cleanup can remove it
@@ -62,20 +57,19 @@ func TestPrivateDirs(t *testing.T) {
 					args = append(args, "--detach")
 				}
 				var out, errb strings.Builder
-				all := append([]string{"BEAM_CONFIG_DIR=" + m.dir, "HOME=" + os.Getenv("HOME"), "PATH=" + os.Getenv("PATH")}, vars...)
 				exited := make(chan int, 1)
-				go func() { exited <- runWith(all, &out, &errb, args...) }()
+				go func() { exited <- cli.Main(args, vars, strings.NewReader(""), &out, &errb) }()
 				select {
 				case code := <-exited:
 					if code != 1 || !strings.Contains(errb.String(), path) || !strings.Contains(errb.String(), "chmod") {
 						t.Errorf("detach %v: exit %d, %q", detach, code, errb.String())
-						stopDaemon(m, vars)
+						stopDaemon(p)
 					}
 				case <-time.After(3 * time.Second):
 					t.Errorf("detach %v: the daemon started", detach)
-					stopDaemon(m, vars)
+					stopDaemon(p)
 				}
-				if st, _ := os.Stat(path); st.Mode().Perm() != mode {
+				if st, _ := os.Stat(path); st.Mode().Perm() != tc.mode {
 					t.Errorf("the mode changed to %v", st.Mode().Perm())
 				}
 			}
@@ -83,36 +77,20 @@ func TestPrivateDirs(t *testing.T) {
 	}
 }
 
-// runWith is beam with vars as its whole environment and no stdin.
-func runWith(vars []string, stdout, stderr io.Writer, args ...string) int {
-	return cli.Main(args, vars, strings.NewReader(""), stdout, stderr)
+// docs/06 connect-or-spawn: a command whose daemon refuses to start fails at
+// once, saying why.
+func TestSpawnRefused(t *testing.T) {
+	m := blank(t, "fresh")
+	os.Chmod(m.dir, 0o777)
+	start := time.Now()
+	if r := m.beam("", "status"); r.code != 1 || !strings.Contains(r.err, "chmod go-w "+m.dir) || time.Since(start) > 2*time.Second {
+		t.Errorf("%+v after %v", r, time.Since(start))
+		stopDaemon(m.paths())
+	}
 }
 
-// shortTemp is a temporary directory whose path leaves room for a socket.
-func shortTemp(t *testing.T) string {
-	t.Helper()
-	dir, err := os.MkdirTemp("", "b")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
-	return dir
-}
-
-// stopDaemon stops a daemon a failing case started on m's directory, with
-// vars naming its socket, if one answers.
-func stopDaemon(m *machine, vars []string) {
-	p, err := control.ResolvePaths(func(k string) string {
-		for _, v := range append([]string{"BEAM_CONFIG_DIR=" + m.dir}, vars...) {
-			if name, val, _ := strings.Cut(v, "="); name == k {
-				return val
-			}
-		}
-		return ""
-	})
-	if err != nil {
-		return
-	}
+// stopDaemon stops a daemon a failing case started at p, if one answers.
+func stopDaemon(p control.Paths) {
 	for range 50 { // a detached daemon may not be listening yet
 		if c, err := control.Dial(p); err == nil {
 			c.Call("daemon.shutdown", nil, nil)
