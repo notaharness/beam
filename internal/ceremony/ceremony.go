@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/ecdh"
 	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"net/url"
 	"sync"
@@ -39,7 +40,7 @@ var (
 // Request is what the page shows and asks the authenticator for.
 type Request struct {
 	Kind      string // Create, Add or Remove
-	Label     string // the machine added or removed
+	Label     string // the machine the tap is for
 	PeerID    string // its peerId, whose fingerprint the page shows
 	Challenge []byte
 	FleetName string // Create only
@@ -49,7 +50,6 @@ type Request struct {
 type Ceremony struct {
 	URL string
 
-	req      Request
 	worker   string // the directory worker holding the slot
 	key      *ecdh.PrivateKey
 	readKey  []byte
@@ -82,26 +82,22 @@ func Start(req Request, worker string) (*Ceremony, error) {
 	}
 	readKey := make([]byte, 32)
 	rand.Read(readKey)
+	h := sha256.Sum256(readKey)
 	ctx, stop := context.WithCancel(context.Background())
-	c := &Ceremony{req: req, worker: worker, key: key, readKey: readKey, slot: slotOf(readKey), stop: stop,
+	c := &Ceremony{worker: worker, key: key, readKey: readKey, slot: b64(h[:16]), stop: stop,
 		done: make(chan outcome, 1), timedOut: make(chan struct{})}
-	c.URL = c.url()
+	frag := url.Values{"o": {req.Kind}, "s": {c.slot}, "k": {b64(key.PublicKey().Bytes())}, "c": {b64(req.Challenge)},
+		"l": {req.Label}, "f": {req.PeerID[:min(16, len(req.PeerID))]}} // the table in docs/02
+	if req.Kind == Create {
+		frag.Set("n", req.FleetName)
+	}
+	c.URL = Page + "#" + frag.Encode()
 	c.timer = time.AfterFunc(Timeout, c.expire)
 	go c.await(ctx)
 	if answer != nil {
 		go answer(c)
 	}
 	return c, nil
-}
-
-// url is the page's URL, its fragment the table in docs/02.
-func (c *Ceremony) url() string {
-	frag := url.Values{"o": {c.req.Kind}, "s": {c.slot}, "k": {b64(c.key.PublicKey().Bytes())},
-		"c": {b64(c.req.Challenge)}, "l": {c.req.Label}, "f": {c.req.PeerID[:min(16, len(c.req.PeerID))]}}
-	if c.req.Kind == Create {
-		frag.Set("n", c.req.FleetName)
-	}
-	return Page + "#" + frag.Encode()
 }
 
 // await ends the ceremony with what its slot brings, unless it ends first.

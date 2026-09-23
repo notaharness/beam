@@ -15,7 +15,7 @@ beam/
     store/                  SQLite: peers, revocations, mailbox tables, pending appends
     mailbox/                flusher, receiver, subscriber fan-out over store
     directory/              worker HTTP client, blob encryption, append retry
-    ceremony/               key pair and slot, URL building, waiting on the slot, HPKE open, PRF derivation
+    ceremony/               key and slot, URL building, the slot wait, HPKE open, PRF derivation
     control/                the daemon: dial loop, sync, stream dispatch; the socket: ops,
                             events, attach pump, lock, connect-or-spawn
     cli/                    subcommands; the QR code
@@ -32,10 +32,10 @@ beam/
 ```
 
 `transport` is the only package importing tailcat. The QR code is drawn from
-`github.com/boombuler/barcode`'s encoder (no dependencies of its own); the half-block
-rendering is beam's. In the daemon's own code `directory`
-and `ceremony` are the only ones speaking HTTP; `transport.HomeKey` fetches the DERP map
-through tailcat, and `fakeworker` serves HTTP in tests.
+`github.com/boombuler/barcode`'s encoder (no dependencies of its own); the braille
+rendering is beam's. In the daemon's own code `directory` and `ceremony` are the only
+ones speaking HTTP; `transport.HomeKey` fetches the DERP map through tailcat, and
+`fakeworker` serves HTTP in tests.
 
 ## Build
 
@@ -107,16 +107,16 @@ CREATE TABLE slots (
 CREATE INDEX slots_created ON slots (created_at);
 ```
 
-Caps: 16 KiB per request body, counted as it arrives whatever `Content-Length` says;
-8 KiB per blob; 5,000 entries per fleet, checked by the statement that allocates the
-seq; 120 requests/min per fleet. No expiry for fleets and entries. A slot holds at most 8
-KiB of sealed result and lives five minutes from its write, the ceremony's timeout: a
-row older than that is absent to every route, and each write deletes the expired ones.
-Slot routes are limited to 120 requests/min per client address (`CF-Connecting-IP`),
-through the same binding: a waiting daemon makes about three a minute and the page one. The client holds the worker to the same
-bounds: a response at most a full page of the largest entries, at most 500 entries a
-page and 5,000 in all, a `next` only after a full page and past `since`, a minute for a
-whole read. A worker outside them is unavailable.
+Caps: 16 KiB per request body, counted as it arrives whatever `Content-Length` says; 8
+KiB per blob; 5,000 entries per fleet, checked by the statement that allocates the seq;
+120 requests/min per fleet. No expiry for fleets and entries. A slot holds at most 8 KiB
+of sealed result and lives five minutes from its write, the ceremony's timeout: a row
+older than that is absent to every route, and each write deletes the expired ones. Slot
+routes are limited to 120 requests/min per client address (`CF-Connecting-IP`), through
+the same binding: a waiting daemon makes about three a minute and the page one. The
+client holds the worker to the same bounds: a response at most a full page of the
+largest entries, at most 500 entries a page and 5,000 in all, a `next` only after a full
+page and past `since`, a minute for a whole read. A worker outside them is unavailable.
 
 ### Routes
 
@@ -133,10 +133,9 @@ Assertion verification (`@simplewebauthn/server`): origin `https://beam.n10.is`,
 `beam.n10.is`, UV required, challenge as above, counter ignored, and the assertion's
 credential id must be the fleet's. A refused append is `403`, a body or a blob over its
 cap or a full fleet `413`, and a fleet over its rate `429`, through Workers' rate-limit
-binding. A
-revoked machine holds `T_read` and can read; it cannot append. A slot is `:slot` as 22
-base64url characters encoding 16 bytes; any other is `404`. The worker can open no slot's ciphertext; it never
-sees the key.
+binding. A revoked machine holds `T_read` and can read; it cannot append. A slot is
+`:slot` as 22 base64url characters encoding 16 bytes; any other is `404`. The worker can
+open no slot's ciphertext; it never sees the key.
 
 ### Ceremony page headers
 

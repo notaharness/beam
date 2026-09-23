@@ -56,21 +56,20 @@ func Answer(ceremonyURL, worker string, a *identity.Authenticator) (int, error) 
 		f.Set("signature", as.Signature)
 		f.Set("prf", b64(a.PRF([]byte(identity.PRFSalt))))
 	}
-	return Write(ceremonyURL, worker, Seal(ceremonyURL, []byte(f.Encode())))
+	return Write(ceremonyURL, worker, seal(frag.Get("k"), frag.Get("s"), []byte(f.Encode())))
 }
 
-// Seal seals plaintext as the page does, to the key and for the slot in
-// ceremonyURL's fragment.
-func Seal(ceremonyURL string, plaintext []byte) []byte {
-	frag := fragment(ceremonyURL)
-	raw, _ := base64.RawURLEncoding.DecodeString(frag.Get("k"))
+// seal seals plaintext as the page does, to key (unpadded base64url) and for
+// slot.
+func seal(key, slot string, plaintext []byte) []byte {
+	raw, _ := base64.RawURLEncoding.DecodeString(key)
 	pub, err := ecdh.X25519().NewPublicKey(raw)
 	if err != nil {
 		panic(err)
 	}
 	pk, _ := hpke.NewDHKEMPublicKey(pub)
 	kdf, aead := suite()
-	sealed, err := hpke.Seal(pk, kdf, aead, []byte(info+frag.Get("s")), plaintext)
+	sealed, err := hpke.Seal(pk, kdf, aead, []byte(info+slot), plaintext)
 	if err != nil {
 		panic(err)
 	}

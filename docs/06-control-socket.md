@@ -2,10 +2,10 @@
 
 The daemon's one local interface: `$BEAM_DIR/run/beam.sock`, mode `0600`. (The tunnel
 port is the only other thing it listens on; a ceremony's result comes back through the
-worker, [02](02-identity.md).) Override with `BEAM_SOCKET`, which is also what the daemon injects into remote
-processes; `BEAM_CONFIG_DIR` selects the directory and therefore the default path. A
-path longer than a Unix socket address holds (107 bytes on Linux, 103 on macOS) is
-refused before anything else, naming `BEAM_SOCKET`.
+worker, [02](02-identity.md).) Override with `BEAM_SOCKET`, which is also what the
+daemon injects into remote processes; `BEAM_CONFIG_DIR` selects the directory and
+therefore the default path. A path longer than a Unix socket address holds (107 bytes on
+Linux, 103 on macOS) is refused before anything else, naming `BEAM_SOCKET`.
 
 ## Lifecycle
 
@@ -84,13 +84,14 @@ while the daemon waits on the ceremony's slot. One ceremony at a time (`busy`).
 | `ceremony.cancel` | | `{}` |
 | `fleet.reset` | `{ confirm: "reset" }` | `{}` |
 
-While a `*.wait` runs, its client also gets `stage { stage }` events as the daemon reaches
-`reading directory` and `publishing` ([07](07-cli.md)). A `*.wait` without its `*.start`
-under way is `ceremony-state`, and so is a slot answered with a result that does not
-open under the ceremony's key ([02](02-identity.md)). `published: "pending"` means the directory append is queued
-in `state.db` and retried (a write the worker refuses outright is dropped from the queue
-and logged); event `directory.published { kind, peerId }` fires when it lands. `join`
-fails outright with `directory-unavailable` because it cannot proceed without the read.
+While a `*.wait` runs, its client also gets `stage { stage }` events as the daemon
+reaches `reading directory` and `publishing` ([07](07-cli.md)). A `*.wait` without its
+`*.start` under way is `ceremony-state`, and so is a slot answered with a result that
+does not open under the ceremony's key ([02](02-identity.md)). `published: "pending"`
+means the directory append is queued in `state.db` and retried (a write the worker
+refuses outright is dropped from the queue and logged); event `directory.published {
+kind, peerId }` fires when it lands. `join` fails outright with `directory-unavailable`
+because it cannot proceed without the read.
 
 ### Messages
 

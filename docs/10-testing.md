@@ -118,6 +118,6 @@ Real ceremonies on macOS Safari and Chrome on Linux through the opened browser, 
 iOS Safari and Android Chrome by scanning the terminal's QR code from a headless machine
 (an SSH session), each with `init` on a fresh dir and `join` on a second, and one
 `revoke`; a scan of the code from a second phone after the first answered shows the
-page's "answered from another device"; check that the derived directory key matches across
-create/get and local/hybrid. Real NAT traversal between two networks; `beam peers` shows
-`direct` or `relay`.
+page's "answered from another device"; check that the derived directory key matches
+across create/get and local/hybrid. Real NAT traversal between two networks; `beam
+peers` shows `direct` or `relay`.

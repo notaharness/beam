@@ -31,12 +31,6 @@ npx wrangler d1 execute beam --remote --file schema.sql
 npx wrangler deploy                   # attaches the beam.n10.is custom domain
 ```
 
-Later deploys are `npx wrangler deploy`. When `schema.sql` has gained a table, apply it
-first; every statement in it is `IF NOT EXISTS`:
-
-```sh
-npx wrangler d1 execute beam --remote --file schema.sql
-```
-
-The D1 database `beam` (`7e0d3382-8f3d-45a9-bf67-b341360650da`, WEUR) and the worker
+Later deploys re-run the `schema.sql` step above, whose statements are all `IF NOT
+EXISTS`, then `npx wrangler deploy`. The D1 database `beam` (`7e0d3382-8f3d-45a9-bf67-b341360650da`, WEUR) and the worker
 `beam` with its `beam.n10.is` custom domain were created this way on 2026-09-23.

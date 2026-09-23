@@ -3,10 +3,9 @@ package ceremony
 import (
 	"context"
 	"crypto/hpke"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -21,12 +20,6 @@ const info = "beam-ceremony:v1"
 var retry = 2 * time.Second
 
 var slotClient = &http.Client{Timeout: 40 * time.Second}
-
-// slotOf is the slot readKey reads: SHA-256(readKey)[0:16].
-func slotOf(readKey []byte) string {
-	h := sha256.Sum256(readKey)
-	return b64(h[:16])
-}
 
 // suite is the HPKE suite the page seals with: DHKEM(X25519, HKDF-SHA256),
 // HKDF-SHA256, AES-128-GCM.
@@ -69,8 +62,6 @@ func readSlot(ctx context.Context, worker, slot string, readKey []byte) ([]byte,
 	}
 }
 
-var errWorker = errors.New("the worker did not answer the slot read")
-
 // readOnce is one read of the slot: its sealed result, nil for none yet, or
 // the worker's failure.
 func readOnce(ctx context.Context, worker, slot string, readKey []byte) ([]byte, error) {
@@ -89,7 +80,7 @@ func readOnce(ctx context.Context, worker, slot string, readKey []byte) ([]byte,
 	case http.StatusNoContent:
 		return nil, nil
 	default:
-		return nil, errWorker
+		return nil, fmt.Errorf("slot read: %s", resp.Status)
 	}
 	var got struct {
 		Sealed string `json:"sealed"`

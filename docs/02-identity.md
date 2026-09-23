@@ -169,7 +169,7 @@ and builds a URL whose fragment is kept short, since it is drawn as a QR code
 | `s` | `slot` |
 | `k` | `pk`, unpadded base64url |
 | `c` | the challenge, unpadded base64url |
-| `l` | the label of the machine added or removed |
+| `l` | the label of the machine the tap is for |
 | `f` | its fingerprint, the first 16 hex characters of its `peerId`, without spaces |
 | `n` | the fleet name, for `o=c` only |
 
@@ -184,8 +184,8 @@ The page:
    buildbox to your fleet", "Remove oldlaptop from your fleet"), the label, the
    fingerprint in groups of four as `beam status` prints it, "Continue only if you
    started this just now", and a button. A fragment without a known `o`, `s`, `k` and
-   `c` gets "This link is incomplete" and no button. It imports `key` first; a browser whose Web
-   Crypto has no X25519 is told so and gets no button.
+   `c` gets "This link is incomplete" and no button. It imports `k` first; a browser
+   whose Web Crypto has no X25519 is told so and gets no button.
 2. On click, calls `navigator.credentials.create({ publicKey: { rp: { id: "beam.n10.is", name: "beam" }, user: { id, name: fleetName, displayName: fleetName }, challenge, pubKeyCredParams: [ES256, Ed25519], authenticatorSelection: { residentKey: "required", userVerification: "required" }, extensions: { prf: {} } } })` or
    `navigator.credentials.get({ publicKey: { rpId: "beam.n10.is", challenge, userVerification: "required", extensions: { prf: { eval: { first: salt } } } } })`.
    After `create` it checks `getClientExtensionResults().prf?.enabled === true` and

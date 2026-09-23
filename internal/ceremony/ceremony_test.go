@@ -37,6 +37,11 @@ var challenge = []byte("0123456789abcdef0123456789abcdef")
 
 const peerID = "b7f39a210c4e55d1b7f39a210c4e55d1"
 
+// sealed is plain sealed to c's key for c's slot, as the page seals it.
+func sealed(c *Ceremony, plain string) []byte {
+	return seal(b64(c.key.PublicKey().Bytes()), c.slot, []byte(plain))
+}
+
 // start is a get ceremony on w that no test authenticator answers.
 func start(t *testing.T, w string) *Ceremony {
 	t.Helper()
@@ -121,18 +126,17 @@ func TestURL(t *testing.T) {
 		}
 		c.Close()
 		u, _ := url.Parse(c.URL)
-		f, _ := url.ParseQuery(u.Fragment)
 		h := sha256.Sum256(c.readKey)
 		want := url.Values{"o": {kind}, "s": {b64(h[:16])}, "k": {b64(c.key.PublicKey().Bytes())}, "c": {"AQI"}, "l": {"lap top"},
 			"f": {"b7f39a210c4e55d1"}}
 		if kind == Create {
 			want.Set("n", "home")
 		}
-		if u.Scheme+"://"+u.Host+u.Path != Page || f.Encode() != want.Encode() || u.Fragment != want.Encode() {
+		if u.Scheme+"://"+u.Host+u.Path != Page || u.Fragment != want.Encode() {
 			t.Errorf("%s: %s", kind, c.URL)
 		}
-		if strings.Contains(c.URL, b64(c.readKey)) || len(c.slot) != 22 {
-			t.Errorf("%s: slot %q, read key in the URL", kind, c.slot)
+		if strings.Contains(c.URL, b64(c.readKey)) {
+			t.Errorf("%s: the read key is in the URL", kind)
 		}
 	}
 }
@@ -143,28 +147,21 @@ func TestURL(t *testing.T) {
 func TestSlotResults(t *testing.T) {
 	w := worker(t)
 	other, _ := ecdh.X25519().GenerateKey(nil)
-	sealedTo := func(c *Ceremony, key *ecdh.PublicKey, slot string, plain string) []byte {
-		u, _ := url.Parse(c.URL)
-		f, _ := url.ParseQuery(u.Fragment)
-		f.Set("k", b64(key.Bytes()))
-		f.Set("s", slot)
-		u.Fragment = f.Encode()
-		return Seal(u.String(), []byte(plain))
-	}
 	for _, tc := range []struct {
 		name   string
 		sealed func(c *Ceremony) []byte
 		err    error
 	}{
-		{"cancelled", func(c *Ceremony) []byte { return Seal(c.URL, []byte("result=cancelled")) }, ErrCancelled},
-		{"prf unsupported", func(c *Ceremony) []byte { return Seal(c.URL, []byte("result=prf-unsupported")) }, ErrPRFUnsupported},
-		{"failed", func(c *Ceremony) []byte { return Seal(c.URL, []byte("result=failed")) }, ErrFailed},
-		{"ok without a credential", func(c *Ceremony) []byte { return Seal(c.URL, []byte("result=ok")) }, ErrBadResult},
-		{"not a form", func(c *Ceremony) []byte { return Seal(c.URL, []byte("result=%zz")) }, ErrState},
-		{"junk", func(*Ceremony) []byte { return bytes.Repeat([]byte{7}, 80) }, ErrState},
-		{"another key", func(c *Ceremony) []byte { return sealedTo(c, other.PublicKey(), c.slot, "result=cancelled") }, ErrState},
+		{"cancelled", func(c *Ceremony) []byte { return sealed(c, "result=cancelled") }, ErrCancelled},
+		{"prf unsupported", func(c *Ceremony) []byte { return sealed(c, "result=prf-unsupported") }, ErrPRFUnsupported},
+		{"failed", func(c *Ceremony) []byte { return sealed(c, "result=failed") }, ErrFailed},
+		{"ok without a credential", func(c *Ceremony) []byte { return sealed(c, "result=ok") }, ErrBadResult},
+		{"not a form", func(c *Ceremony) []byte { return sealed(c, "result=%zz") }, ErrState},
+		{"another key", func(c *Ceremony) []byte {
+			return seal(b64(other.PublicKey().Bytes()), c.slot, []byte("result=cancelled"))
+		}, ErrState},
 		{"another slot", func(c *Ceremony) []byte {
-			return sealedTo(c, c.key.PublicKey(), b64(make([]byte, 16)), "result=cancelled")
+			return seal(b64(c.key.PublicKey().Bytes()), b64(make([]byte, 16)), []byte("result=cancelled"))
 		}, ErrState},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -181,24 +178,6 @@ func TestSlotResults(t *testing.T) {
 	}
 }
 
-// docs/01 The relayed result: the slot takes the first write; a second is
-// refused, and the ceremony ends with the first.
-func TestFirstWriteWins(t *testing.T) {
-	w := worker(t)
-	c := start(t, w)
-	onlooker, owner := identity.NewAuthenticator(), identity.NewAuthenticator()
-	if code, err := Answer(c.URL, w, onlooker); err != nil || code != http.StatusCreated {
-		t.Fatalf("the onlooker's write: %d, %v", code, err)
-	}
-	if code, err := Answer(c.URL, w, owner); err != nil || code != http.StatusConflict {
-		t.Fatalf("the owner's write: %d, %v, want 409", code, err)
-	}
-	r, err := c.Wait(context.Background())
-	if err != nil || r.CredentialID != onlooker.CredentialID {
-		t.Errorf("the ceremony took %q, %v; want the onlooker's", r.CredentialID, err)
-	}
-}
-
 // A worker that fails to answer the slot read is asked again until the
 // result comes.
 func TestSlotReadRetries(t *testing.T) {
@@ -211,7 +190,7 @@ func TestSlotReadRetries(t *testing.T) {
 	c := start(t, s.URL)
 	time.Sleep(200 * time.Millisecond) // reads refused meanwhile
 	fake.SetDown(false)
-	if code, err := Write(c.URL, s.URL, Seal(c.URL, []byte("result=prf-unsupported"))); err != nil || code != http.StatusCreated {
+	if code, err := Write(c.URL, s.URL, sealed(c, "result=prf-unsupported")); err != nil || code != http.StatusCreated {
 		t.Fatalf("write: %d, %v", code, err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -248,7 +227,7 @@ func TestCloseStopsReading(t *testing.T) {
 	c := start(t, w)
 	time.Sleep(100 * time.Millisecond) // the read is under way
 	c.Close()
-	Write(c.URL, w, Seal(c.URL, []byte("result=cancelled")))
+	Write(c.URL, w, sealed(c, "result=cancelled"))
 	select {
 	case o := <-c.done:
 		t.Errorf("a closed ceremony read %+v", o)

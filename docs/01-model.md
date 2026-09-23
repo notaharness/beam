@@ -33,8 +33,9 @@ would be the same over any transport.
 3. **No server in the trust path.** The one hosted component stores ciphertext it cannot
    read containing statements it cannot forge, and verifies passkey assertions on writes
    so only a tap can append. It carries each ceremony's result back to the machine
-   sealed to a key it never sees. It is read at join and at daemon start, written at init,
-   join and revoke, and never polled or consulted per connection. Its code is open.
+   sealed to a key it never sees. It is read at join and at daemon start, written at
+   init, join and revoke, and never polled or consulted per connection. Its code is
+   open.
 4. **Verify on contact, pin forever.** A machine proves membership the first time it
    connects to another by presenting its signed entry and proving possession of the key
    the entry names. The receiver checks once and stores the result.
@@ -107,11 +108,12 @@ The page returns a ceremony's result through a slot on the worker, sealed with H
 a key the daemon made for that ceremony and put in the URL's fragment
 ([02](02-identity.md), Ceremonies). That is what lets a phone that scanned the terminal
 answer for a machine it cannot reach. The worker holds only ciphertext and never sees
-the key, so it cannot read a result, forge one or move one to another ceremony. What
-the relay changes is who can answer: **the URL is a capability to answer the ceremony**,
-and it now works from any device that has it, not only from a browser on the machine.
-Seeing it is enough; it names the slot and the key, and HPKE's base mode does not
-authenticate the sender.
+the key, so it cannot read a result, forge one or move one to another ceremony. **The
+URL is a capability to answer the ceremony**, from any device that has it: it names the
+slot and the key, and HPKE's base mode does not authenticate the sender. So an answer
+proves that someone saw the URL, not that they are at the machine; a callback to the
+machine's loopback would prove that, and D45 ([11](11-decisions.md)) records why beam
+has one path instead.
 
 **An onlooker who answers first.** Someone who sees the QR code while it is on the
 screen (over a shoulder, on a screen share, in a photo) can run the same page with a
@@ -126,6 +128,8 @@ write, so exactly one of them lands, and the machine gets it.
   root; at a fresh `join` it joins their fleet on the real worker (anyone can register
   one). Either way their root can then admit machines of theirs, which get a shell on
   this one under the default grant.
+- Where the machine has a browser, the URL opens there at once, and the owner's tap
+  there usually comes before an onlooker can scan the code and approve on a phone.
 
 The owner learns of it from their own page: their write is refused, and the page says
 the ceremony was answered from another device and that the machine must be reset
@@ -133,8 +137,8 @@ the ceremony was answered from another device and that the machine must be reset
 minutes, so no write within the ceremony can be told it landed when it did not. The
 fleet fingerprint check catches the same thing later. Nothing prevents it: binding the
 answer to the machine needs a secret the onlooker cannot see, such as a code shown on
-the phone and typed into the terminal, and beam leaves that out for now. Show the QR
-code where only you can see it.
+the phone and typed into the terminal, and beam leaves that out. Show the QR code
+where only you can see it.
 
 **A URL the owner did not start.** A ceremony URL or QR code someone else made (sent
 as "scan this to finish setting up", or put in place of the real one) carries their key
@@ -149,21 +153,6 @@ hostile page's exposure from "The ceremony as the trusted moment", with the page
 honest: one statement per tap, which the page displays, and permanent directory read.
 The defence is the owner's: approve only a ceremony you started just now, whose action,
 machine and fingerprint match what the terminal shows. The page says so.
-
-**Loopback proved presence; the relay does not.** A result delivered to
-`127.0.0.1` could only come from a browser that reaches the machine's loopback, which
-proved the approver was at the machine or had forwarded its port, and made both attacks
-above impossible. beam keeps one path, the relay, for every ceremony, the local browser
-included:
-
-- The exposure to a URL the owner did not start comes from the page being able to
-  return a result through a slot at all. A loopback path kept beside it for machines
-  with a browser would not remove that; it would only keep a second path.
-- What loopback would still buy on a desktop is protection from an onlooker at first
-  enrolment, where the URL opens in the local browser at once: the QR code is drawn
-  there too, but the owner's tap in the browser that just opened usually comes before an
-  onlooker can scan and approve on a phone, and the owner's page says so when it does not.
-- A headless machine, which is where this is for, gets the relay either way.
 
 ### Blast radius
 
