@@ -44,11 +44,12 @@ CGO_ENABLED=0 go build -trimpath -buildvcs=false -tags "$(cat build-tags.txt)" \
   -ldflags "-s -w -X main.version=$VERSION" -o dist/beam-$GOOS-$GOARCH ./cmd/beam
 ```
 
-`make dist` runs this for each target. `build-tags.txt` is copied from tailcat: one
-comma-separated line; tests and lint use the same tags. SQLite via `modernc.org/sqlite`
-(pure Go). Targets in the first release: `darwin/arm64`, `darwin/amd64`, `linux/amd64`,
-`linux/arm64`. Windows follows when a Windows runner exists. 21.2–22.5 MB per binary
-stripped ([03](03-transport.md), Footprint).
+`make dist` runs this for each target, and again with `beamtest` added to the tags into
+`dist/beamtest-$GOOS-$GOARCH`, the test kit ([10](10-testing.md)). `build-tags.txt` is
+copied from tailcat: one comma-separated line; tests and lint use the same tags. SQLite
+via `modernc.org/sqlite` (pure Go). Targets in the first release: `darwin/arm64`,
+`darwin/amd64`, `linux/amd64`, `linux/arm64`. Windows follows when a Windows runner
+exists. 21.2–22.5 MB per binary stripped ([03](03-transport.md), Footprint).
 
 ## Versioning
 
@@ -183,8 +184,10 @@ runs the npm packages' node tests.
 Tag (`.github/workflows/release.yml`, on `v*`), two jobs. `release`: `npm/version.mjs`
 reads the tag, and the job stops at one that is not canonical. Then `make dist`,
 `npm/pack.mjs`, and a check that `npm publish --dry-run` would publish every package at
-the version the binary prints; only then a GitHub release with the four binaries, marked
-a prerelease for a prerelease tag. `publish`, its own job so that it can be re-run alone:
+the version the binary prints; only then a GitHub release with the four binaries, the
+four `beamtest-*` binaries of the test kit and `SHA256SUMS` over all eight, marked a
+prerelease for a prerelease tag. The test kit goes to the GitHub release alone, never to
+npm. `publish`, its own job so that it can be re-run alone:
 packs the same binaries, handed over as a workflow artifact, and publishes the platform
 packages and last the shim, with provenance, under `next` for a prerelease. It
 authenticates through npm's trusted publishing (OIDC: `id-token: write`, npm 11.5.1 or

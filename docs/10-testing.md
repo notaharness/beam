@@ -40,8 +40,9 @@ timeout before it connects ([03](03-transport.md), Footprint).
 
 ## Test authenticator
 
-Build tag `beamtest`. With `BEAM_TEST_AUTHENTICATOR=<json: credentialId, ES256 private
-key, prf secret>` set, ceremony ops skip the browser: they produce a WebAuthn-shaped
+Build tag `beamtest`. With `BEAM_TEST_AUTHENTICATOR` set to `{"credentialId": unpadded
+base64url, "privateKey": a PKCS #8 DER P-256 key, "prfSecret": bytes}`, the last two in
+standard base64 with padding, ceremony ops skip the browser: they produce a WebAuthn-shaped
 assertion (correct `clientDataJSON` for origin `https://beam.n10.is`, `authenticatorData`
 with `rpIdHash` and UV) and a PRF value computed the way the spec defines it, seal the
 result to the ceremony's key as the page does, and write it to the ceremony's slot on the
@@ -104,15 +105,34 @@ bare member node (transport only) stands in for a daemon:
 | grants | `msg` refuses `pty` on a live tunnel; `none` still syncs |
 | mailbox | stored/delivered/rejected; crash between store and ack → duplicate suppressed; subscriber defer/ack; `send` while connected flushes immediately |
 | junk in the log | valid assertion, unrelated blob → ignored |
+| test kit | `beam testkit --exit-with-parent` prints its JSON line; a daemon on it inits, a second joins, and the two connect, through the test authenticator; the kit exits 0 at once when its stdin ends, a slot read still waiting; with a stdin that is no pipe it is a usage error |
 | daemon lock | second daemon exits 1; connect-or-spawn loser connects to winner |
 | shutdown ends sessions | an enrolled daemon in a process of its own (`beam daemon --directory`, a beamtest-only flag naming the fake worker) serves a pty and an exec whose processes ignore SIGHUP; after SIGTERM, both are dead when the daemon has exited |
 | inherited descriptors | a daemon started with an extra descriptor open does not pass it to a pty it serves |
 | exit with parent | a parent process spawns `beam daemon --exit-with-parent` with a stdin pipe and is killed with SIGKILL: the daemon exits; a terminal, `/dev/null` or `--detach` with the flag is a usage error |
 | reset | tunnels closed, fleet state gone, key kept, re-join works |
 
+## Test kit
+
+A beamtest build is also the kit other projects test against:
+
+- `beam testkit [--exit-with-parent]` starts the dev DERP relay and the fake worker on
+  loopback and, once both listen, prints one line of JSON to stdout:
+  `{"derpMap": URL, "directory": URL}`. It runs until SIGTERM or SIGINT, or with
+  `--exit-with-parent` until its stdin ends, as `beam daemon`'s does
+  ([07](07-cli.md)). The fake worker keeps its state in memory, so it ends with the kit.
+- `beam daemon --derp-map <derpMap> --directory <directory>` runs a daemon on them.
+  Without both flags a beamtest daemon uses `beam.n10.is` and Tailscale's DERP servers,
+  like any other.
+- `BEAM_TEST_AUTHENTICATOR` (Test authenticator) answers a daemon's ceremonies; daemons
+  given the same value share one passkey.
+
+The kit's binaries are fixtures: a software passkey and a worker that stores anything are
+no protection for a real fleet.
+
 ## n10 e2e
 
-`desktop-e2e` runs a real second daemon with a seeded `$BEAM_DIR`, dev DERP and fake
+`desktop-e2e` runs on the test kit: a real second daemon with a seeded `$BEAM_DIR`, dev DERP and fake
 worker; the app spawns its own daemon through the helper. Screenshots stay stable because
 the seeded keys never change.
 

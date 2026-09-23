@@ -31,8 +31,7 @@ func runDaemon(e *env) int {
 		return e.fail(errUsage)
 	}
 	if *withParent && (*detach || !lifeline(e.stdin)) {
-		fmt.Fprintln(e.stderr, "--exit-with-parent needs stdin to be a pipe or socket from the parent, and no --detach")
-		return e.fail(errUsage)
+		return e.noLifeline()
 	}
 	closeOnExec()
 	p, err := e.paths()
@@ -74,6 +73,13 @@ func untilParentExits(ctx context.Context, stdin io.Reader) context.Context {
 		cancel(errParentExited)
 	}()
 	return ctx
+}
+
+// noLifeline is the usage error of --exit-with-parent without a stdin the
+// parent holds, or with --detach.
+func (e *env) noLifeline() int {
+	fmt.Fprintln(e.stderr, "--exit-with-parent needs stdin to be a pipe or socket from the parent, and no --detach")
+	return e.fail(errUsage)
 }
 
 // lifeline reports whether stdin is a pipe or socket, whose end the parent
