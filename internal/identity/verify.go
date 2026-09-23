@@ -53,7 +53,7 @@ func (c Credential) Verify(r Record, revoked func(peerID string) bool) error {
 	if !sameID(r.Assertion.CredentialID, c.ID) {
 		return WrongPasskey
 	}
-	if c.verifyAssertion(r.Assertion, r.Challenge()) != nil {
+	if c.VerifyAssertion(r.Assertion, r.Challenge()) != nil {
 		return BadAssertion
 	}
 	if r.Kind == Member && revoked(r.PeerID) {
@@ -100,9 +100,9 @@ func sameID(a, b string) bool {
 	return err1 == nil && err2 == nil && len(x) > 0 && bytes.Equal(x, y)
 }
 
-// verifyAssertion checks a get assertion for this relying party with user
-// verification, ignoring the sign count.
-func (c Credential) verifyAssertion(a *Assertion, challenge []byte) error {
+// VerifyAssertion checks a get assertion over challenge for this relying
+// party with user verification, ignoring the sign count.
+func (c Credential) VerifyAssertion(a *Assertion, challenge []byte) error {
 	raw := func(s string) []byte {
 		b, _ := base64.RawURLEncoding.DecodeString(s)
 		return b

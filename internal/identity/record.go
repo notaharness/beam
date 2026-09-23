@@ -78,8 +78,13 @@ func (r Record) StatementHash() [32]byte {
 // SHA-256(domain ‖ statementHash), which the directory worker can recompute
 // without the plaintext.
 func (r Record) Challenge() []byte {
-	h := r.StatementHash()
-	c := sha256.Sum256(append([]byte("beam-"+r.Kind+":v1"), h[:]...))
+	return Challenge(r.Kind, r.StatementHash())
+}
+
+// Challenge is the WebAuthn challenge for a statement of kind with
+// statementHash.
+func Challenge(kind string, statementHash [32]byte) []byte {
+	c := sha256.Sum256(append([]byte("beam-"+kind+":v1"), statementHash[:]...))
 	return c[:]
 }
 
