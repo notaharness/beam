@@ -6,8 +6,10 @@ package control
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 
 	"github.com/notaharness/beam/internal/identity"
 	"github.com/notaharness/beam/internal/transport"
@@ -19,9 +21,13 @@ type Paths struct {
 	Socket string
 }
 
+// maxSocket is the longest socket path a Unix socket address holds here: 107
+// bytes on Linux, 103 on macOS.
+var maxSocket = len(syscall.RawSockaddrUnix{}.Path) - 1
+
 // ResolvePaths applies docs/02 and docs/06: $BEAM_CONFIG_DIR, else
 // $XDG_CONFIG_HOME/beam, else ~/.config/beam; the socket is $BEAM_SOCKET, else
-// run/beam.sock in that directory.
+// run/beam.sock in that directory, and no longer than a socket address holds.
 func ResolvePaths(getenv func(string) string) (Paths, error) {
 	dir := getenv("BEAM_CONFIG_DIR")
 	switch {
@@ -36,6 +42,9 @@ func ResolvePaths(getenv func(string) string) (Paths, error) {
 	sock := getenv("BEAM_SOCKET")
 	if sock == "" {
 		sock = filepath.Join(dir, "run", "beam.sock")
+	}
+	if len(sock) > maxSocket {
+		return Paths{}, fmt.Errorf("socket path too long (%d bytes, at most %d): %s; set BEAM_SOCKET to a shorter one", len(sock), maxSocket, sock)
 	}
 	return Paths{Dir: dir, Socket: sock}, nil
 }

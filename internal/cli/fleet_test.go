@@ -490,6 +490,15 @@ func TestOpWhileStarting(t *testing.T) {
 	}
 }
 
+// docs/06: a socket path longer than a Unix socket's address holds is refused
+// by name, with the variable that shortens it.
+func TestLongSocketPath(t *testing.T) {
+	m := &machine{dir: filepath.Join(beamDir(t), strings.Repeat("d", 100))}
+	if r := m.beam("", "status"); r.code != 1 || !strings.Contains(r.err, "socket path too long") || !strings.Contains(r.err, "BEAM_SOCKET") {
+		t.Errorf("status: %+v", r)
+	}
+}
+
 // docs/10 "daemon lock": connect-or-spawn with no daemon starts one; racing
 // spawns leave one daemon and every client connected to it.
 func TestConnectOrSpawn(t *testing.T) {

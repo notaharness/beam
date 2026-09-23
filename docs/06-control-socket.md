@@ -3,7 +3,9 @@
 The daemon's one local interface: `$BEAM_DIR/run/beam.sock`, mode `0600`. (The tunnel
 port and the transient ceremony loopback listener are the other two things it listens
 on.) Override with `BEAM_SOCKET`, which is also what the daemon injects into remote
-processes; `BEAM_CONFIG_DIR` selects the directory and therefore the default path.
+processes; `BEAM_CONFIG_DIR` selects the directory and therefore the default path. A
+path longer than a Unix socket address holds (107 bytes on Linux, 103 on macOS) is
+refused before anything else, naming `BEAM_SOCKET`.
 
 ## Lifecycle
 
