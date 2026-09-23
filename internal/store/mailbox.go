@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS quarantine (
 );
 UPDATE inbound SET inflight_to = NULL, deferred_to = NULL;`
 
-// Queue bounds, per peer and direction (docs/05).
+// Queue bounds, per peer and direction (docs/05); outbound counts what the
+// recipient refused for good.
 const (
 	MaxQueued      = 10000
 	MaxQueuedBytes = 64 << 20
@@ -81,7 +82,8 @@ func (s *Store) Enqueue(peer string, now int64, build func(seq int64) ([]byte, e
 		return 0, err
 	}
 	var n, size int64
-	if err := tx.QueryRow(`SELECT count(*), coalesce(sum(length(envelope)), 0) FROM outbound WHERE peer = ?`, peer).Scan(&n, &size); err != nil {
+	if err := tx.QueryRow(`SELECT count(*), coalesce(sum(length(envelope)), 0) FROM
+		(SELECT envelope FROM outbound WHERE peer = ? UNION ALL SELECT envelope FROM quarantine WHERE peer = ?)`, peer, peer).Scan(&n, &size); err != nil {
 		return 0, err
 	}
 	if n >= MaxQueued || size+int64(len(env)) > MaxQueuedBytes {
@@ -90,29 +92,21 @@ func (s *Store) Enqueue(peer string, now int64, build func(seq int64) ([]byte, e
 	if _, err := tx.Exec(`INSERT INTO outbound (peer, seq, envelope, created_at) VALUES (?, ?, ?, ?)`, peer, seq, env, now); err != nil {
 		return 0, err
 	}
-	if _, err := tx.Exec(`INSERT INTO send_seq (peer, next_seq) VALUES (?, ?)
-		ON CONFLICT (peer) DO UPDATE SET next_seq = excluded.next_seq`, peer, seq+1); err != nil {
+	if _, err := tx.Exec(`UPDATE send_seq SET next_seq = ? WHERE peer = ?`, seq+1, peer); err != nil {
 		return 0, err
 	}
 	return seq, tx.Commit()
 }
 
-// nextSeq reads send_seq. A peer without a row starts at 1 unless it has
-// history, which would mean the counter was lost.
+// nextSeq reads send_seq, which Pin creates with the peer's row: a peer
+// without one lost its counter.
 func nextSeq(tx *sql.Tx, peer string) (int64, error) {
 	var seq int64
 	err := tx.QueryRow(`SELECT next_seq FROM send_seq WHERE peer = ?`, peer).Scan(&seq)
-	if !errors.Is(err, sql.ErrNoRows) {
-		return seq, err
-	}
-	var history int
-	if err := tx.QueryRow(`SELECT (SELECT count(*) FROM outbound WHERE peer = ?) + (SELECT count(*) FROM quarantine WHERE peer = ?)`, peer, peer).Scan(&history); err != nil {
-		return 0, err
-	}
-	if history > 0 {
+	if errors.Is(err, sql.ErrNoRows) {
 		return 0, ErrNoSendSeq
 	}
-	return 1, nil
+	return seq, err
 }
 
 // Head is the oldest outbound envelope for peer.

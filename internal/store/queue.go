@@ -23,6 +23,10 @@ var queueQueries = map[string]string{
 	QuarantineList: `SELECT rowid, envelope, reason FROM quarantine WHERE (? = '' OR peer = ?)`,
 }
 
+// MaxPage bounds a page's items, serialized, so that a msg.queue reply fits
+// a control line with room for the reply around them.
+const MaxPage = 1<<20 - 4<<10
+
 // QueueItem is one listed envelope.
 type QueueItem struct {
 	Envelope json.RawMessage `json:"envelope"`
@@ -30,7 +34,9 @@ type QueueItem struct {
 }
 
 // Queue returns up to limit envelopes of list which for peer ("" for every
-// peer) after cursor, and the cursor that continues it (0 at the end).
+// peer) after cursor, and the cursor that continues it (0 at the end). A
+// page holds at least one item and stops before one that would take it past
+// MaxPage.
 func (s *Store) Queue(which, peer string, cursor int64, limit int) ([]QueueItem, int64, error) {
 	q, ok := queueQueries[which]
 	if !ok {
@@ -43,17 +49,20 @@ func (s *Store) Queue(which, peer string, cursor int64, limit int) ([]QueueItem,
 	defer rows.Close()
 	var items []QueueItem
 	var last int64
+	size := 1 // [ ]
 	for rows.Next() {
-		if len(items) == limit {
-			return items, last, rows.Err()
-		}
 		var it QueueItem
+		var id int64
 		var env string
-		if err := rows.Scan(&last, &env, &it.Reason); err != nil {
+		if err := rows.Scan(&id, &env, &it.Reason); err != nil {
 			return nil, 0, err
 		}
 		it.Envelope = json.RawMessage(env)
-		items = append(items, it)
+		b, _ := json.Marshal(it)
+		if len(items) == limit || len(items) > 0 && size+len(b)+1 > MaxPage {
+			return items, last, rows.Err()
+		}
+		items, last, size = append(items, it), id, size+len(b)+1
 	}
 	return items, 0, rows.Err()
 }

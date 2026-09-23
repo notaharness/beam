@@ -91,6 +91,9 @@ func (s *Store) Pin(e identity.Record, now int64) (bool, error) {
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		_, err = tx.Exec(`INSERT INTO peers (peer_id, entry, pinned_at) VALUES (?, ?, ?)`, e.PeerID, b, now)
+		if err == nil { // the peer's send counter starts with it (docs/05)
+			_, err = tx.Exec(`INSERT INTO send_seq (peer, next_seq) VALUES (?, 1) ON CONFLICT (peer) DO NOTHING`, e.PeerID)
+		}
 	case err != nil:
 		return false, err
 	default:

@@ -8,11 +8,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/notaharness/beam/internal/identity"
 	"github.com/notaharness/beam/internal/store"
 	"github.com/notaharness/beam/internal/stream"
 )
 
 const peerA, peerB = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+// knownB is B's entry as A pinned it: A can send to B.
+var knownB = identity.Record{V: 1, Kind: identity.Member, PeerID: peerB, Label: "b"}
 
 // docs/05 Delivery: a head whose ack does not come within 2 s is sent again,
 // and leaves the queue once acked.
@@ -22,6 +26,9 @@ func TestFlushResendsUnackedHead(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
+	if _, err := st.Pin(knownB, 1); err != nil {
+		t.Fatal(err)
+	}
 	e, _ := New(peerA, peerB, "", "again", UTF8, 1)
 	if _, err := st.Enqueue(peerB, 1, func(seq int64) ([]byte, error) { e.Seq = seq; b, _ := e.Marshal(); return b, nil }); err != nil {
 		t.Fatal(err)
@@ -58,3 +65,4 @@ func TestFlushResendsUnackedHead(t *testing.T) {
 		t.Fatal("the acked head was not settled")
 	}
 }
+

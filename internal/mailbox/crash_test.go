@@ -68,10 +68,15 @@ type subscriber struct {
 	inflight string // the envelope id it holds
 }
 
-// open starts db's machine, again if it crashes while starting.
+// open starts db's machine, again if it crashes while starting. A knows B.
 func (w *world) open(db string) *store.Store {
 	for {
 		st, err := store.Open(filepath.Join(w.dir, db))
+		if err == nil && db == dbA {
+			if _, err = st.Pin(knownB, 1); err != nil {
+				st.Close()
+			}
+		}
 		switch {
 		case err == nil:
 			return st
