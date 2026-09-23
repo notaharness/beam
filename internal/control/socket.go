@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/notaharness/beam/internal/mailbox"
 	"github.com/notaharness/beam/internal/stream"
@@ -13,6 +14,9 @@ import (
 
 // maxControlLine bounds one control request or reply (docs/06).
 const maxControlLine = 1 << 20
+
+// sendTimeout is how long a line may wait for its client to read it.
+const sendTimeout = 10 * time.Second
 
 // request is a control request; each op reads the fields it needs.
 type request struct {
@@ -73,15 +77,26 @@ type clientConn struct {
 	mu sync.Mutex
 	c  net.Conn
 
-	subMu sync.Mutex
-	sub   *mailbox.Sub // its msg.subscribe
+	subMu  sync.Mutex
+	sub    *mailbox.Sub // its msg.subscribe
+	closed bool         // the connection is gone: no subscription follows
 }
 
-func (cc *clientConn) send(v any) {
-	b, _ := json.Marshal(v)
+// send writes one line. A client that leaves it unread for sendTimeout is
+// disconnected, which ends its read loop and releases what it held.
+func (cc *clientConn) send(v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
 	cc.mu.Lock()
 	defer cc.mu.Unlock()
-	_, _ = cc.c.Write(append(b, '\n')) // a gone client ends its read loop
+	cc.c.SetWriteDeadline(time.Now().Add(sendTimeout))
+	if _, err := cc.c.Write(append(b, '\n')); err != nil {
+		cc.c.Close()
+		return err
+	}
+	return nil
 }
 
 func (d *daemon) serveSocket(ln net.Listener) {
@@ -117,7 +132,7 @@ func (d *daemon) serveConn(c net.Conn) {
 		}
 		var req request
 		if err := json.Unmarshal(line, &req); err != nil {
-			cc.send(response{Error: "params", Detail: "not a JSON request"})
+			_ = cc.send(response{Error: "params", Detail: "not a JSON request"}) // a failed send closes the connection
 			continue
 		}
 		if first && req.Attach != "" {
@@ -138,7 +153,7 @@ func (d *daemon) dispatch(cc *clientConn, req request) {
 	case err != nil:
 		resp.Error, resp.Detail = "internal", err.Error()
 	}
-	cc.send(resp)
+	_ = cc.send(resp) // a failed send closes the connection
 	if req.Op == "daemon.shutdown" && err == nil {
 		d.stop()
 	}
@@ -164,7 +179,7 @@ func (d *daemon) emit(name string, data any) {
 	}
 	d.mu.Unlock()
 	for _, cc := range subs {
-		cc.send(event{name, data})
+		_ = cc.send(event{name, data}) // a failed send closes the connection
 	}
 }
 

@@ -14,7 +14,8 @@ var ErrNotInFlight = errors.New("no such envelope in flight to this subscriber")
 
 // Subscribers hands inbound mail to subscribed connections, one envelope in
 // flight to each at a time (docs/05). Mail no subscriber matches stays in
-// inbound.
+// inbound. Deliveries happen outside the lock, so a subscriber that does not
+// take its envelope holds up no one else.
 type Subscribers struct {
 	st *store.Store
 
@@ -28,7 +29,7 @@ type Sub struct {
 	id       int64
 	topic    *string
 	from     []string
-	deliver  func(json.RawMessage)
+	deliver  func(json.RawMessage) error
 	inflight bool
 }
 
@@ -38,9 +39,10 @@ func NewSubscribers(st *store.Store) *Subscribers {
 }
 
 // Subscribe starts a subscription for mail on topic (any when nil) from the
-// peers in from (any when empty), handed to deliver. A new subscription is
-// offered again what an earlier one deferred.
-func (h *Subscribers) Subscribe(topic *string, from []string, deliver func(json.RawMessage)) *Sub {
+// peers in from (any when empty), handed to deliver; a delivery that fails
+// ends the subscription. A new subscription is offered again what an earlier
+// one deferred.
+func (h *Subscribers) Subscribe(topic *string, from []string, deliver func(json.RawMessage) error) *Sub {
 	h.mu.Lock()
 	h.last++
 	s := &Sub{id: h.last, topic: topic, from: from, deliver: deliver}
@@ -56,8 +58,9 @@ func (h *Subscribers) Ack(s *Sub, id string) error {
 }
 
 // Defer releases the envelope id s holds without acking it, recording why.
+// It is offered again only to subscriptions made after this one.
 func (h *Subscribers) Defer(s *Sub, id, reason string) error {
-	return h.settle(s, func() (bool, error) { return h.st.DeferInbound(s.id, id, reason) })
+	return h.settle(s, func() (bool, error) { return h.st.DeferInbound(s.id, id, reason, h.last) })
 }
 
 func (h *Subscribers) settle(s *Sub, f func() (bool, error)) error {
@@ -99,7 +102,14 @@ func (h *Subscribers) Offer() {
 		env, ok, err := h.st.Take(s.id, s.topic, s.from)
 		if err == nil && ok {
 			s.inflight = true
-			s.deliver(env)
+			go h.hand(s, env) // one at a time per subscription
 		}
+	}
+}
+
+// hand delivers env to s. A delivery that fails ends s, releasing env.
+func (h *Subscribers) hand(s *Sub, env json.RawMessage) {
+	if s.deliver(env) != nil {
+		_ = h.Close(s) // what it held is released at the next start if this fails
 	}
 }

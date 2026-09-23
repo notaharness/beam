@@ -8,7 +8,8 @@ import (
 
 // The mailbox tables (docs/05). inbound adds to the listed columns the
 // envelope's id and topic, which msg.ack and subscribe filters select on, and
-// who deferred it and why, for redelivery and the refused list.
+// for a deferred envelope why, and the newest subscription when it was
+// (deferred_to): only later ones are offered it.
 const mailboxSchema = `
 CREATE TABLE IF NOT EXISTS outbound (
 	peer       TEXT NOT NULL,
@@ -178,11 +179,11 @@ func (s *Store) Receive(peer string, seq int64, id, topic string, env []byte, no
 }
 
 // Take hands subscriber sub the oldest inbound envelope that matches topic
-// (when set) and one of from (when any), is in flight to no one and was not
-// deferred by sub.
+// (when set) and one of from (when any), is in flight to no one, and was not
+// deferred while sub existed.
 func (s *Store) Take(sub int64, topic *string, from []string) ([]byte, bool, error) {
 	q := `UPDATE inbound SET inflight_to = ? WHERE rowid = (SELECT rowid FROM inbound
-		WHERE inflight_to IS NULL AND deferred_to IS NOT ? AND (? IS NULL OR topic = ?)`
+		WHERE inflight_to IS NULL AND (deferred_to IS NULL OR deferred_to < ?) AND (? IS NULL OR topic = ?)`
 	args := []any{sub, sub, topic, topic}
 	if len(from) > 0 {
 		q += ` AND peer IN (SELECT value FROM json_each(?))`
@@ -203,10 +204,10 @@ func (s *Store) AckInbound(sub int64, id string) (bool, error) {
 }
 
 // DeferInbound releases the envelope id in flight to sub unacked, recording
-// reason; sub is not offered it again.
-func (s *Store) DeferInbound(sub int64, id, reason string) (bool, error) {
+// reason; no subscriber up to last, the newest, is offered it again.
+func (s *Store) DeferInbound(sub int64, id, reason string, last int64) (bool, error) {
 	return s.changed(`UPDATE inbound SET inflight_to = NULL, deferred_to = ?, deferred = ?
-		WHERE inflight_to = ? AND id = ?`, sub, reason, sub, id)
+		WHERE inflight_to = ? AND id = ?`, last, reason, sub, id)
 }
 
 // Release returns every envelope in flight to sub, whose connection is gone.

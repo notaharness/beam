@@ -38,17 +38,19 @@ func (r rejection) Error() string { return string(r) }
 
 func opMsgSend(d *daemon, _ *clientConn, r request) (any, error) {
 	to, err := d.resolve(r.To)
+	var p store.Peer
+	if err == nil {
+		p, _, err = d.store.Peer(to)
+	}
 	var oe *OpError
-	if errors.As(err, &oe) && oe.Code == "unknown-peer" {
-		return sendResult{Outcome: rejected, To: r.To, Reason: "unknown-peer"}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	p, _, err := d.store.Peer(to)
 	switch {
-	case err != nil:
+	case errors.As(err, &oe) && oe.Code == "unknown-peer":
+		return sendResult{Outcome: rejected, To: r.To, Reason: "unknown-peer"}, nil
+	case errors.As(err, &oe):
 		return nil, err
+	case err != nil:
+		d.o.Logf("msg.send to %s: %v", r.To, err)
+		return sendResult{Outcome: rejected, To: r.To, Reason: mailbox.StorageFailure}, nil
 	case p.Revoked:
 		return sendResult{Outcome: rejected, To: to, Reason: "revoked-peer"}, nil
 	}
@@ -165,6 +167,7 @@ func (d *daemon) flush(ctx context.Context, peer string, ps *peerState, tun *tra
 }
 
 func opMsgSubscribe(d *daemon, cc *clientConn, r request) (any, error) {
+	d.at("subscribing", "")
 	from := make([]string, len(r.From))
 	for i, arg := range r.From {
 		id, err := d.resolve(arg)
@@ -175,12 +178,15 @@ func opMsgSubscribe(d *daemon, cc *clientConn, r request) (any, error) {
 	}
 	cc.subMu.Lock()
 	defer cc.subMu.Unlock()
+	if cc.closed {
+		return nil, errors.New("the connection is closed")
+	}
 	if cc.sub != nil {
 		if err := d.mail.Close(cc.sub); err != nil {
 			return nil, err
 		}
 	}
-	cc.sub = d.mail.Subscribe(r.Topic, from, func(env json.RawMessage) { cc.send(event{"mail", env}) })
+	cc.sub = d.mail.Subscribe(r.Topic, from, func(env json.RawMessage) error { return cc.send(event{"mail", env}) })
 	return struct{}{}, nil
 }
 
@@ -189,6 +195,9 @@ func opMsgAck(d *daemon, cc *clientConn, r request) (any, error) {
 }
 
 func opMsgDefer(d *daemon, cc *clientConn, r request) (any, error) {
+	if len(r.Reason) > mailbox.MaxDeferReason {
+		return nil, fail("params", "reason is at most 1 KiB")
+	}
 	return d.settleMail(cc, func(s *mailbox.Sub) error { return d.mail.Defer(s, r.EnvelopeID, r.Reason) })
 }
 
@@ -205,10 +214,12 @@ func (d *daemon) settleMail(cc *clientConn, f func(*mailbox.Sub) error) (any, er
 	return struct{}{}, err
 }
 
-// unsubscribeMail ends a closed connection's mail subscription.
+// unsubscribeMail ends a closed connection's mail subscription, and any it
+// would make later.
 func (d *daemon) unsubscribeMail(cc *clientConn) {
 	cc.subMu.Lock()
 	defer cc.subMu.Unlock()
+	cc.closed = true
 	if cc.sub != nil {
 		_ = d.mail.Close(cc.sub) // its rows are released again at the next start
 		cc.sub = nil
