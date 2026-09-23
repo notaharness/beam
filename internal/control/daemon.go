@@ -244,6 +244,7 @@ func (d *daemon) unenroll(forget bool) error {
 	var err error
 	if forget {
 		err = errors.Join(e.store.Reset(), os.Remove(d.o.Paths.file(fleetFile)))
+		d.at("emptied", "")
 	}
 	return errors.Join(err, e.store.Close())
 }

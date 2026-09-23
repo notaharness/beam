@@ -14,9 +14,10 @@ func (d *daemon) learn(e *enrolment, raw json.RawMessage) {
 	if err != nil || e.cred.Verify(r, e.isRevoked) != nil {
 		return
 	}
+	d.at("storing", r.PeerID)
 	var changed bool
 	if r.Kind == identity.Revoke {
-		changed, _ = e.store.Revoke(r, now())
+		changed = d.revoke(e, r)
 		if changed {
 			d.at("revoking", r.PeerID)
 			d.applyRevocation(e, r.PeerID)
@@ -29,17 +30,33 @@ func (d *daemon) learn(e *enrolment, raw json.RawMessage) {
 	}
 }
 
+// revoke stores a verified revocation while e is the enrolment, and reports
+// whether it was new. The check and the write are one step under d.mu, which
+// unenroll takes to end e before it empties state.db: what an ended enrolment
+// verified never reaches the store after that.
+func (d *daemon) revoke(e *enrolment, r identity.Record) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if e != d.en {
+		return false
+	}
+	changed, err := e.store.Revoke(r, now())
+	return err == nil && changed
+}
+
 // pin stores a verified member and dials it: at its new address, if it
 // superseded the pinned entry with one. It reports whether it was new or
-// superseded the pinned entry.
+// superseded the pinned entry. Like revoke, it writes only while e is the
+// enrolment, in one step under d.mu.
 func (d *daemon) pin(e *enrolment, r identity.Record) bool {
+	d.mu.Lock()
+	if e != d.en {
+		d.mu.Unlock()
+		return false
+	}
 	old, known, _ := e.store.Peer(r.PeerID)
 	changed, err := e.store.Pin(r, now())
 	if err != nil || !changed {
-		return false
-	}
-	d.mu.Lock()
-	if e != d.en {
 		d.mu.Unlock()
 		return false
 	}

@@ -9,7 +9,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/notaharness/beam/internal/control"
 	"github.com/notaharness/beam/internal/identity"
@@ -91,5 +93,49 @@ func TestInitQueueRefused(t *testing.T) {
 	var s struct{ Enrolled bool }
 	if r := m.beam("", "status", "--json"); r.code != 0 || json.Unmarshal([]byte(r.out), &s) != nil || s.Enrolled {
 		t.Errorf("status after a restart: %+v, want not enrolled", r)
+	}
+}
+
+// A record an ended enrolment verified reaches nothing after it: a
+// revocation that beta verified under the old root, and would store only
+// once a reset had emptied state.db, stays out of it.
+func TestResetStoresNothingOld(t *testing.T) {
+	a := initFleet(t, "alpha")
+	b := join(t, "beta")
+	c := join(t, "gamma")
+	connectedAll(t, a, b, c)
+	storing, emptied := make(chan struct{}), make(chan struct{})
+	stored, closed := make(chan struct{}), make(chan struct{})
+	var atStoring, atEmptied, storeOn, closeOn sync.Once
+	letStore := func() { storeOn.Do(func() { close(stored) }) }
+	letClose := func() { closeOn.Do(func() { close(closed) }) }
+	control.SetHook(func(self, point, peer string) {
+		switch {
+		case self == b.id() && point == "storing" && peer == c.id():
+			atStoring.Do(func() { close(storing); <-stored })
+		case self == "" && point == "emptied":
+			atEmptied.Do(func() { close(emptied); <-closed })
+		}
+	})
+	t.Cleanup(func() { letStore(); letClose(); control.SetHook(nil) })
+	a.beam("", "revoke", "gamma")
+	await(t, storing, "beta to verify the revocation")
+	done := make(chan result, 1)
+	go func() { done <- b.beam("reset\n", "fleet", "reset") }()
+	await(t, emptied, "the reset to empty state.db")
+	letStore()
+	time.Sleep(200 * time.Millisecond) // the old enrolment's write, had it one
+	letClose()
+	if r := <-done; r.code != 0 {
+		t.Fatalf("reset: %+v", r)
+	}
+	b.stop()
+	st, err := store.Open(filepath.Join(b.dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if revoked, err := st.IsRevoked(c.id()); err != nil || revoked {
+		t.Errorf("state.db after the reset: gamma revoked %v, %v", revoked, err)
 	}
 }
