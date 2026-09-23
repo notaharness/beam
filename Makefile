@@ -11,12 +11,12 @@ dist:
 	done
 
 test:
-	go test -race -tags "$(TAGS)" -coverpkg=./... -coverprofile=cover.out ./...
+	go test -race -tags "$(TAGS),beamtest" -coverpkg=./... -coverprofile=cover.out ./...
 
 crap: test
 	go run ./tools/crap cover.out
 
 lint:
-	go run $(LINT) run --build-tags "$(TAGS)"
+	go run $(LINT) run --build-tags "$(TAGS),beamtest"
 
 .PHONY: dist test crap lint
