@@ -86,9 +86,14 @@ type machine struct {
 
 func startMachine(t testing.TB) *machine {
 	t.Helper()
+	return startMachineWith(t, admitFake)
+}
+
+func startMachineWith(t testing.TB, admit AdmitFunc) *machine {
+	t.Helper()
 	k := NewKey(relay.Region)
 	id, entry := entryFor(k)
-	n, err := Start(Config{Key: k, Entry: entry, Admit: admitFake, Handle: echoCaller, Logf: logger.Discard})
+	n, err := Start(Config{Key: k, Entry: entry, Admit: admit, Handle: echoCaller, Logf: logger.Discard})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,20 +292,27 @@ func TestUnboundStreams(t *testing.T) {
 	})
 }
 
+// The admission budgets as docs/03 states them, independent of the constants
+// that implement them.
+const (
+	specHelloTimeout = 5 * time.Second
+	specMaxUnbound   = 16
+)
+
 // A leaked address: the handshake completes but hello never comes.
 func TestHelloDeadline(t *testing.T) {
 	b := startMachine(t)
 	sc := rawStream(t, rawClient(t, b.key.Address()))
 	start := time.Now()
 	expectClosedUnread(t, sc)
-	if d := time.Since(start); d < helloTimeout-time.Second || d > helloTimeout+2*time.Second {
-		t.Errorf("closed after %v, want about %v", d, helloTimeout)
+	if d := time.Since(start); d < specHelloTimeout-500*time.Millisecond || d > specHelloTimeout+time.Second {
+		t.Errorf("closed after %v, want 5 s", d)
 	}
 }
 
 func TestHelloBudget(t *testing.T) {
 	b := startMachine(t)
-	clients := make([]*tailcat.Client, maxUnbound+1)
+	clients := make([]*tailcat.Client, specMaxUnbound+1)
 	var wg sync.WaitGroup
 	for i := range clients {
 		wg.Go(func() { clients[i] = rawClient(t, b.key.Address()) })
@@ -327,5 +339,147 @@ func TestHelloBudget(t *testing.T) {
 		if _, err := open[i].Read(make([]byte, 1)); !errors.As(err, &ne) || !ne.Timeout() {
 			t.Errorf("client %d: %v, want still open", i, err)
 		}
+	}
+}
+
+// blockingAdmit holds every hello in admission until the test ends, telling
+// entered when one arrives.
+func blockingAdmit(t *testing.T) (AdmitFunc, chan struct{}) {
+	entered, release := make(chan struct{}, 8), make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	return func(e json.RawMessage) (string, [32]byte, string) {
+		entered <- struct{}{}
+		<-release
+		return admitFake(e)
+	}, entered
+}
+
+// dialWithin runs Dial and fails the test if it is still blocked after limit.
+func dialWithin(t *testing.T, ctx context.Context, n *Node, address string, limit time.Duration) (*Tunnel, error) {
+	t.Helper()
+	type result struct {
+		tun *Tunnel
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		tun, err := n.Dial(ctx, address)
+		done <- result{tun, err}
+	}()
+	select {
+	case r := <-done:
+		return r.tun, r.err
+	case <-time.After(limit):
+		t.Fatalf("Dial still blocked after %v", limit)
+		return nil, nil
+	}
+}
+
+// A far side that accepts the hello header and never answers must not hold
+// Dial past its deadline or its caller's cancellation.
+func TestHelloWaitIsBounded(t *testing.T) {
+	a := startMachine(t)
+
+	t.Run("deadline", func(t *testing.T) {
+		admit, entered := blockingAdmit(t)
+		b := startMachineWith(t, admit)
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		start := time.Now()
+		_, err := dialWithin(t, ctx, a.node, b.key.Address(), 15*time.Second)
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("Dial: %v, want the deadline", err)
+		}
+		select {
+		case <-entered:
+		default:
+			t.Fatal("Dial failed before hello reached admission; the scenario did not run")
+		}
+		if d := time.Since(start); d > 10*time.Second {
+			t.Errorf("Dial returned after %v, past its 8 s deadline", d)
+		}
+	})
+
+	t.Run("cancellation", func(t *testing.T) {
+		admit, entered := blockingAdmit(t)
+		b := startMachineWith(t, admit)
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() { <-entered; cancel() }()
+		_, err := dialWithin(t, ctx, a.node, b.key.Address(), 30*time.Second)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("Dial: %v, want the cancellation", err)
+		}
+	})
+}
+
+func TestDialAfterClose(t *testing.T) {
+	b := startMachine(t)
+
+	t.Run("after", func(t *testing.T) {
+		a := startMachine(t)
+		a.node.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if tun, err := a.node.Dial(ctx, b.key.Address()); err == nil {
+			tun.Close()
+			t.Fatal("Dial after Close returned a live tunnel")
+		}
+	})
+
+	t.Run("during", func(t *testing.T) {
+		admit, entered := blockingAdmit(t)
+		slow := startMachineWith(t, admit)
+		a := startMachine(t)
+		go func() { <-entered; a.node.Close() }()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if tun, err := dialWithin(t, ctx, a.node, slow.key.Address(), 15*time.Second); err == nil {
+			tun.Close()
+			t.Fatal("a Dial in flight when the node closed returned a live tunnel")
+		}
+	})
+}
+
+// openEcho opens a stream on a raw client and returns it once accepted.
+func openEcho(t *testing.T, c *tailcat.Client) *stream.Conn {
+	t.Helper()
+	sc := rawStream(t, c)
+	sc.WriteLine(stream.Header{V: 1, Kind: "sync"})
+	var r stream.Response
+	if err := sc.ReadLine(&r); err != nil || !r.OK {
+		t.Fatalf("open: %+v, %v", r, err)
+	}
+	return sc
+}
+
+// A second hello for the same member retires the first tunnel: its open
+// streams close, and neither its saved hello nor any new stream is admitted.
+func TestSupersededTunnel(t *testing.T) {
+	b := startMachine(t)
+	a := NewKey(relay.Region)
+	id, entry := entryFor(a)
+	c1, c2 := rawClient(t, b.key.Address()), rawClient(t, b.key.Address())
+
+	h1 := newHello(a, raw(c1.PublicKey()), b.key.NodePublic(), entry)
+	if r := sendHello(t, c1, h1); !r.OK {
+		t.Fatalf("first hello: %+v", r)
+	}
+	old := openEcho(t, c1)
+	if r := sendHello(t, c2, newHello(a, raw(c2.PublicKey()), b.key.NodePublic(), entry)); !r.OK {
+		t.Fatalf("second hello: %+v", r)
+	}
+	expectClosedUnread(t, old)
+
+	replay := rawStream(t, c1)
+	replay.WriteLine(stream.Header{V: 1, Kind: "hello"})
+	expectClosedUnread(t, replay)
+	late := rawStream(t, c1)
+	late.WriteLine(stream.Header{V: 1, Kind: "sync"})
+	expectClosedUnread(t, late)
+
+	cur := openEcho(t, c2)
+	cur.WriteFrame(stream.Data, []byte("ping"))
+	if _, p, err := cur.ReadFrame(); err != nil || string(p) != id+" ping" {
+		t.Fatalf("the current tunnel: %q, %v", p, err)
 	}
 }
