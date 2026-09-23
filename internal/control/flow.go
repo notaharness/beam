@@ -34,12 +34,9 @@ func (d *daemon) begin(op string, req ceremony.Request, then func(context.Contex
 	ctx, cancel := context.WithCancel(d.ctx)
 	f := &flow{op: op, ctx: ctx, cancel: cancel, cer: cer, then: then}
 	context.AfterFunc(ctx, func() {
+		d.at("flow-ending", "")
 		cer.Close()
-		d.mu.Lock()
-		if d.flow == f {
-			d.flow = nil
-		}
-		d.mu.Unlock()
+		d.end(f)
 	})
 	go func() {
 		select {
@@ -60,7 +57,7 @@ func (d *daemon) finish(op string, cc *clientConn) (any, error) {
 	if f == nil || f.op != op {
 		return nil, fail("ceremony-state", "no "+op+" ceremony is under way")
 	}
-	defer f.cancel()
+	defer d.end(f)
 	r, err := f.cer.Wait(f.ctx)
 	if err != nil {
 		return nil, ceremonyErr(err)
@@ -116,9 +113,19 @@ func opCeremonyCancel(d *daemon, _ *clientConn, _ request) (any, error) {
 func (d *daemon) endFlow() {
 	d.mu.Lock()
 	f := d.flow
-	d.flow = nil
 	d.mu.Unlock()
 	if f != nil {
-		f.cancel()
+		d.end(f)
 	}
+}
+
+// end ends f and frees the daemon for the next ceremony at once, so a *.start
+// right after f's *.wait answered or a cancel returned never finds f busy.
+func (d *daemon) end(f *flow) {
+	d.mu.Lock()
+	if d.flow == f {
+		d.flow = nil
+	}
+	d.mu.Unlock()
+	f.cancel()
 }

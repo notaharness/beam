@@ -674,8 +674,8 @@ func TestRevocationReadAtStart(t *testing.T) {
 }
 
 // docs/02 Ceremonies: a ceremony nobody answers ends ceremony-timeout after
-// its five minutes, and one nobody waits on then frees the daemon for the
-// next.
+// its five minutes; the *.wait frees the daemon for the next before it
+// answers, and one nobody waits on frees it by itself.
 func TestCeremonyTimeout(t *testing.T) {
 	defer ceremony.SetTimeout(time.Second)()
 	os.Unsetenv("BEAM_TEST_AUTHENTICATOR")
@@ -691,13 +691,15 @@ func TestCeremonyTimeout(t *testing.T) {
 	if err := c.Call("join.start", start, nil); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(300 * time.Millisecond) // the client prints the URL, then waits
+	_, release := pauseAt(t, m, "flow-ending", "") // the timeout's own end of the flow
+	time.Sleep(300 * time.Millisecond)             // the client prints the URL, then waits
 	if err := c.Call("join.wait", nil, nil); code(err) != "ceremony-timeout" {
 		t.Errorf("join.wait: %v, want ceremony-timeout", err)
 	}
 	if err := c.Call("join.start", start, nil); err != nil {
-		t.Fatal(err)
+		t.Fatalf("a start right after the wait answered: %v", err)
 	}
+	release()
 	time.Sleep(2 * time.Second)
 	if err := c.Call("join.start", start, nil); err != nil {
 		t.Errorf("a start after one nobody waited on timed out: %v", err)
