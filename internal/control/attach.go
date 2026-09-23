@@ -45,25 +45,25 @@ func (d *daemon) reserve(e *enrolment, peer string, h stream.Header) string {
 // stream, and pump frames until it ends. stream.close and the client's
 // departure detach it at any point, and one that is detached before the
 // remote open sends nothing; so does a client that overruns its input window.
-// Every end reaches the client as a close frame.
+// Every end reaches the client as a close frame. The attach lives as long as
+// the open's enrolment: a reset or re-join ends it wherever it is, and its
+// stream opens only on that enrolment's tunnel.
 func (d *daemon) attach(ac *stream.Conn, id string) {
 	defer ac.Close()
-	ctx, cancel := context.WithCancelCause(d.ctx)
-	detach := func() { cancel(errDetached) }
-	defer detach()
 	d.mu.Lock()
 	r, ok := d.reservations[id]
-	ok = ok && r.e == d.en
-	if ok {
-		r.timer.Stop()
-		delete(d.reservations, id)
-		d.active[id] = detach
-	}
-	d.mu.Unlock()
-	if !ok {
+	if !ok || r.e != d.en {
+		d.mu.Unlock()
 		_ = ac.WriteJSON(stream.Close, stream.CloseMsg{Reason: "params", Detail: "no such stream, or it expired"}) // closing either way
 		return
 	}
+	ctx, cancel := context.WithCancelCause(r.e.ctx)
+	detach := func() { cancel(errDetached) }
+	defer detach()
+	r.timer.Stop()
+	delete(d.reservations, id)
+	d.active[id] = detach
+	d.mu.Unlock()
 	defer func() {
 		d.mu.Lock()
 		delete(d.active, id)
@@ -161,7 +161,7 @@ func (d *daemon) relay(ctx context.Context, r *reservation, cl *client) stream.C
 }
 
 func (d *daemon) openRemote(ctx context.Context, r *reservation) (*stream.Conn, stream.CloseMsg) {
-	tun, ok := d.tunnelTo(ctx, r.peer)
+	tun, ok := d.tunnelTo(ctx, r.e, r.peer)
 	switch {
 	case !ok && d.revokedByFleet(r.peer):
 		return nil, stream.CloseMsg{Reason: "revoked"}

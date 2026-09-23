@@ -133,11 +133,14 @@ func (d *daemon) tryPeer(ctx context.Context, e *enrolment, peerID string, ps *p
 	return true
 }
 
-// tunnelTo returns the live tunnel to a peer. With none it asks the dial loop
-// for an attempt now and reports its outcome, waiting at most until ctx ends.
-func (d *daemon) tunnelTo(ctx context.Context, peerID string) (*transport.Tunnel, bool) {
+// tunnelTo returns the live tunnel to a peer, while e is the enrolment: an
+// ended one's peer ids may be another fleet's now. With none it asks the dial
+// loop for an attempt now and reports its outcome, waiting at most until ctx
+// ends.
+func (d *daemon) tunnelTo(ctx context.Context, e *enrolment, peerID string) (*transport.Tunnel, bool) {
 	d.mu.Lock()
 	ps, ok := d.peers[peerID]
+	ok = ok && e == d.en
 	if !ok || ps.state == stateConnected || ps.state == stateRevokedByFleet {
 		defer d.mu.Unlock()
 		return ps.tunnelIfOK(ok)
@@ -152,7 +155,7 @@ func (d *daemon) tunnelTo(ctx context.Context, peerID string) (*transport.Tunnel
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return ps.tunnelIfOK(ps.state == stateConnected)
+	return ps.tunnelIfOK(e == d.en)
 }
 
 func (ps *peerState) tunnelIfOK(ok bool) (*transport.Tunnel, bool) {
