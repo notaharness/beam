@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"os"
 
+	"github.com/notaharness/beam/internal/mailbox"
 	"github.com/notaharness/beam/internal/store"
 	"github.com/notaharness/beam/internal/stream"
 )
@@ -11,9 +12,10 @@ import (
 // maxShells is the pty and exec limit per peer (docs/04).
 const maxShells = 32
 
-// shell is one inbound pty or exec stream.
-type shell struct {
-	c *stream.Conn
+// granted is one inbound stream the peer's grant governs.
+type granted struct {
+	c    *stream.Conn
+	kind string
 }
 
 // handle serves a stream an admitted peer opened here. Revocation and the
@@ -22,10 +24,34 @@ func (d *daemon) handle(peerID string, h stream.Header, c *stream.Conn) {
 	switch h.Kind {
 	case stream.KindSync:
 		d.serveSync(peerID, c)
-	case stream.KindPTY, stream.KindExec:
-		d.serveShell(peerID, h, c)
+	case stream.KindPTY, stream.KindExec, stream.KindMsg:
+		d.serveGranted(peerID, h, c)
 	default:
 		refuse(c, "kind")
+	}
+}
+
+// serveGranted runs a stream the peer's grant governs. A revocation or grant
+// change after admitStream closes it, and a stream closed before its process
+// starts never starts it.
+func (d *daemon) serveGranted(id string, h stream.Header, c *stream.Conn) {
+	p, release, reason := d.admitStream(id, h.Kind, c)
+	if reason != "" {
+		refuse(c, reason)
+		return
+	}
+	defer release()
+	d.seen(id)
+	d.at("admitted", id)
+	switch h.Kind {
+	case stream.KindMsg:
+		if c.WriteLine(stream.Response{OK: true}) == nil {
+			mailbox.Serve(c, d.store, id, d.fleet.Entry.PeerID, d.mail.Offer)
+		}
+	case stream.KindPTY:
+		stream.PTY(c, h, d.spawn(p))
+	default:
+		stream.Exec(c, h, d.spawn(p))
 	}
 }
 
@@ -50,46 +76,54 @@ func grantOf(g string) string {
 	return store.GrantNone
 }
 
-// serveShell runs a pty or exec stream. It is checked and registered in one
-// step under d.mu, which peer.grant also takes, and a revocation committed
-// before the check refuses it. A revocation or grant change after it closes
-// the stream, and a stream closed before its process starts never starts it.
-func (d *daemon) serveShell(id string, h stream.Header, c *stream.Conn) {
-	sh := &shell{c}
+// allows reports whether grant lets a peer open kind here (docs/04).
+func allows(grant, kind string) bool {
+	switch grantOf(grant) {
+	case store.GrantAll:
+		return true
+	case store.GrantMsg:
+		return kind == stream.KindMsg
+	}
+	return false
+}
+
+// admitStream checks an inbound stream (its peer known and not revoked,
+// within the grant and, for pty and exec, the limit) and registers it in one
+// step under d.mu, which peer.grant also takes; a revocation committed
+// before the check refuses it. It returns the peer's row and release, which
+// unregisters the stream, or why it is refused.
+func (d *daemon) admitStream(id, kind string, c *stream.Conn) (p store.Peer, release func(), reason string) {
+	g := &granted{c, kind}
 	d.mu.Lock()
+	defer d.mu.Unlock()
 	p, ok, err := d.store.Peer(id)
-	reason := ""
 	switch {
 	case err != nil || !ok || p.Revoked:
-		reason = "revoked"
-	case grantOf(p.Grant) != store.GrantAll:
-		reason = "grant"
-	case len(d.shells[id]) >= maxShells:
-		reason = "limit"
+		return p, nil, "revoked"
+	case !allows(p.Grant, kind):
+		return p, nil, "grant"
+	case kind != stream.KindMsg && d.shellsLocked(id) >= maxShells:
+		return p, nil, "limit"
 	}
-	if reason != "" {
-		d.mu.Unlock()
-		refuse(c, reason)
-		return
+	if d.granted[id] == nil {
+		d.granted[id] = map[*granted]bool{}
 	}
-	if d.shells[id] == nil {
-		d.shells[id] = map[*shell]bool{}
-	}
-	d.shells[id][sh] = true
-	d.mu.Unlock()
-	defer func() {
+	d.granted[id][g] = true
+	return p, func() {
 		d.mu.Lock()
-		delete(d.shells[id], sh)
+		delete(d.granted[id], g)
 		d.mu.Unlock()
-	}()
-	d.seen(id)
-	d.at("admitted", id)
-	sp := d.spawn(p)
-	if h.Kind == stream.KindPTY {
-		stream.PTY(c, h, sp)
-	} else {
-		stream.Exec(c, h, sp)
+	}, ""
+}
+
+func (d *daemon) shellsLocked(id string) int {
+	n := 0
+	for g := range d.granted[id] {
+		if g.kind != stream.KindMsg {
+			n++
+		}
 	}
+	return n
 }
 
 // spawn is the environment for a process a peer runs here (docs/04).
@@ -112,11 +146,13 @@ func (d *daemon) spawn(p store.Peer) stream.Spawn {
 	}
 }
 
-// closeShellsLocked closes the peer's inbound pty and exec streams; the stream
-// code then kills their processes. d.mu must be held.
-func (d *daemon) closeShellsLocked(peerID string) {
-	for sh := range d.shells[peerID] {
-		sh.c.Close()
+// closeUngrantedLocked closes the peer's inbound streams grant no longer
+// allows; the stream code then kills their processes. d.mu must be held.
+func (d *daemon) closeUngrantedLocked(peerID, grant string) {
+	for g := range d.granted[peerID] {
+		if !allows(grant, g.kind) {
+			g.c.Close()
+		}
 	}
 }
 

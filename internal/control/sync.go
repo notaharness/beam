@@ -38,13 +38,16 @@ func (d *daemon) runSync(ctx context.Context, peerID string, ps *peerState, tun 
 		return
 	}
 	d.at("dumped", peerID)
+	fctx, stopFlush := context.WithCancel(ctx)
 	up := false
 	pushSync(ctx, sc, append(dump, d.fleet.Entry), deltas, func() {
 		up = true
 		d.setState(ps, stateConnected, tun, deltas)
 		d.seen(peerID)
 		d.emitPeer(peerID)
+		go d.flush(fctx, peerID, ps, tun)
 	})
+	stopFlush()
 	d.setState(ps, stateOffline, nil, nil)
 	if up {
 		d.emitPeer(peerID)

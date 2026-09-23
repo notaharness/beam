@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/notaharness/beam/internal/identity"
+	"github.com/notaharness/beam/internal/mailbox"
 	"github.com/notaharness/beam/internal/store"
 	"github.com/notaharness/beam/internal/transport"
 )
@@ -43,14 +44,17 @@ type daemon struct {
 	cred  identity.Credential
 	store *store.Store
 	node  *transport.Node
+	mail  *mailbox.Subscribers
 
 	mu           sync.Mutex
 	peers        map[string]*peerState
-	shells       map[string]map[*shell]bool // inbound pty and exec streams, by peer
-	inbound      map[string]int             // open inbound sync streams, by peer
+	granted      map[string]map[*granted]bool // inbound pty, exec and msg streams, by peer
+	inbound      map[string]int               // open inbound sync streams, by peer
 	reservations map[string]*reservation
 	active       map[string]context.CancelFunc // attached streams: each one's detach
 	subscribers  map[*clientConn]bool
+	conns        map[net.Conn]bool                // every client connection, closed at shutdown
+	sends        map[string]map[int64]chan string // msg.send waiting for its ack, by peer and seq
 }
 
 // Run runs a daemon until ctx ends or a client sends daemon.shutdown. It takes
@@ -75,8 +79,9 @@ func Run(ctx context.Context, o Options) error {
 	ctx, stop := context.WithCancel(ctx)
 	defer stop()
 	d := &daemon{o: o, ctx: ctx, stop: stop, started: make(chan struct{}),
-		peers: map[string]*peerState{}, shells: map[string]map[*shell]bool{}, inbound: map[string]int{},
-		reservations: map[string]*reservation{}, active: map[string]context.CancelFunc{}, subscribers: map[*clientConn]bool{}}
+		peers: map[string]*peerState{}, granted: map[string]map[*granted]bool{}, inbound: map[string]int{},
+		reservations: map[string]*reservation{}, active: map[string]context.CancelFunc{}, subscribers: map[*clientConn]bool{}, conns: map[net.Conn]bool{},
+		sends: map[string]map[int64]chan string{}}
 	go d.serveSocket(ln)
 	d.at("starting", "")
 	if err := d.enroll(); err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -136,7 +141,7 @@ func (d *daemon) enroll() error {
 	entry, _ := json.Marshal(f.Entry)
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.key, d.fleet, d.store = k, f, st
+	d.key, d.fleet, d.store, d.mail = k, f, st, mailbox.NewSubscribers(st)
 	d.cred = identity.Credential{ID: f.CredentialID, PublicKey: pk}
 	d.node, err = transport.Start(transport.Config{Key: k, Entry: entry, Admit: d.admit, Handle: d.handle})
 	if err != nil {
@@ -160,6 +165,9 @@ func (d *daemon) enrolled() bool {
 func (d *daemon) close() {
 	d.mu.Lock()
 	node, st := d.node, d.store
+	for c := range d.conns {
+		c.Close()
+	}
 	d.mu.Unlock()
 	if node != nil {
 		node.Close()

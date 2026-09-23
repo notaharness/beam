@@ -35,6 +35,7 @@ type peerState struct {
 	tunnel  *transport.Tunnel    // the dialed tunnel, from its dump on
 	deltas  chan identity.Record // records to push on its sync stream
 	kick    chan struct{}        // resets the backoff
+	wake    chan struct{}        // tells the flusher there is mail
 	changed chan struct{}        // closed and replaced on every state change
 	cancel  context.CancelFunc
 }
@@ -50,7 +51,8 @@ func (d *daemon) startDialerLocked(peerID string) {
 		return
 	}
 	ctx, cancel := context.WithCancel(d.ctx)
-	ps := &peerState{state: stateOffline, kick: make(chan struct{}, 1), changed: make(chan struct{}), cancel: cancel}
+	ps := &peerState{state: stateOffline, kick: make(chan struct{}, 1), wake: make(chan struct{}, 1),
+		changed: make(chan struct{}), cancel: cancel}
 	d.peers[peerID] = ps
 	go d.dialLoop(ctx, peerID, ps)
 }

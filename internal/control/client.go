@@ -19,9 +19,16 @@ const spawnWait = 5 * time.Second
 
 // Client is a control connection to a daemon.
 type Client struct {
-	c  net.Conn
-	r  *bufio.Reader
-	id int
+	c      net.Conn
+	r      *bufio.Reader
+	id     int
+	events []Event // read while a Call waited for its reply
+}
+
+// Event is one event line (docs/06).
+type Event struct {
+	Name string          `json:"event"`
+	Data json.RawMessage `json:"data"`
 }
 
 // Connect connects to the daemon at p, starting one with `beam daemon
@@ -59,7 +66,7 @@ func newClient(c net.Conn) *Client {
 func (c *Client) Close() error { return c.c.Close() }
 
 // Call sends op with params and decodes its result into out. Events arriving
-// meanwhile are skipped. A refusal is an *OpError.
+// meanwhile are kept for Next. A refusal is an *OpError.
 func (c *Client) Call(op string, params map[string]any, out any) error {
 	c.id++
 	req := map[string]any{"id": c.id, "op": op}
@@ -76,6 +83,7 @@ func (c *Client) Call(op string, params map[string]any, out any) error {
 			return err
 		}
 		var resp struct {
+			Event
 			ID     int             `json:"id"`
 			OK     bool            `json:"ok"`
 			Result json.RawMessage `json:"result"`
@@ -83,6 +91,9 @@ func (c *Client) Call(op string, params map[string]any, out any) error {
 			Detail string          `json:"detail"`
 		}
 		if json.Unmarshal(line, &resp) != nil || resp.ID != c.id {
+			if resp.Name != "" {
+				c.events = append(c.events, resp.Event)
+			}
 			continue
 		}
 		if !resp.OK {
@@ -92,6 +103,25 @@ func (c *Client) Call(op string, params map[string]any, out any) error {
 			return nil
 		}
 		return json.Unmarshal(resp.Result, out)
+	}
+}
+
+// Next returns the next event, waiting for one.
+func (c *Client) Next() (Event, error) {
+	if len(c.events) > 0 {
+		ev := c.events[0]
+		c.events = c.events[1:]
+		return ev, nil
+	}
+	for {
+		line, err := stream.ReadLine(c.r, maxControlLine)
+		if err != nil {
+			return Event{}, err
+		}
+		var ev Event
+		if json.Unmarshal(line, &ev) == nil && ev.Name != "" {
+			return ev, nil
+		}
 	}
 }
 

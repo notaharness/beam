@@ -7,6 +7,7 @@ import (
 	"net"
 	"sync"
 
+	"github.com/notaharness/beam/internal/mailbox"
 	"github.com/notaharness/beam/internal/stream"
 )
 
@@ -29,6 +30,15 @@ type request struct {
 	StreamID string            `json:"streamId"`
 	Cursor   string            `json:"cursor"`
 	Limit    int               `json:"limit"`
+
+	To         string   `json:"to"`
+	Topic      *string  `json:"topic"`
+	Payload    string   `json:"payload"`
+	Encoding   string   `json:"encoding"`
+	From       []string `json:"from"`
+	EnvelopeID string   `json:"envelopeId"`
+	Reason     string   `json:"reason"`
+	Which      string   `json:"which"`
 }
 
 type response struct {
@@ -62,6 +72,9 @@ func fail(code, detail string) error { return &OpError{code, detail} }
 type clientConn struct {
 	mu sync.Mutex
 	c  net.Conn
+
+	subMu sync.Mutex
+	sub   *mailbox.Sub // its msg.subscribe
 }
 
 func (cc *clientConn) send(v any) {
@@ -84,10 +97,19 @@ func (d *daemon) serveSocket(ln net.Listener) {
 // serveConn reads a connection's first line to tell an attach from a control
 // connection, then serves requests concurrently.
 func (d *daemon) serveConn(c net.Conn) {
-	defer c.Close()
+	d.mu.Lock()
+	d.conns[c] = true
+	d.mu.Unlock()
+	defer func() {
+		d.mu.Lock()
+		delete(d.conns, c)
+		d.mu.Unlock()
+		c.Close()
+	}()
 	br := bufio.NewReader(c)
 	cc := &clientConn{c: c}
 	defer d.unsubscribe(cc)
+	defer d.unsubscribeMail(cc)
 	for first := true; ; first = false {
 		line, err := stream.ReadLine(br, maxControlLine)
 		if err != nil {

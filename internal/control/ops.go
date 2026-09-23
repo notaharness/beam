@@ -26,6 +26,12 @@ var enrolledOps = map[string]opFunc{
 	"pty.open":     opPTYOpen,
 	"exec.open":    opExecOpen,
 	"stream.close": opStreamClose,
+
+	"msg.send":      opMsgSend,
+	"msg.subscribe": opMsgSubscribe,
+	"msg.ack":       opMsgAck,
+	"msg.defer":     opMsgDefer,
+	"msg.queue":     opMsgQueue,
 }
 
 // op runs r. Every op but status waits for the daemon's start: the socket is
@@ -116,7 +122,8 @@ type PeerView struct {
 	Queue      QueueCounts `json:"queue"`
 }
 
-// QueueCounts are a peer's mailbox counts; the mailbox arrives in M3.
+// QueueCounts are a peer's mail counts: outbound not yet acked, inbound not
+// yet taken, and inbound an application refused.
 type QueueCounts struct {
 	Outbound int `json:"outbound"`
 	Inbound  int `json:"inbound"`
@@ -133,6 +140,8 @@ func (d *daemon) view(p store.Peer) PeerView {
 	}
 	v.Inbound = d.inbound[v.PeerID] > 0
 	d.mu.Unlock()
+	q := &v.Queue
+	q.Outbound, q.Inbound, q.Refused, _ = d.store.QueueCounts(v.PeerID) // zero counts if the store fails
 	if p.Revoked {
 		v.State = stateRevoked
 	}
@@ -253,8 +262,8 @@ func opGrant(d *daemon, _ *clientConn, r request) (any, error) {
 	}
 	d.mu.Lock()
 	err = d.store.SetGrant(id, r.Grant)
-	if err == nil && r.Grant != store.GrantAll {
-		d.closeShellsLocked(id)
+	if err == nil {
+		d.closeUngrantedLocked(id, r.Grant)
 	}
 	d.mu.Unlock()
 	if err != nil {
