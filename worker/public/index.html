@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>beam</title>
+<style>
+body { font: 16px/1.5 system-ui, sans-serif; max-width: 34rem; margin: 4rem auto; padding: 0 1rem; color: #1b1b1b; background: #fff; }
+h1 { font-size: 1.25rem; font-weight: 600; }
+code { font-size: 0.95rem; }
+button { font: inherit; padding: 0.5rem 1.25rem; border-radius: 6px; border: 1px solid #1b1b1b; background: #1b1b1b; color: #fff; cursor: pointer; }
+button:disabled { opacity: 0.5; cursor: default; }
+@media (prefers-color-scheme: dark) {
+  body { color: #e8e8e8; background: #141414; }
+  button { border-color: #e8e8e8; background: #e8e8e8; color: #141414; }
+}
+</style>
+</head>
+<body>
+<h1 id="action">beam</h1>
+<p>Machine <strong id="label"></strong> <code id="fingerprint"></code></p>
+<p><button id="go" type="button" disabled>Continue with your passkey</button></p>
+<p id="status"></p>
+<script>
+(() => {
+  const p = new URLSearchParams(location.hash.slice(1));
+  const op = p.get("op"), state = p.get("state") || "", port = Number(p.get("port"));
+  const $ = (id) => document.getElementById(id);
+  $("action").textContent = p.get("action") || "beam";
+  $("label").textContent = p.get("label") || "";
+  $("fingerprint").textContent = p.get("fingerprint") || "";
+  const valid = (op === "create" || op === "get") && Number.isInteger(port) && port > 0 && port < 65536 && state;
+  if (!valid) {
+    $("status").textContent = "This link is incomplete. Run the beam command again.";
+    return;
+  }
+  const decode = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+  const encode = (b) => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const back = (result, out) => {
+    location.href = "http://127.0.0.1:" + port + "/cb#" + new URLSearchParams({ state, result, ...out });
+  };
+  async function create() {
+    const cred = await navigator.credentials.create({ publicKey: {
+      rp: { id: "beam.n10.is", name: "beam" },
+      user: { id: crypto.getRandomValues(new Uint8Array(16)), name: p.get("fleetName") || "beam", displayName: p.get("fleetName") || "beam" },
+      challenge: decode(p.get("challenge") || ""),
+      pubKeyCredParams: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -8 }],
+      authenticatorSelection: { residentKey: "required", userVerification: "required" },
+      extensions: { prf: {} },
+    } });
+    if (cred.getClientExtensionResults().prf?.enabled !== true) return back("prf-unsupported", {});
+    back("ok", { credentialId: encode(cred.rawId), clientDataJSON: encode(cred.response.clientDataJSON), attestationObject: encode(cred.response.attestationObject) });
+  }
+  async function get() {
+    const cred = await navigator.credentials.get({ publicKey: {
+      rpId: "beam.n10.is",
+      challenge: decode(p.get("challenge") || ""),
+      userVerification: "required",
+      extensions: { prf: { eval: { first: new TextEncoder().encode("beam:v1:directory") } } },
+    } });
+    const first = cred.getClientExtensionResults().prf?.results?.first;
+    if (!first) return back("prf-unsupported", {});
+    back("ok", {
+      credentialId: encode(cred.rawId), clientDataJSON: encode(cred.response.clientDataJSON),
+      authenticatorData: encode(cred.response.authenticatorData), signature: encode(cred.response.signature), prf: encode(first),
+    });
+  }
+  $("go").disabled = false;
+  $("go").addEventListener("click", async () => {
+    $("go").disabled = true;
+    $("status").textContent = "Waiting for your passkey…";
+    try {
+      await (op === "create" ? create() : get());
+    } catch (e) {
+      back(e && e.name === "NotAllowedError" ? "cancelled" : "failed", {});
+    }
+  });
+})();
+</script>
+</body>
+</html>
