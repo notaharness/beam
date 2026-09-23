@@ -1,0 +1,18 @@
+name = "beam"
+main = "src/index.ts"
+compatibility_date = "2026-08-20"
+workers_dev = false
+routes = [{ pattern = "beam.n10.is", custom_domain = true }]
+
+[assets]
+directory = "./public"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "beam"
+database_id = "7e0d3382-8f3d-45a9-bf67-b341360650da"
+
+[[ratelimits]]
+name = "LIMITER"
+namespace_id = "1001"
+simple = { limit = 120, period = 60 }

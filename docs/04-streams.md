@@ -35,7 +35,8 @@ payload
 
 The first stream on every tunnel. One data frame from the dialer:
 `{ "entry": <member entry>, "nonce": "…", "mac": "…" }` ([03](03-transport.md),
-Admission). One data frame back: `{ "ok": true }` or `{ "ok": false, "reason":
+Admission), `nonce` 32 random bytes and `mac` 32 bytes, both unpadded base64url like
+every binary field. One data frame back: `{ "ok": true }` or `{ "ok": false, "reason":
 "bad-entry" | "wrong-passkey" | "bad-assertion" | "revoked" | "possession" }`, then close.
 
 ## `sync`
@@ -54,19 +55,39 @@ directly, no shell. `cwd` absolute or `~/`-relative, resolved on the acceptor. `
 merged over the daemon's environment; injected variables last. Unix: `creack/pty`.
 
 Control from the opener: `{"kind":"resize","cols":…,"rows":…}` (2–500). Data both ways
-raw. Process exit → `close {"reason":"exit","exitCode":n,"signal":s|null}`. Opener close
-or connection loss → SIGHUP then SIGKILL to the process group after 5 s.
+raw. Process exit → `close {"reason":"exit","exitCode":n,"signal"?:s}`; a process ended
+by a signal has `exitCode` 128+signal and `signal` its name (`SIGKILL`). Opener close or
+connection loss → SIGHUP then SIGKILL to the process group after 5 s, whether or not its
+leader has already exited.
 
 ## `exec`
 
 `argv` (required), `cwd?`, `env?`. Data payloads carry a channel byte: `0` stdin
 (opener→acceptor), `1` stdout, `2` stderr. `control {"kind":"stdin-eof"}` ends stdin.
-Exit as for `pty`, after stdout and stderr drain. Connection loss kills the process group.
+Exit as for `pty`, after stdout and stderr drain. Opener close or connection loss closes
+stdin and kills the process group with SIGKILL at once: `pty`'s SIGHUP and 5 s grace do
+not apply.
+
+For both, the process group ends with the stream: descendants still running after their
+leader exited get the same teardown once the opener closes (after `close "exit"` or not).
+A process meant to outlive the stream starts its own session. An acceptor that cannot
+watch the leader's exit kills the group and closes with the status the reap gives.
+
+**Input.** On `pty` and `exec` the opener's data and control frames are input, and at most
+4 of them may be outstanding: sent and not yet answered by the acceptor's
+`control {"kind":"taken"}`, which it sends for each once it has written it to the process
+or acted on it. The acceptor so reads on whatever the process does or however slowly the
+opener takes output, and the opener's close is never queued behind input. A frame beyond
+the window is a protocol error: the stream ends as on the opener's close, with
+`close {"reason":"window"}`. So is a `taken` with no input outstanding, and the opener ends
+the stream `window`. Nothing else is acknowledged.
 
 ## `msg`
 
 Opened by the dialer; carries mail **from the dialer to the acceptor only**. One per
-tunnel, opened when the outbound queue is non-empty and kept while it drains. Each data
+tunnel, opened when the outbound queue is non-empty and kept while it drains; the
+acceptor refuses a second with `limit` while one is open, so a sender's envelopes are
+stored in order. Each data
 frame is one envelope; the acceptor answers each with
 `control {"kind":"ack","id":…,"accepted":true}` or
 `{…,"accepted":false,"reason":"duplicate"|"queue-full"|"payload-too-large"|"invalid-envelope"|"storage-failure"}`.
@@ -100,4 +121,5 @@ policy on the granting machine and travel nowhere.
 ## Limits
 
 Header 64 KiB · frame payload 1 MiB · `pty`+`exec` 32 per peer · `argv` ≤ 1,024 items,
-each ≤ 64 KiB · `env` ≤ 256 · `sync` records/frame 200 · unbound tunnels in hello 16.
+each ≤ 64 KiB · `env` ≤ 256 · `sync` records/frame 200 · unbound tunnels in hello 16 ·
+`pty`/`exec` input window 4 frames.

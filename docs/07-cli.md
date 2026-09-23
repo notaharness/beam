@@ -1,7 +1,8 @@
 # 07 · CLI
 
 One binary. Every subcommand but `daemon` and `version` is a client of the control socket
-and uses the shared connect-or-spawn helper. `--json` prints the socket result. Exit
+and uses the shared connect-or-spawn helper. `status`, `peers` and `msg send` take
+`--json`, which prints the socket result as it is, the exit code unchanged. Exit
 codes: `0`; `1` beam error (token on stderr); `2` usage; `connect` and `exec` exit with
 the remote status (`128+signal` for a signal).
 
@@ -19,7 +20,7 @@ beam peer grant <peer> all|msg|none
 
 beam connect <peer> [--cwd PATH] [-- argv...]
 beam exec    <peer> [--cwd PATH] [--env K=V]... -- argv...
-beam msg send   <peer> [--topic T] [--base64] <payload|->
+beam msg send   <peer> [--topic T] [--base64] [--json] <payload|->
 beam msg listen [--topic T] [<peer>...]
 beam msg queue  [<peer>] [--which outbound|inbound|refused|quarantine]
 
@@ -35,12 +36,17 @@ stages: `starting daemon`, `preparing network`, `waiting for your passkey (creat
 `beam init` ends:
 
 ```
-created fleet 3f9a…  ·  this machine: laptop (b7f3 9a21 0c4e 55d1)
+created fleet 3f9a 0c4e 7d12 e805  ·  this machine: laptop (b7f3 9a21 0c4e 55d1)
 published to directory
 ```
 
-`beam join` ends `joined fleet 3f9a…; 3 other machines known; connecting…` and returns;
-`beam peers` shows progress. With the directory down: `directory unavailable; try again`.
+`beam join` ends `joined fleet 3f9a 0c4e 7d12 e805; 3 other machines known; connecting…`
+and returns; `beam peers` shows progress. With the directory down: `directory
+unavailable; try again`. The fleet is its fingerprint, 64 bits of `fleetId` in the form
+`init` and `beam status` print too. Compare it with `beam status` on a machine already
+in the fleet: a different one means this machine joined another fleet, through a
+substituted ceremony page and a directory that went along ([01](01-model.md)), and
+`beam fleet reset` undoes that.
 
 `beam revoke` ends:
 
@@ -66,10 +72,16 @@ shell exited (0)`, `killed by SIGKILL`, `connection lost`.
 ## Messages
 
 `msg send` prints `delivered to buildbox`, or the `stored` sentence from
-[05](05-mailbox.md), or `rejected: <reason>`. Exit 0 for the first two.
+[05](05-mailbox.md) for its `pendingReason`, or `rejected: <reason>` on stderr. Exit 0
+for the first two. The payload is the argument, or stdin for `-`; `--base64` sends it as
+bytes.
 
 `msg listen` prints one envelope per line and acks after the write to stdout succeeds.
 That is the durability an observer gets; a consumer that needs more writes its own.
+Peers given filter by sender.
+
+`msg queue` prints one `{ envelope, reason? }` per line from `msg.queue`, all pages,
+`outbound` unless `--which` says otherwise.
 
 ## Peer arguments
 

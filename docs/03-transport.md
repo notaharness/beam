@@ -61,14 +61,22 @@ the dialer opens a `hello` stream ([04](04-streams.md)) and the acceptor checks:
    tunnel, not the frame, so a valid `(E, mac)` cannot be replayed from a different
    tunnel.
 3. **Not revoked.** `E.peerId` has no stored revocation, checked after any revocations
-   already received on this or other tunnels have been applied.
+   already received on this or other tunnels have been applied. The daemon checks this
+   with the entry, before possession: when both fail the refusal is `revoked` rather
+   than `possession`, which tells a dialer nothing a member does not know.
 
 Pass: bind `C → E.peerId` for this tunnel, pin `E` if new (and schedule a dial back),
-answer `ok`. Fail: answer `refused` with a reason and close. Any other first stream from
-an unbound `C`, or any stream after a failed hello, is closed unread. Budgets: 16
-concurrent unbound tunnels in hello, 5 s each; beyond that the oldest is closed. tailcat
-keeps its own per-peer state for a client that handshook; beam cannot evict it and does
-not claim to.
+then answer `ok`; nothing before the pass acts on `E`. A new binding for a peer retires its older tunnel: that tunnel's open
+streams close and it is treated as failed from then on, so exactly one tunnel carries a
+peer's opens. Fail: answer `refused` with a reason, close, and remember `C` as failed.
+Any other first stream from an unbound `C` is answered `unauthenticated` and closed, and
+a hello that ends without a verdict (its deadline passed or its dialer left) leaves `C`
+unbound. A stream that arrives while `C`'s hello is under way, or after `C` failed, is
+closed unread. Budgets: 16 concurrent unbound tunnels in hello, 5 s each, counted from
+the stream's arrival; beyond that the oldest is closed and counts as failed. A hello that
+verifies after its tunnel failed binds nothing. Every stream's header must arrive within
+5 s. tailcat keeps its own per-peer state for a client that handshook; beam cannot evict
+it and does not claim to.
 
 The acceptor learns the peer behind a TCP connection from `Server.PeerEnv(local,
 remote)` (`TAILCAT_PEER_KEY=nodekey:…`), failing closed when absent, until upstream
@@ -86,22 +94,31 @@ are TCP's. No multiplexer. One port, kind in the header.
 
 ## Lifecycle
 
-- **Up.** For each member, create a `Client`, `DialTCPPort(7000)` with a 20 s deadline,
-  open `hello`, then `sync`. `connected` means hello succeeded on *our* dialed tunnel;
-  the peer's own dial to us is independent and reported separately as `inbound`.
+- **Up.** For each member, create a `Client`, `DialTCPPort(7000)` and complete `hello`
+  within one 20 s deadline (ended early by the caller's cancellation or by shutdown), then
+  open `sync`. `connected` means hello succeeded on *our* dialed tunnel and its `sync`
+  is open with the dump and `end` sent, so the peer can be told things; the peer's own
+  dial to us is independent and reported separately as `inbound`.
 - **Liveness.** A `ping` control frame on the `sync` stream every 15 s; no reply within
-  30 s closes the tunnel. WireGuard keepalives and `Server.Status()` are advisory.
+  30 s closes the tunnel, and so does a `sync` write the peer has not taken 30 s after
+  its last reply. The dialer keeps a tunnel exactly as long as its `sync`, so the
+  acceptor retires the tunnel, closing every stream it carried, when that inbound `sync`
+  ends or is silent for 30 s: a stream's own close can be lost with the tunnel. WireGuard
+  keepalives and `Server.Status()` are advisory.
 - **Retry.** Exponential backoff 2 s → 5 min with jitter, forever while the daemon runs;
   reset on inbound contact from that peer, on a learned entry for it, and on
-  `msg.send` to it. There is no give-up state: queued mail must eventually flow.
+  `msg.send` to it. There is no give-up state, but for a peer that refuses this machine
+  as revoked: queued mail must eventually flow. A learned
+  entry with a new address closes the tunnel to the old one and dials the new.
 - **Path.** `Server.Status()` gives `CurAddr` or `Relay` for inbound peers; the `Client`
   has no equivalent, so `path` is reported for the inbound tunnel or as `unknown`.
 
 | State | Meaning |
 |---|---|
-| `connected` | hello succeeded on the tunnel this machine dialed |
+| `connected` | hello succeeded on the tunnel this machine dialed, and its `sync` is open with the dump sent |
 | `offline` | last dial failed or liveness lapsed; retrying |
 | `revoked` | refused at admission; never dialed |
+| `revoked-by-fleet` | the peer refused this machine's hello as `revoked`; not dialed again while the daemon runs. The refusal is advice, not a record: this machine holds no revocation of itself |
 
 ## DERP
 
@@ -109,8 +126,24 @@ Default map `https://tailcat.dev/derpmap.json` (Tailscale's tailcat fleet: rate-
 metadata-logged, no SLA). Cached in `derpmap.json`. `beam daemon --derp-map URL` for a
 self-hosted `derper`. Tests use an in-process relay ([10](10-testing.md)).
 
-## Footprint (measured, one Server and one Client, Go 1.27.1, linux/amd64)
+## Footprint (measured, Go 1.27.1, linux/amd64)
 
-Binary 15–16.4 MB stripped across five targets; cold build 21.5 s; warm 0.14 s; module
-cache 479 MB; `CGO_ENABLED=0`; ~26 MB RSS. Per-peer client stacks add to that; the
-milestone-1 spike measures a five-peer fleet.
+Binary 21.2–22.5 MB stripped across the four release targets (SQLite and go-webauthn
+included); at the M1 spike, before either, it was 15–16.4 MB with a 21.5 s cold build,
+0.14 s warm, and a 479 MB module cache; `CGO_ENABLED=0`.
+
+The milestone-1 spike (`TestFootprint` in `internal/transport`, without `-race`) runs
+one process per machine on the dev DERP, each with one `Server` and a `Client` per peer,
+every pair connected both ways. Three runs, 2026-09-22:
+
+| Fleet | UDP | RSS per machine | Dial through hello, median (max) |
+|---|---|---|---|
+| 2 machines: 1 Server + 1 Client each | blocked | 27–28 MB | 4.0 s (4.0 s) |
+| 5 machines: 1 Server + 4 Clients each | blocked | 32–34 MB | 3.02 s (3.03 s) |
+| 5 machines: 1 Server + 4 Clients each | allowed, loopback | 37–39 MB | 47 ms (1.0 s) |
+
+Relayed, each extra `Client` costs about 1.7 MB; with UDP allowed the five-machine fleet
+uses about 5 MB more per machine. With UDP blocked a new `Client` waits out netcheck's
+3 s UDP timeout before it picks its home relay, then its next 1 s meow retry completes;
+that, not beam, is the dial time (traced in tailcat's logs). The 1.0 s outlier with UDP
+is the same meow retry after a lost first ping.

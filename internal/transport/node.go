@@ -1,0 +1,255 @@
+package transport
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/notaharness/beam/internal/stream"
+	"github.com/tailscale/tailcat"
+	"go4.org/mem"
+	"tailscale.com/types/key"
+	"tailscale.com/types/logger"
+)
+
+// dialTimeout bounds bringing up a tunnel and its hello (docs/03, Lifecycle).
+const dialTimeout = 20 * time.Second
+
+// Config configures a Node.
+type Config struct {
+	Key    *Key
+	Entry  json.RawMessage // this machine's signed entry, sent in every hello
+	Admit  AdmitFunc
+	Handle HandleFunc
+}
+
+// Node is a machine's transport: its Server and the Clients it dialed.
+type Node struct {
+	cfg    Config
+	srv    *tailcat.Server
+	adm    *admission
+	ctx    context.Context // ends at Close, cancelling dials in flight
+	cancel context.CancelFunc
+
+	mu      sync.Mutex
+	closed  bool
+	tunnels map[*Tunnel]bool
+
+	beforeRegister func() // tests act between hello and registration; nil otherwise
+}
+
+// ErrClosed is Dial's error once the node is closed.
+var ErrClosed = errors.New("transport: node closed")
+
+// Start starts the Server on the machine's node key and accepts streams.
+func Start(cfg Config) (*Node, error) {
+	srv := &tailcat.Server{
+		Key:          cfg.Key.pk.Private,
+		PresharedKey: cfg.Key.pk.Public.PresharedKey,
+		Region:       cfg.Key.pk.Public.Region[0],
+		Logf:         logger.Discard, // tailcat narrates every packet path; beam logs its own events
+	}
+	ln, err := srv.Listen(context.Background(), "tcp", fmt.Sprintf(":%d", Port))
+	if err != nil {
+		srv.Close()
+		return nil, err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	n := &Node{cfg: cfg, srv: srv, adm: newAdmission(cfg.Key, cfg.Admit, cfg.Handle),
+		ctx: ctx, cancel: cancel, tunnels: map[*Tunnel]bool{}}
+	go n.accept(ln)
+	return n, nil
+}
+
+func (n *Node) accept(ln net.Listener) {
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		go n.serve(conn)
+	}
+}
+
+// serve admits a stream by the key of the tunnel it arrived on, failing closed
+// when tailcat cannot name it.
+func (n *Node) serve(conn net.Conn) {
+	for _, kv := range n.srv.PeerEnv(conn.LocalAddr(), conn.RemoteAddr()) {
+		v, ok := strings.CutPrefix(kv, "TAILCAT_PEER_KEY=")
+		var c key.NodePublic
+		if ok && c.UnmarshalText([]byte(v)) == nil {
+			n.adm.serve(conn, raw(c))
+			return
+		}
+	}
+	conn.Close()
+}
+
+// Drop retires the tunnel peerID dialed to us and closes its streams: for a
+// revoked peer. Its client key is never admitted again.
+func (n *Node) Drop(peerID string) {
+	n.adm.drop(peerID)
+}
+
+// Retire retires the tunnel a stream from a peer arrived on, closing all its
+// streams: for a tunnel whose dialer has gone silent.
+func (n *Node) Retire(c *stream.Conn) {
+	n.adm.retireConn(c)
+}
+
+// Path is how the tunnel peerID dialed to us travels: "direct", "relay
+// <region>", or "unknown" (docs/03, Lifecycle).
+func (n *Node) Path(peerID string) string {
+	c, ok := n.adm.clientOf(peerID)
+	if !ok {
+		return "unknown"
+	}
+	ps := n.srv.Status().Peer[key.NodePublicFromRaw32(mem.B(c[:]))]
+	switch {
+	case ps == nil:
+		return "unknown"
+	case ps.CurAddr != "":
+		return "direct"
+	case ps.Relay != "":
+		return "relay " + ps.Relay
+	}
+	return "unknown"
+}
+
+// Close closes every tunnel this machine dialed and its Server.
+func (n *Node) Close() error {
+	n.mu.Lock()
+	n.closed = true
+	n.cancel()
+	for t := range n.tunnels {
+		t.client.Close()
+	}
+	n.mu.Unlock()
+	n.adm.closeAll()
+	return n.srv.Close()
+}
+
+// Tunnel is a tunnel this machine dialed, on a Client with a key of its own,
+// past hello. Streams on it are opened by this machine only.
+type Tunnel struct {
+	node   *Node
+	client *tailcat.Client
+}
+
+// Refused is the far side's refusal of a hello or a stream, by reason token.
+type Refused struct {
+	Reason, Detail string
+}
+
+func (r *Refused) Error() string {
+	if r.Detail != "" {
+		return "refused: " + r.Reason + ": " + r.Detail
+	}
+	return "refused: " + r.Reason
+}
+
+// Dial brings up a tunnel to address and completes hello on it, within 20 s,
+// ctx, and the node's life.
+func (n *Node) Dial(ctx context.Context, address string) (*Tunnel, error) {
+	r, err := AddressKey(address)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
+	defer cancel()
+	defer context.AfterFunc(n.ctx, cancel)()
+	t := &Tunnel{node: n, client: &tailcat.Client{Server: tailcat.Addr(address), Logf: logger.Discard}}
+	err = t.hello(ctx, r)
+	if err == nil && n.beforeRegister != nil {
+		n.beforeRegister()
+	}
+	n.mu.Lock()
+	if err == nil && n.closed {
+		err = ErrClosed
+	}
+	if err == nil {
+		n.tunnels[t] = true
+	}
+	n.mu.Unlock()
+	if err != nil {
+		t.client.Close()
+		if n.ctx.Err() != nil {
+			err = ErrClosed
+		}
+		return nil, err
+	}
+	return t, nil
+}
+
+func (t *Tunnel) hello(ctx context.Context, r [32]byte) error {
+	sc, err := t.Open(ctx, stream.Header{V: 1, Kind: "hello"})
+	if err != nil {
+		return err
+	}
+	defer sc.Close()
+	b, _ := json.Marshal(newHello(t.node.cfg.Key, raw(t.client.PublicKey()), r, t.node.cfg.Entry))
+	var res stream.Response
+	err = whileLive(ctx, sc, func() error {
+		if err := sc.WriteFrame(stream.Data, b); err != nil {
+			return err
+		}
+		_, p, err := sc.ReadFrame()
+		if err != nil {
+			return err
+		}
+		return json.Unmarshal(p, &res)
+	})
+	if err == nil && !res.OK {
+		err = &Refused{res.Reason, res.Detail}
+	}
+	return err
+}
+
+// Open opens a stream: it sends h and returns the connection once the far side
+// accepts it, within ctx.
+func (t *Tunnel) Open(ctx context.Context, h stream.Header) (*stream.Conn, error) {
+	conn, err := t.client.DialTCPPort(ctx, Port)
+	if err != nil {
+		return nil, err
+	}
+	sc := stream.NewConn(conn)
+	var res stream.Response
+	err = whileLive(ctx, conn, func() error {
+		if err := sc.WriteLine(h); err != nil {
+			return err
+		}
+		return sc.ReadLine(&res)
+	})
+	if err == nil && !res.OK {
+		err = &Refused{res.Reason, res.Detail}
+	}
+	if err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return sc, nil
+}
+
+// whileLive runs f, closing conn if ctx ends first, in which case ctx's error
+// is the result.
+func whileLive(ctx context.Context, conn net.Conn, f func() error) error {
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	err := f()
+	if !stop() {
+		return ctx.Err()
+	}
+	return err
+}
+
+// Close closes the tunnel's Client.
+func (t *Tunnel) Close() error {
+	t.node.mu.Lock()
+	delete(t.node.tunnels, t)
+	t.node.mu.Unlock()
+	return t.client.Close()
+}

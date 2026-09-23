@@ -2,18 +2,15 @@
 package main
 
 import (
-	"fmt"
 	"os"
+
+	"github.com/notaharness/beam/internal/cli"
 )
 
 // version is set at build time with -ldflags "-X main.version=…".
 var version = "dev"
 
 func main() {
-	if len(os.Args) == 2 && os.Args[1] == "version" {
-		fmt.Println(version)
-		return
-	}
-	fmt.Fprintln(os.Stderr, "usage: beam version")
-	os.Exit(2)
+	cli.Version = version
+	os.Exit(cli.Main(os.Args[1:], os.Environ(), os.Stdin, os.Stdout, os.Stderr))
 }

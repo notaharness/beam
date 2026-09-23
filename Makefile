@@ -1,4 +1,4 @@
-VERSION ?= $(shell git describe --tags --always --dirty)
+VERSION ?= $(patsubst v%,%,$(shell git describe --tags --always --dirty))
 TAGS    := $(shell cat build-tags.txt)
 TARGETS := darwin/arm64 darwin/amd64 linux/amd64 linux/arm64
 LINT    := github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
@@ -11,9 +11,12 @@ dist:
 	done
 
 test:
-	go test -race -tags "$(TAGS)" ./...
+	go test -race -tags "$(TAGS),beamtest" -coverpkg=./... -coverprofile=cover.out ./...
+
+crap: test
+	go run ./tools/crap cover.out
 
 lint:
-	go run $(LINT) run --build-tags "$(TAGS)"
+	go run $(LINT) run --build-tags "$(TAGS),beamtest"
 
-.PHONY: dist test lint
+.PHONY: dist test crap lint

@@ -1,0 +1,15 @@
+{
+  "name": "@notaharness/beam-os-cpu",
+  "version": "0.0.0",
+  "description": "The beam binary for one platform. Install @notaharness/beam, which depends on it.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/notaharness/beam.git"
+  },
+  "os": [],
+  "cpu": [],
+  "files": [
+    "beam"
+  ]
+}

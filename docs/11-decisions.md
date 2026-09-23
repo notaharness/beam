@@ -26,7 +26,28 @@
 | D20 | Lost passkey or compromised fleet → `fleet reset` and a new fleet. | No root migration path that a peer could abuse. | 02 |
 | D21 | Public tailcat DERP by default; own relay via flag; relay change is a re-join. | Zero infrastructure; signed addresses need a signed update. | 03 |
 | D22 | Domain `beam.n10.is` for the relying party and the worker. | One name for the one hosted thing. | 01, 09 |
-| D23 | A `Makefile` with `dist`, `test`, `lint` is the one entry point for local and CI builds; `golangci-lint` is the one linter and is run by `go run` at a pinned version. | Three shell lines do not need a Go build tool; `go run` needs no install step and builds the linter with the module's Go. | 09 |
+| D23 | A `Makefile` with `dist`, `test`, `crap`, `lint` is the one entry point for local and CI builds; `golangci-lint` is the one linter and is run by `go run` at a pinned version. | Three shell lines do not need a Go build tool; `go run` needs no install step and builds the linter with the module's Go. | 09 |
+| D24 | Per-function CRAP ≤ 30 gates CI, computed by `tools/crap` from the module-wide coverage profile. | Coverage alone rewards testing trivial code; CRAP demands tests where complexity is. A few hundred lines of tool beat a dependency. | 09 |
+| D25 | A hello that ends without a verdict (deadline passed, dialer left) leaves its tunnel unbound rather than failed. | Failure marks a refused proof or an eviction. A stalled hello has already spent its 5 s and its budget slot, and a fresh tunnel would cost the dialer no more. | 03 |
+| D26 | The acceptor retires a tunnel, closing every stream it carried, when its inbound `sync` ends or is silent 30 s. | The dialer keeps a tunnel exactly as long as its `sync`; a stream's own close can be lost with the tunnel, and a remote shell must not outlive its opener. | 03 |
+| D27 | A `pty` or `exec` without `cwd` starts in the acceptor's home directory. | Where a login shell starts; the opener's directory means nothing on another machine. | 04 |
+| D28 | tailcat's own logs are discarded; `daemon.log` holds beam's lines only. | tailcat's logs are verbose and not actionable for a beam user. | 06 |
+| D29 | `status.derp.source` is `"key.json"`. | The relay region is fixed by the node key (D21); there is no other source yet. | 06 |
+| D30 | A `pty`/`exec` leader is reaped only after its group's teardown, under the lock its signals take; the acceptor reads its exit status without reaping it (`waitid` `WNOWAIT`'s siginfo on Linux; on Darwin kqueue `NOTE_EXIT` with `NOTE_EXITSTATUS`, or the zombie's `p_xstat` for a leader that exited before the watch). A leader it cannot watch has its group killed, then is reaped for its status. | The unreaped leader holds the group id, so the SIGKILL reaches descendants that outlive it and never a group that reused the id. `/proc/<pid>/stat`'s `exit_code` reads 0 for a non-dumpable process. | 04 |
+| D31 | `pty`/`exec` input is flow-controlled: at most 4 frames outstanding, each answered `taken`; an overrun closes the stream `window`. The daemon holds its attach clients to the same window. | A reader that stops reading to push back hides the opener's close behind queued input. With a window every reader reads on, so a close, a detach or a departure is always seen, as with SSH channel windows. | 04, 06 |
+| D32 | `msg.ack` and `msg.defer` take `envelopeId`, and `msg.subscribe`'s `from` is a list. | Every control request already has an `id`; a subscriber filtering by sender may want several. | 05, 06 |
+| D33 | A deferred envelope is offered again only to subscriptions made after the defer; `refused` in `msg.queue` is the deferred inbound mail. | The next subscribe gets it again, as 05 says, without a separate refused table; two subscribers cannot pass it back and forth. | 05, 06 |
+| D34 | A serialized envelope is at most 960 KiB, a `msg.defer` reason 1 KiB, and `msg.queue` pages stop short of 1 MiB. JSON lines escape neither markup nor U+2028/U+2029, so an envelope never goes out larger than stored. | Every envelope then fits one 1 MiB control line with the `mail` event or `msg.queue` reply around it; escaping would swell `<` sixfold and a line separator twofold past it. | 05, 06 |
+| D35 | A control client that leaves a line unread for 10 s is disconnected; a flusher send the peer leaves untaken for 30 s drops its msg stream for a new one. | A reader that stopped holds neither the daemon's other clients nor a peer's queue. | 05, 06 |
+| D36 | `GET /v1/entries` names the fleet by `T_read` alone: `read_hash` is unique and the response carries `fleetId`. Every token that opens no fleet, malformed or unknown, gets the same `401`. | A joining machine holds only what its `get` yields; one refusal for every token says nothing about which fleets exist. | 02, 09 |
+| D37 | An append carries `kind`, and the worker verifies the assertion under that one domain. | The daemon knows what it signed; trying both domains verifies twice for nothing. | 02, 09 |
+| D38 | `acknowledgedBy` counts the peers whose pong, to a ping sent after the revocation delta, arrives within 5 s. | `sync` is ordered, so the pong proves the delta frame was read; no acknowledgement message is added. | 02, 06 |
+| D39 | A ceremony's result travels in the fragment as `result` and the WebAuthn call's output, each field unpadded base64url; the daemon verifies a `create` itself. A result that does not verify, like `failed`, is `bad-assertion`. | The fields a verifier needs, encoded as every binary field is; nothing is trusted because the page sent it, and no valid assertion came back either way. | 02, 06 |
+| D40 | `--label` defaults to the host name up to its first dot, cut to 64 characters, and `--fleet-name` to `beam`. | Both are display text; a default beats a prompt. A full host name can pass 64 characters (CI runners do). | 02, 07 |
+| D41 | `beam join` on an enrolled machine re-enrols with the same passkey, homing the node key on the daemon's DERP map when its region is not on it. | 03's move to another DERP map is a re-join; the key, and so the peer id, stays. | 02, 03 |
+| D42 | The daemon takes its DERP map and directory URL as `control.Options`; the binary sets only the DERP map (`--derp-map`). | Tests need both; a user changes only the relay (D21). | 03, 10 |
+| D43 | Tag `vX.Y.Z` releases `X.Y.Z`: the binaries, `status.version` and the npm packages carry the version without the `v`. | npm versions have no `v`; one spelling everywhere a client compares. | 09 |
+| D44 | The shim's `optionalDependencies` are the one list of platforms: `binaryPath()` and `npm/pack.mjs` both read it. | A platform added in one place cannot be missing from another. | 09 |
 
 ## Milestone gate
 
@@ -35,6 +56,14 @@ proving D6 (no collision with ephemeral client keys, possession MAC, admission),
 measuring a five-peer fleet's RSS and connection times. If it fails, the fallback is a
 single stack per machine with an upstream `Server.Dial` contribution, or one tunnel per
 pair with a multiplexer. Do not build on the topology until the spike passes.
+
+**Passed 2026-09-22** (`internal/transport`, `TestTopology`, `TestFootprint`). Three
+machines on one dev relay with UDP blocked, each one `Server` on its node key plus a
+`Client` per peer on a fresh key, dial all six directed tunnels before using any, then
+complete one round trip on each; the acceptor attributes every stream to the right
+dialer. The same holds for five machines in five processes (20 tunnels). No DERP
+collision appears. The possession MAC refuses a wrong MAC and a hello replayed from
+another tunnel. Footprint numbers are in [03](03-transport.md).
 
 ## Open questions
 

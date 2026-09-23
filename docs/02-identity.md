@@ -13,9 +13,9 @@ peerId = lowercase hex of SHA-256(nodePublic)[0:16]          32 characters, 128 
 Displayed as the first 16 characters in groups of four. Stored, keyed and compared in
 full. Validated as exactly 32 lowercase hex characters wherever it arrives from outside.
 
-A `label` is a human name chosen at join, defaulting to the hostname: 1–64 Unicode
-scalar values, none of `/ \ { }` or C0/C1 controls. Rejected, never rewritten. Labels
-may collide; disambiguation is by id.
+A `label` is a human name chosen at join, defaulting to the short host name: 1–64
+Unicode scalar values, none of `/ \ { }` or C0/C1 controls. Rejected, never rewritten.
+Labels may collide; disambiguation is by id.
 
 ## The passkey and what it yields
 
@@ -55,6 +55,7 @@ $BEAM_DIR/
   derpmap.json       last fetched DERP map
   run/beam.sock      control socket                                                     0600
   run/beam.lock      exclusive lock held by the running daemon
+  daemon.log         the output of a daemon started with --detach
 ```
 
 `entry` in `fleet.json` is this machine's own signed membership entry.
@@ -76,10 +77,13 @@ $BEAM_DIR/
 ```
 
 The signed statement is `canonical(entry without assertion)`: JSON per RFC 8785 (JCS),
-keys sorted, no whitespace, integers only. Its hash is the WebAuthn challenge:
+keys sorted, no whitespace, integers only (safe integers; a duplicate key or any other
+number is `bad-entry`). The WebAuthn challenge commits to its hash, so the directory
+worker can recompute it without the plaintext:
 
 ```
-challenge = SHA-256( "beam-member:v1" ‖ canonical(statement) )
+statementHash = SHA-256( canonical(statement) )
+challenge     = SHA-256( "beam-member:v1" ‖ statementHash )
 ```
 
 **Verification**, given `fleet.json`:
@@ -108,7 +112,8 @@ machine that changes its address re-runs `beam join`, which is one tap.
 { "v": 1, "kind": "revoke", "peerId": "…", "issuedAt": …, "assertion": { … } }
 ```
 
-`challenge = SHA-256("beam-revoke:v1" ‖ canonical(statement))`, verified as above.
+`challenge = SHA-256("beam-revoke:v1" ‖ statementHash)`, verified as above (steps 1, 4
+and 5; a revocation carries no `nodePublic`, `address` or `label`).
 Permanent: every holder re-sends it forever, so there is no un-revoke; a revoked machine
 returns with a new node key, which is a new `peerId`.
 
@@ -120,20 +125,21 @@ record is:
 ```
 statementHash = SHA-256(canonical(statement))
 blob          = nonce(24) ‖ XChaCha20-Poly1305(K_dir, nonce,
-                  aad = "beam-dir:v1" ‖ fleetId ‖ statementHash,
+                  aad = "beam-dir:v1" ‖ fleetId (64 hex characters) ‖ statementHash,
                   plaintext = canonical(entry or revocation, assertion included))
 ```
 
-An append sends `{ statementHash, blob, assertion }`. The worker verifies the assertion
-under the fleet's registered credential with `challenge = SHA-256(domain ‖ statementHash)`,
-which it can compute without the plaintext, and stores all three. So **appending needs a
+An append sends `{ kind, statementHash, blob, assertion }`. The worker verifies the
+assertion under the fleet's registered credential with `challenge = SHA-256(domain ‖
+statementHash)` for the domain of `kind`, which it can compute without the plaintext, and
+stores the last three. So **appending needs a
 tap**; a revoked machine holding `K_dir` and `T_read` can read forever and never write.
 Readers decrypt, check that the statement inside hashes to `statementHash` (a compromised
 daemon could append a valid assertion with an unrelated blob; that costs one slot and is
 discarded), then verify the record as in "The membership entry".
 
-The directory is read at join and at daemon start, appended at join and revoke with
-retry from `state.db` while the daemon runs, and never polled. No runtime behaviour
+The directory is read at join and at daemon start, written at init, join and revoke
+with retry from `state.db` while the daemon runs, and never polled. No runtime behaviour
 waits on it.
 
 ## Ceremonies
@@ -150,13 +156,19 @@ The page:
    `navigator.credentials.get({ publicKey: { rpId: "beam.n10.is", challenge, userVerification: "required", extensions: { prf: { eval: { first: salt } } } } })`.
    After `create` it checks `getClientExtensionResults().prf?.enabled === true` and
    fails with `prf-unsupported` otherwise.
-3. Navigates to `http://127.0.0.1:<port>/cb#state=…&result=…`.
+3. Navigates to `http://127.0.0.1:<port>/cb#state=…&result=…` followed, for `ok`, by the
+   call's output: `credentialId`, `clientDataJSON` and, for `create`, `attestationObject`;
+   for `get`, `authenticatorData`, `signature` and `prf` (`prf.results.first`), each
+   unpadded base64url.
 
 Fragments are not sent in HTTP requests, so the daemon serves a landing page at `/cb`
 (`Cache-Control: no-store`) whose inline script reads `location.hash`, clears it, and
-`POST`s the payload to `/cb/result` on the same loopback origin. The daemon validates
-`state`, handles the result, answers "done, close this tab", and closes the listener.
-Timeout five minutes. Result codes: `ok`, `prf-unsupported`, `cancelled`, `failed`.
+`POST`s the payload to `/cb/result` on the same loopback origin. The daemon answers only
+requests that name `127.0.0.1:<port>` as their host, validates `state` (another ends the
+ceremony `ceremony-state`), handles the result, answers "done, close this tab", and closes
+the listener. It verifies a `create` itself: `webauthn.create` over its challenge for
+`beam.n10.is` with user verification. Timeout five minutes. Result codes: `ok`,
+`prf-unsupported`, `cancelled`, `failed`.
 
 Page CSP: `default-src 'none'; script-src 'sha256-…'; style-src 'sha256-…'`. It makes no
 requests. The daemon's `/cb` page has the same policy plus `connect-src 'self'`.
@@ -174,48 +186,72 @@ nothing else.
 
 ### `beam init [--label NAME] [--fleet-name NAME]` — first machine
 
-1. Generate `key.json`; fetch the DERP map; pick a region; compute the address.
+1. Generate `key.json` if absent: fetch the DERP map, home the key on the region that
+   answers fastest, compute the address. The label defaults to the host name up to its
+   first dot, cut to 64 characters; the fleet name to `beam`.
 2. `create` ceremony: registers the credential. Record `credentialId`,
-   `credentialPublicKey`, `fleetId`. Check `prf.enabled`.
+   `credentialPublicKey`, `fleetId`. Check `prf.enabled`. beam checks no attestation, so
+   this is where the page is trusted for the root, once ([01](01-model.md)); every later
+   ceremony on this machine verifies under the credential recorded here.
 3. `get` ceremony with the member challenge and PRF evaluation: yields the assertion
    over this machine's entry **and** the directory secret in one tap. Derive `K_dir`,
    `T_read`. Verify the entry locally.
-4. One request to the worker: register the fleet (`credentialPublicKey`,
-   `SHA-256(T_read)`) and append the entry. Write `fleet.json`.
+4. Queue the entry in `state.db`, then write `fleet.json`. One request to the worker:
+   register the fleet (`credentialPublicKey`, `SHA-256(T_read)`) with the entry, dequeued
+   once the worker has it; while the worker is unavailable it stays queued.
 
 Two taps, once per fleet.
 
 ### `beam join [--label NAME]` — every other machine; also re-join after an address change
 
-1. Generate `key.json` if absent; compute the address; build the statement.
+1. Generate `key.json` if absent, or home its node key again on the region that answers
+   fastest when its region is not on the daemon's DERP map ([03](03-transport.md)); compute
+   the address; build the statement.
 2. `get` ceremony with the member challenge and PRF evaluation: assertion plus
    directory secret. Derive `K_dir`, `T_read`.
-3. Fetch the directory with `T_read`. The response carries `credentialId` and
-   `credentialPublicKey`; verify this machine's own assertion under them (a worker lying
-   about the credential fails here, because the real passkey made the assertion).
-   Decrypt and verify every record; refuse if this `peerId` is revoked.
-4. Encrypt and append this machine's entry. Write `fleet.json` and `state.db`. Dial
-   every member; each admits this machine on first contact ([03](03-transport.md)).
+3. Fetch the directory with `T_read`, which alone names the fleet (`GET /v1/entries`; the
+   joining machine cannot know `fleetId` yet). The response carries `fleetId`,
+   `credentialId` and `credentialPublicKey`; verify this machine's own assertion under
+   them. A worker lying about the credential alone fails here. A page and a worker lying
+   together can present a credential of their own, and the machine joins their fleet: a
+   fresh join trusts them for the root, once, as `init` trusts the page
+   ([01](01-model.md)). The check is the fleet fingerprint `join` prints, which must be
+   the one `beam status` shows on a machine already in the fleet ([07](07-cli.md)).
+   Decrypt and verify every
+   record; refuse if this `peerId` is revoked. A token that opens no fleet is
+   `wrong-passkey`.
+4. Queue this machine's entry in `state.db`, then write `fleet.json`. Encrypt and append
+   the entry, dequeued once the worker has it. Dial every member; each admits this
+   machine on first contact ([03](03-transport.md)).
 
-One tap. On a machine that already has `fleet.json`, step 2 also checks the re-derived
-`K_dir` against the cached one (`wrong-passkey`).
+One tap. On a machine that already has `fleet.json` the root is pinned: step 2 also
+checks the re-derived `K_dir` against the cached one, and step 3 takes nothing from the
+directory's credential. The entry and every record verify under the cached one, so an
+assertion by any other credential is `wrong-passkey`.
 
 ### `beam revoke <peer>` — from any member
 
 1. Build the revocation statement and blob; a `get` ceremony signs it, displaying
    "Remove **oldlaptop** (…) from your fleet". Verify locally, including that the
    assertion's PRF output re-derives the cached `K_dir` (`wrong-passkey` otherwise).
-2. Apply locally: store the revocation, terminate the peer's tunnels and streams.
-3. Push it on every live `sync` stream. Append to the directory; on failure store as
-   pending and retry with backoff while the daemon runs.
-4. Report `{ local: true, published: true | "pending", acknowledgedBy: n }`.
+2. Apply locally: store the revocation and queue it for the directory in one
+   transaction; terminate the peer's tunnels and streams.
+3. Push it on every live `sync` stream. Append it to the directory and dequeue it once
+   the worker has it, or held it already; otherwise it stays queued and is retried with
+   backoff while the daemon runs, a restart included.
+4. Report `{ local: true, published: true | "pending", acknowledgedBy: n }`. `n` counts the
+   peers whose sync answered, within 5 s, a ping sent right after the revocation: the
+   stream is ordered, so that pong proves the peer read the revocation first.
 
 ### `beam fleet reset`
 
 Daemon-owned recovery for a lost passkey or a compromised fleet: closes every tunnel,
 deletes `fleet.json` and all peers, revocations and pending writes from `state.db`,
 keeps `key.json` (the machine's identity is not the problem) and the mailbox tables
-(queued mail to old peers is deleted with the peers). Prompts for confirmation. Then
+(queued mail to old peers is deleted with the peers; the message counters, which belong
+to the keys, stay). It ends the ceremony under way,
+and one already past its tap commits nothing (`ceremony-cancelled`): a ceremony commits
+only if the enrolment it began under is unchanged. Prompts for confirmation. Then
 `beam init` or `beam join` as appropriate.
 
 ## The peer table
@@ -240,7 +276,8 @@ open here ([04](04-streams.md)).
 Each direction of a pair has a long-lived `sync` stream opened by the tunnel's dialer
 right after admission. On open the dialer sends every entry and revocation it holds, in
 frames of at most 1 MiB and at most 200 records each, then a `control {"kind":"end"}`.
-Thereafter it sends each new record as it learns it. The receiver verifies each record
+Thereafter it sends each new record as it learns it, including one learned while the dump
+was on its way, which may then arrive twice. The receiver verifies each record
 independently (the passkey signature authenticates the record; the tunnel authenticates
 only the forwarder), applies supersession, stores what is new, and for a newly learned
 member schedules a dial. Revocations are applied before any pending stream open from

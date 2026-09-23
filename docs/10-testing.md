@@ -1,12 +1,14 @@
 # 10 · Testing
 
-Everything but the real browser and real authenticator runs offline: an in-process DERP,
-a test authenticator behind a build tag, an in-process fake worker, and daemons that take
-`$BEAM_DIR`, DERP map and directory URL from flags.
+Everything but the real browser and real authenticator runs offline: an in-process DERP
+that also serves its DERP map, a test authenticator behind a build tag, an in-process fake
+worker, and daemons that take `$BEAM_DIR`, the DERP map and the directory URL as
+`control.Options` (the binary's `--derp-map` sets the map).
 
 ## Unit
 
-`go test ./...`. Table tests for every table in the spec. Vectors in
+`go test ./...`. Every table in the spec has a test: a table test where the table is a
+list of cases, a scenario where it is a protocol (grants, outcomes, transactions). Vectors in
 `internal/identity/testdata/`: fixed node keys, a fixed ES256 credential, canonical
 statements, their hashes, valid assertions, and one failing vector per verifier check
 (bad peerId, address key mismatch, zero PSK, wrong credential id, wrong origin, wrong
@@ -14,9 +16,14 @@ rpIdHash, UV unset, bad signature, revoked). Canonical JSON (JCS) has its own ve
 HKDF derivations are pinned so a salt or info change fails loudly.
 
 Property tests (`pgregory.net/rapid`): frame codec under arbitrary splits; header lines at
-and over the cap; mailbox under random crash points between the transactions in
-[05](05-mailbox.md) (using SQLite's ability to kill a connection mid-write). Found
-counterexamples become fixed cases.
+and over the cap; mailbox under random crash points between and inside the transactions
+in [05](05-mailbox.md) (SQLite's commit hook turns a chosen commit into a rollback, and
+the machine restarts). Found counterexamples become fixed cases.
+
+The npm packages: `node --test` runs the shim with a shell script standing in for the
+binary (arguments, exit code, `128+signal`, each forwarded signal), `npm/pack.mjs`
+over stand-in binaries, and `npm/version.mjs` over stable, prerelease and noncanonical
+tags.
 
 ## Dev DERP
 
@@ -24,7 +31,10 @@ counterexamples become fixed cases.
 `httptest` TLS server, loopback STUN) and reproduces the test-network isolation from
 tailcat's own `TestMain`, not only its environment variable. The harness starts one relay
 and passes its map to every daemon via `--derp-map`. Forced relay paths are tested by
-blocking UDP between daemons.
+blocking UDP between daemons: `devderp.ForceRelay` sets tailscale's
+`TS_DEBUG_ALWAYS_USE_DERP`, which gives every engine in the process no UDP socket and
+is inherited by child processes. Each new `Client` then spends netcheck's 3 s UDP
+timeout before it connects ([03](03-transport.md), Footprint).
 
 ## Test authenticator
 
@@ -50,7 +60,10 @@ CI so the fake cannot drift.
 
 ## Integration
 
-Two to four daemons, temp `$BEAM_DIR`s, dev DERP, fake worker, test authenticator:
+Two to four daemons, temp `$BEAM_DIR`s, dev DERP, fake worker, test authenticator. The
+daemons run in the test process (`control.Run`, built with the `beamtest` tag) and the CLI
+is called as `cli.Main`; where a scenario needs a dialer that misbehaves or falls silent, a
+bare member node (transport only) stands in for a daemon:
 
 | Scenario | Proves |
 |---|---|

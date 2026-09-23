@@ -1,0 +1,5 @@
+/*
+  Content-Security-Policy: default-src 'none'; script-src 'sha256-sTOC7fzhUQebewO7qa/+nks8CYuCqOayNQczbjf1efQ='; style-src 'sha256-J8vhBZDRy7UgNLBlImNpFovxnKe0dLLpSAsq7pRzN7A='
+  Referrer-Policy: no-referrer
+  X-Frame-Options: DENY
+  Cache-Control: public, max-age=300

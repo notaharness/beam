@@ -1,0 +1,101 @@
+name: Release
+
+# A vX.Y.Z tag releases X.Y.Z. Run by hand from main with a version, it
+# rehearses that release: everything but the GitHub release, and npm publish
+# with --dry-run. CONTRIBUTING.md "Releasing" has the steps.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The tag to rehearse, vX.Y.Z
+        required: true
+
+permissions: {}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      prerelease: ${{ steps.tag.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - id: tag
+        run: node npm/version.mjs "$TAG" >> "$GITHUB_OUTPUT"
+        env:
+          TAG: ${{ inputs.version || github.ref_name }}
+      - run: make dist VERSION="$VERSION"
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+      - run: node npm/pack.mjs "$VERSION"
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+      - name: npm would publish every package at the binary's version
+        run: |
+          built=$(dist/beam-linux-amd64 version)
+          for p in dist/npm/*/; do
+            name=$(jq -r .name "$p/package.json")
+            got=$(npm publish --dry-run --offline --json --tag "$DIST_TAG" "$p" | jq -r --arg n "$name" '(.[$n] // .).version')
+            if [ "$got" != "$built" ]; then echo "$p: npm has $got, the binary $built"; exit 1; fi
+          done
+        env:
+          DIST_TAG: ${{ steps.tag.outputs.prerelease == 'true' && 'next' || 'latest' }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: binaries
+          path: dist/beam-*
+      - if: github.event_name == 'push'
+        run: gh release create "$GITHUB_REF_NAME" dist/beam-* --verify-tag --generate-notes --prerelease="$PRERELEASE"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ steps.tag.outputs.prerelease }}
+
+  # Its own job, so that a publish that fails after the GitHub release exists
+  # can be re-run alone. It packs the binaries the release job built.
+  publish:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # trusted publishing and provenance
+    env:
+      VERSION: ${{ needs.release.outputs.version }}
+      DIST_TAG: ${{ needs.release.outputs.prerelease == 'true' && 'next' || 'latest' }}
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && '--dry-run' || '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24 # npm 11.5.1 or later publishes through trusted publishing
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: binaries
+          path: dist
+      - run: node npm/pack.mjs "$VERSION"
+      # npm tries trusted publishing (OIDC) first and falls back to the token,
+      # so the NPM_TOKEN secret matters only while a package has no trusted
+      # publisher: the first release.
+      - name: the npm token, when NPM_TOKEN is set
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then echo "no NPM_TOKEN: publishing through trusted publishing"; exit 0; fi
+          echo "NPM_TOKEN is $(npm whoami)'s"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: publish the platform packages, then the shim
+        run: |
+          for p in dist/npm/beam-*/ dist/npm/beam/; do
+            npm publish $DRY_RUN --provenance --access public --tag "$DIST_TAG" "$p"
+          done
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -1,2 +1,4 @@
 .claude/
 dist/
+cover.out
+testdata/rapid/
