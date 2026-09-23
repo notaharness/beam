@@ -106,6 +106,7 @@ bare member node (transport only) stands in for a daemon:
 | junk in the log | valid assertion, unrelated blob → ignored |
 | daemon lock | second daemon exits 1; connect-or-spawn loser connects to winner |
 | shutdown ends sessions | an enrolled daemon in a process of its own (`beam daemon --directory`, a beamtest-only flag naming the fake worker) serves a pty and an exec whose processes ignore SIGHUP; after SIGTERM, both are dead when the daemon has exited |
+| inherited descriptors | a daemon started with an extra descriptor open does not pass it to a pty it serves |
 | exit with parent | a parent process spawns `beam daemon --exit-with-parent` with a stdin pipe and is killed with SIGKILL: the daemon exits; a terminal, `/dev/null` or `--detach` with the flag is a usage error |
 | reset | tunnels closed, fleet state gone, key kept, re-join works |
 

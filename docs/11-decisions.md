@@ -58,6 +58,7 @@
 | D52 | The fragment uses one-letter keys and carries the machine's label once; the page composes the heading from `o` and `l`, and groups the fingerprint itself. | Every character is QR area: this takes a typical URL from version 10 to 8. The heading is the page's text either way; the daemon only chose among three. | 02, 07 |
 | D53 | The desktop owns a daemon it spawned: it stops it on quit, and `--exit-with-parent` stops it when the app is gone however it went; a daemon already running is left alone. | A desktop app whose machine stays reachable after the app is closed surprises its user. Stdin closing when the parent exits is the one parent-death signal that works alike on Linux and macOS, needs no polling and cannot be fooled by the parent's pid being reused; `PR_SET_PDEATHSIG` is Linux-only and fires when the forking thread exits. | 06, 07, 08 |
 | D54 | Shutdown, reset and re-join wait, bounded, for the streams they end to tear down (06). | A pty session that ignores SIGHUP is killed 5 s later by a timer in the daemon; a daemon that exited first would leave it running. The bound keeps a stuck handler from holding shutdown forever. | 04, 06 |
+| D55 | `beam daemon` marks every inherited descriptor above 2 close-on-exec at start, walking `/dev/fd`; where it cannot be listed they stay as they are. | A daemon started from Electron inherits descriptors that are not close-on-exec (inotify, a socket, a V8 snapshot), and every shell it starts for a peer would hold them. | 07 |
 
 ## Milestone gate
 

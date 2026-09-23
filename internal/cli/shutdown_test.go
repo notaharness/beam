@@ -12,27 +12,25 @@ import (
 	"github.com/notaharness/beam/internal/control"
 )
 
-// served is beta, an enrolled daemon in a process of its own, which alpha
-// reaches, serving a pty and an exec that alpha opened; each writes its pid
-// to dir/pty and dir/exec. exited closes once beta's daemon has exited.
-func served(t *testing.T, dir, ptyScript, execScript string) (b *machine, d *exec.Cmd, exited <-chan struct{}) {
+// pair is alpha, a daemon in this process, connected to beta, an enrolled
+// daemon in a process of its own (machine.process) with extra from fd 3.
+func pair(t *testing.T, extra ...*os.File) (a, b *machine, d *exec.Cmd, exited <-chan struct{}) {
 	t.Helper()
-	a := newMachine(t, "alpha")
-	b = newMachine(t, "beta")
+	a, b = newMachine(t, "alpha"), newMachine(t, "beta")
 	a.knows(t, b)
 	b.knows(t, a)
 	a.start(t)
-	d = exec.Command(os.Args[0], "daemon", "--derp-map", relay.MapURL, "--directory", dirURL)
-	d.Env, d.Stderr = append(os.Environ(), "BEAM_CONFIG_DIR="+b.dir), os.Stderr
-	if err := d.Start(); err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan struct{})
-	go func() { d.Wait(); close(done) }()
-	t.Cleanup(func() { d.Process.Kill(); <-done })
+	d, exited = b.process(t, extra...)
 	waitFor(t, 10*time.Second, "beta's socket", func() bool { return answering(b) })
 	waitState(t, a, b, "connected")
+	return a, b, d, exited
+}
 
+// served is beta of a pair, serving a pty and an exec that alpha opened; each
+// writes its pid to dir/pty and dir/exec.
+func served(t *testing.T, dir, ptyScript, execScript string) (b *machine, d *exec.Cmd, exited <-chan struct{}) {
+	t.Helper()
+	a, b, d, exited := pair(t)
 	openPTY(t, a, "beta", "sh", "-c", ptyScript)
 	c, err := control.Connect(a.paths(), nil)
 	if err != nil {
@@ -52,7 +50,7 @@ func served(t *testing.T, dir, ptyScript, execScript string) (b *machine, d *exe
 	t.Cleanup(func() { ac.Close() })
 	waitPid(t, dir+"/pty")
 	waitPid(t, dir+"/exec")
-	return b, d, done
+	return b, d, exited
 }
 
 // stubborn is a script that ignores SIGHUP and writes its pid to file.

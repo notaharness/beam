@@ -34,6 +34,7 @@ func runDaemon(e *env) int {
 		fmt.Fprintln(e.stderr, "--exit-with-parent needs stdin to be a pipe or socket from the parent, and no --detach")
 		return e.fail(errUsage)
 	}
+	closeOnExec()
 	p, err := e.paths()
 	if err != nil {
 		return e.fail(err)

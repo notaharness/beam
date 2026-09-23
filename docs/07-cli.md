@@ -85,7 +85,9 @@ ran ([01](01-model.md), The relayed result).
 ## The daemon
 
 `beam daemon` runs in the foreground until `daemon.shutdown`, SIGTERM or SIGINT;
-`--detach` is connect-or-spawn's ([06](06-control-socket.md)).
+`--detach` is connect-or-spawn's ([06](06-control-socket.md)). It first marks every
+descriptor it inherited above stderr close-on-exec, so no process it starts, for a peer
+or as the detached daemon, inherits one from whatever started beam.
 
 `--exit-with-parent` ties the daemon to the process that started it, through its stdin:
 
