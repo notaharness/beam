@@ -4,7 +4,6 @@ package cli_test
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +12,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -129,17 +127,6 @@ func waitPid(t *testing.T, file string) int {
 func waitGone(t *testing.T, pid int) {
 	t.Helper()
 	waitFor(t, 10*time.Second, "the remote process to end", func() bool { return ended(pid) })
-}
-
-// ended reports whether pid runs no more: it is gone, or a zombie not yet
-// reaped (the acceptor keeps an exited leader until its group is torn down).
-func ended(pid int) bool {
-	if syscall.Kill(pid, 0) != nil {
-		return true
-	}
-	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
-	i := bytes.LastIndexByte(b, ')') // the state follows the command's name
-	return err == nil && i > 0 && i+2 < len(b) && b[i+2] == 'Z'
 }
 
 // docs/04 Input: the acceptor always reads on, so however much input a

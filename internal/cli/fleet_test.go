@@ -19,7 +19,6 @@ import (
 	"github.com/notaharness/beam/internal/identity"
 	"github.com/notaharness/beam/internal/stream"
 	"github.com/notaharness/beam/internal/transport"
-	"golang.org/x/sys/unix"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/logger"
 )
@@ -309,33 +308,6 @@ func TestRevocationBeatsPendingOpen(t *testing.T) {
 				t.Fatal("the exec started")
 			}
 		})
-	}
-}
-
-// watchExec copies true(1) to a file of the test's own and reports whether it
-// has been executed: an exec opens it, which inotify reports, and a process
-// start returns only once its exec has succeeded.
-func watchExec(t *testing.T) (bin string, started func() bool) {
-	t.Helper()
-	b, err := os.ReadFile("/bin/true")
-	if err != nil {
-		t.Fatal(err)
-	}
-	bin = filepath.Join(t.TempDir(), "run-me")
-	if err := os.WriteFile(bin, b, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	fd, err := unix.InotifyInit1(unix.IN_NONBLOCK | unix.IN_CLOEXEC)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { unix.Close(fd) })
-	if _, err := unix.InotifyAddWatch(fd, bin, unix.IN_OPEN); err != nil {
-		t.Fatal(err)
-	}
-	return bin, func() bool {
-		n, _ := unix.Read(fd, make([]byte, 4096))
-		return n > 0
 	}
 }
 
