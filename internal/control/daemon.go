@@ -9,7 +9,6 @@ import (
 	"io/fs"
 	"net"
 	"os"
-	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -73,10 +72,8 @@ func Run(ctx context.Context, o Options) error {
 	if o.Directory == "" {
 		o.Directory = directory.DefaultURL
 	}
-	for _, dir := range []string{filepath.Join(o.Paths.Dir, "run"), filepath.Dir(o.Paths.Socket)} {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return err
-		}
+	if err := o.Paths.Private(); err != nil {
+		return err
 	}
 	unlock, err := lock(o.Paths.file("run/beam.lock"))
 	if err != nil {
