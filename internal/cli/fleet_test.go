@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -246,18 +247,34 @@ func TestRevocationOnLiveSync(t *testing.T) {
 }
 
 // docs/02 Sync: a record learned while a dump is on its way reaches the peer
-// as a delta; none falls between the dump's snapshot and the deltas.
+// as a delta; none falls between the dump's snapshot and the deltas. More
+// than the delta queue holds fails the tunnel, and the next dump has them.
 func TestRecordLearnedDuringDump(t *testing.T) {
-	a, b, c := newMachine(t, "alpha"), newMachine(t, "beta"), newMachine(t, "gamma")
-	a.knows(t, b, c)
-	b.knows(t, a, c)
-	reached, release := pauseAt(t, a, "dumped", b)
-	a.start(t)
-	b.start(t)
-	await(t, reached, "alpha's dump to beta")
-	push(t, a, revocation(c))
-	release()
-	waitState(t, b, c, "revoked")
+	for _, before := range []int{0, 300} {
+		t.Run(fmt.Sprintf("%d records before", before), func(t *testing.T) {
+			a, b, c := newMachine(t, "alpha"), newMachine(t, "beta"), newMachine(t, "gamma")
+			a.knows(t, b, c)
+			b.knows(t, a, c)
+			reached, release := pauseAt(t, a, "dumped", b)
+			a.start(t)
+			b.start(t)
+			await(t, reached, "alpha's dump to beta")
+			var recs []identity.Record
+			for i := range before {
+				r := identity.Record{V: 1, Kind: identity.Revoke, PeerID: fmt.Sprintf("%032x", i+1), IssuedAt: time.Now().UnixMilli()}
+				owner.SignRecord(&r)
+				recs = append(recs, r)
+			}
+			for len(recs) > 0 {
+				n := min(len(recs), 200) // a sync frame's records
+				push(t, a, recs[:n]...)
+				recs = recs[n:]
+			}
+			push(t, a, revocation(c))
+			release()
+			waitState(t, b, c, "revoked")
+		})
+	}
 }
 
 // docs/02: a revocation applies before a pending open proceeds. An exec
