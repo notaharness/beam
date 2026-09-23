@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/notaharness/beam/internal/ceremony"
 	"github.com/notaharness/beam/internal/control"
 	"github.com/notaharness/beam/internal/devderp"
 	"github.com/notaharness/beam/internal/directory"
@@ -630,6 +631,38 @@ func TestRevocationReadAtStart(t *testing.T) {
 	a.stop()
 	b.start(t)
 	waitState(t, b, c, "revoked")
+}
+
+// docs/02 Ceremonies: a ceremony nobody answers ends ceremony-timeout after
+// its five minutes, and one nobody waits on then frees the daemon for the
+// next.
+func TestCeremonyTimeout(t *testing.T) {
+	defer ceremony.SetTimeout(time.Second)()
+	os.Unsetenv("BEAM_TEST_AUTHENTICATOR")
+	defer authenticate(owner)
+	m := blank(t, "fresh")
+	m.start(t)
+	c, err := control.Connect(m.paths(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	start := map[string]any{"label": "fresh"}
+	if err := c.Call("join.start", start, nil); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond) // the client prints the URL, then waits
+	if err := c.Call("join.wait", nil, nil); code(err) != "ceremony-timeout" {
+		t.Errorf("join.wait: %v, want ceremony-timeout", err)
+	}
+	if err := c.Call("join.start", start, nil); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * time.Second)
+	if err := c.Call("join.start", start, nil); err != nil {
+		t.Errorf("a start after one nobody waited on timed out: %v", err)
+	}
+	c.Call("ceremony.cancel", nil, nil)
 }
 
 // docs/06: one ceremony at a time, a *.wait answers only its own *.start,

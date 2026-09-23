@@ -9,11 +9,20 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/notaharness/beam/internal/identity"
 )
 
 func init() { answer = testAnswer }
+
+// SetTimeout makes every ceremony in this process time out after d, until
+// the returned function restores the timeout.
+func SetTimeout(d time.Duration) (restore func()) {
+	was := Timeout
+	Timeout = d
+	return func() { Timeout = was }
+}
 
 // testAnswer is the test authenticator (docs/10): with
 // BEAM_TEST_AUTHENTICATOR set, a ceremony skips the browser. The

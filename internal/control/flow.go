@@ -19,7 +19,8 @@ type flow struct {
 }
 
 // begin starts op's first ceremony. A flow nobody waits on ends with its
-// ceremony's timeout.
+// ceremony's timeout, the one clock: a *.wait under way hears
+// ceremony-timeout from the ceremony itself.
 func (d *daemon) begin(op string, req ceremony.Request, then func(context.Context, *clientConn, ceremony.Result) (any, error)) (any, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -30,7 +31,7 @@ func (d *daemon) begin(op string, req ceremony.Request, then func(context.Contex
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(d.ctx, ceremony.Timeout)
+	ctx, cancel := context.WithCancel(d.ctx)
 	f := &flow{op: op, ctx: ctx, cancel: cancel, cer: cer, then: then}
 	context.AfterFunc(ctx, func() {
 		cer.Close()
@@ -40,6 +41,13 @@ func (d *daemon) begin(op string, req ceremony.Request, then func(context.Contex
 		}
 		d.mu.Unlock()
 	})
+	go func() {
+		select {
+		case <-cer.TimedOut():
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
 	d.flow = f
 	return map[string]string{"ceremonyUrl": cer.URL}, nil
 }
