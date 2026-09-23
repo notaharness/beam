@@ -64,7 +64,7 @@ pins `@notaharness/beam` with a caret range.
 
 `npm/beam/` is the shim and `npm/platform/package.json` the platform packages' template.
 `node npm/pack.mjs X.Y.Z` writes all five into `dist/npm/` from the binaries `make dist`
-left in `dist/`.
+left in `dist/`. Every package is MIT and carries the repository's `LICENSE`.
 
 ## The worker
 

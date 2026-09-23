@@ -2,6 +2,7 @@
   "name": "@notaharness/beam",
   "version": "0.0.0",
   "description": "Connect the machines one person owns: shells, commands and durable messages over an encrypted peer-to-peer fleet.",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/notaharness/beam.git"

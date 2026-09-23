@@ -9,6 +9,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const pack = path.join(__dirname, "..", "pack.mjs");
+const license = fs.readFileSync(path.join(__dirname, "..", "..", "LICENSE"), "utf8");
 
 function inDist(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "beam-pack-"));
@@ -51,6 +52,16 @@ test("writes the shim and a package per platform at the version", (t) => {
     const bin = path.join(dir, "dist", "npm", `beam-${platform}`, "beam");
     assert.strictEqual(fs.readFileSync(bin, "utf8"), target);
     assert.strictEqual(fs.statSync(bin).mode & 0o777, 0o755);
+  }
+});
+
+test("every package is MIT and carries LICENSE", (t) => {
+  const dir = inDist(t);
+  const r = spawnSync(process.execPath, [pack, "1.2.3"], { cwd: dir, encoding: "utf8" });
+  assert.strictEqual(r.status, 0, r.stderr);
+  for (const pkg of ["beam", "beam-darwin-arm64", "beam-darwin-x64", "beam-linux-x64", "beam-linux-arm64"]) {
+    assert.strictEqual(read(dir, `${pkg}/package.json`).license, "MIT", pkg);
+    assert.strictEqual(fs.readFileSync(path.join(dir, "dist", "npm", pkg, "LICENSE"), "utf8"), license, pkg);
   }
 });
 
