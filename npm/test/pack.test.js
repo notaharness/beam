@@ -65,8 +65,22 @@ test("every package is MIT and carries LICENSE", (t) => {
   }
 });
 
-test("refuses a version that is not semver", (t) => {
-  const r = spawnSync(process.execPath, [pack, "v1.2.3"], { cwd: inDist(t), encoding: "utf8" });
-  assert.strictEqual(r.status, 2);
-  assert.match(r.stderr, /usage/);
+test("refuses a version that is not canonical semver", (t) => {
+  const dir = inDist(t);
+  for (const v of ["v1.2.3", "01.2.3", "1.2.3-01", "1.2.3+build.1"]) {
+    const r = spawnSync(process.execPath, [pack, v], { cwd: dir, encoding: "utf8" });
+    assert.strictEqual(r.status, 2, v);
+    assert.match(r.stderr, /usage/, v);
+  }
+});
+
+test("npm publishes each package at the version pack wrote", (t) => {
+  const dir = inDist(t);
+  const r = spawnSync(process.execPath, [pack, "1.2.3-rc.1"], { cwd: dir, encoding: "utf8" });
+  assert.strictEqual(r.status, 0, r.stderr);
+  for (const p of ["beam", "beam-linux-x64"]) {
+    const dry = spawnSync("npm", ["publish", "--dry-run", "--json", "--offline", "--tag", "next"], { cwd: path.join(dir, "dist", "npm", p), encoding: "utf8" });
+    const out = JSON.parse(dry.stdout); // keyed by the package's name since npm 11.19
+    assert.strictEqual((out[`@notaharness/${p}`] ?? out).version, "1.2.3-rc.1", p);
+  }
 });

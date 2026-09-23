@@ -51,7 +51,10 @@ stripped ([03](03-transport.md), Footprint).
 ## Versioning
 
 beam has its own semver from the git tag: tag `vX.Y.Z` releases `X.Y.Z`, which
-`beam version`, `status.version` and the five npm packages carry without the `v`.
+`beam version`, `status.version` and the five npm packages carry without the `v`. The
+version is canonical semver without build metadata (`npm/version.mjs`): no leading
+zeros, no empty prerelease identifier, no `+build`, the spellings npm would publish
+differently or not at all. One with a prerelease (`v1.2.3-rc.1`) is a prerelease.
 `status.version` on the socket is how clients check; the peer stream header's `v` is the wire protocol version and is separate. n10
 pins `@notaharness/beam` with a caret range.
 
@@ -155,6 +158,9 @@ worker under `wrangler dev`. Job `darwin`: `make test` on macOS, where the proce
 lifetimes (kqueue, not waitid) and the in-process daemons run for real. The `ci` job also
 runs the npm packages' node tests.
 
-Tag (`.github/workflows/release.yml`, on `v*`): `make dist`, a GitHub release with the four
-binaries, `npm/pack.mjs`, then `npm publish` with provenance of the platform packages and
-last the shim, under `next` for a prerelease tag. It needs the `NPM_TOKEN` secret.
+Tag (`.github/workflows/release.yml`, on `v*`): `npm/version.mjs` reads the tag, and the
+job stops at one that is not canonical. Then `make dist`, `npm/pack.mjs`, and a check that
+`npm publish --dry-run` would publish every package at the version the binary prints;
+only then a GitHub release with the four binaries, marked a prerelease for a prerelease
+tag, and `npm publish` with provenance of the platform packages and last the shim, under
+`next` for a prerelease. It needs the `NPM_TOKEN` secret.

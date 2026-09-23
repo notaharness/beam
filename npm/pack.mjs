@@ -5,10 +5,11 @@
 //
 //	node npm/pack.mjs 1.2.3
 import { chmodSync, copyFileSync, cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { canonical } from "./version.mjs";
 
 const version = process.argv[2] ?? "";
-if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version)) {
-  console.error("usage: node npm/pack.mjs <semver without v>");
+if (!canonical(version)) {
+  console.error("usage: node npm/pack.mjs <canonical semver, without v or build metadata>");
   process.exit(2);
 }
 const json = (url) => JSON.parse(readFileSync(new URL(url, import.meta.url)));
