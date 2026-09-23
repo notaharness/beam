@@ -238,11 +238,31 @@ func TestRevocationOnLiveSync(t *testing.T) {
 	push(t, a, revocation(c))
 	waitState(t, a, c, "revoked")
 	waitState(t, b, c, "revoked")
+	if r := a.beam("", "exec", "gamma", "--", "true"); r.code != 1 || !strings.HasPrefix(r.err, "revoked-peer") {
+		t.Errorf("exec to a revoked machine: %+v, want revoked-peer", r)
+	}
+
 	if r := c.beam("", "exec", "beta", "--", "true"); r.code != 1 {
 		t.Errorf("revoked machine's exec: %+v, want refused", r)
 	}
-	if r := a.beam("", "exec", "gamma", "--", "true"); r.code != 1 || !strings.HasPrefix(r.err, "revoked-peer") {
-		t.Errorf("exec to a revoked machine: %+v, want revoked-peer", r)
+
+	// docs/03 admission step 3: the hello itself is refused, before any
+	// stream, for the revoked machine's own key and entry.
+	c.stop()
+	entry, _ := json.Marshal(c.entry)
+	n, err := transport.Start(transport.Config{Key: c.key, Entry: entry,
+		Admit:  func(json.RawMessage) (string, [32]byte, func(), string) { return "", [32]byte{}, nil, "bad-entry" },
+		Handle: func(_ string, _ stream.Header, c *stream.Conn) { c.Close() }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer n.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, err = n.Dial(ctx, b.entry.Address)
+	var ref *transport.Refused
+	if !errors.As(err, &ref) || ref.Reason != "revoked" {
+		t.Errorf("the revoked machine's hello: %v, want revoked", err)
 	}
 }
 
