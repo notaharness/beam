@@ -137,6 +137,9 @@ func TestGrants(t *testing.T) {
 	if r := a.beam("", "exec", "beta", "--", "true"); r.code != 1 || !strings.HasPrefix(r.err, "grant") {
 		t.Errorf("exec under msg: %+v, want grant", r)
 	}
+	if r := a.beam("", "msg", "send", "beta", "under msg"); r.out != "delivered to beta\n" {
+		t.Errorf("mail under msg: %+v", r)
+	}
 	if r := b.beam("", "peer", "grant", "alpha", "none"); r.code != 0 {
 		t.Fatalf("grant: %+v", r)
 	}
@@ -146,6 +149,9 @@ func TestGrants(t *testing.T) {
 	}
 	if v := b.peers(t)[a.id()]; !v.Inbound || v.Grant != "none" {
 		t.Errorf("beta's view under none: %+v", v)
+	}
+	if r := a.beam("", "msg", "send", "beta", "under none"); r.out != "stored for beta; delivery pending (beta has not acknowledged it). beam will keep delivering it until beta does. Do not send it again.\n" {
+		t.Errorf("mail under none: %+v, want stored without an ack", r) // the open msg stream was closed too
 	}
 	if r := b.beam("", "peer", "grant", "alpha", "root"); r.code != 1 || !strings.HasPrefix(r.err, "params") {
 		t.Errorf("bad grant: %+v, want params", r)

@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -174,9 +175,14 @@ type result struct {
 // beam runs the CLI against m's daemon.
 func (m *machine) beam(stdin string, args ...string) result {
 	var out, errb bytes.Buffer
-	vars := []string{"BEAM_CONFIG_DIR=" + m.dir, "HOME=" + os.Getenv("HOME"), "PATH=" + os.Getenv("PATH")}
-	code := cli.Main(args, vars, strings.NewReader(stdin), &out, &errb)
+	code := m.run(strings.NewReader(stdin), &out, &errb, args...)
 	return result{out.String(), errb.String(), code}
+}
+
+// run is beam on m with the given streams.
+func (m *machine) run(stdin io.Reader, stdout, stderr io.Writer, args ...string) int {
+	vars := []string{"BEAM_CONFIG_DIR=" + m.dir, "HOME=" + os.Getenv("HOME"), "PATH=" + os.Getenv("PATH")}
+	return cli.Main(args, vars, stdin, stdout, stderr)
 }
 
 func (m *machine) peers(t *testing.T) map[string]control.PeerView {
