@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -599,13 +598,7 @@ func TestDaemonDetach(t *testing.T) {
 	if r := m.beam("", "daemon", "--detach"); r.code != 0 {
 		t.Fatalf("detach: %+v", r)
 	}
-	waitFor(t, 5*time.Second, "the daemon's socket", func() bool {
-		c, err := net.Dial("unix", m.paths().Socket) // not Connect, which would spawn one
-		if err == nil {
-			c.Close()
-		}
-		return err == nil
-	})
+	waitFor(t, 5*time.Second, "the daemon's socket", func() bool { return answering(m) })
 	c, err := control.Connect(m.paths(), nil)
 	if err != nil {
 		t.Fatal(err)

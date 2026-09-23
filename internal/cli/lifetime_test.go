@@ -4,9 +4,7 @@ package cli_test
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"strconv"
@@ -15,33 +13,32 @@ import (
 	"testing"
 	"time"
 
-	"github.com/creack/pty"
 	"github.com/notaharness/beam/internal/control"
 )
 
+// held keeps the parent's ends of its daemon's pipes from their finalizers.
+var held []any
+
 // parent is this test binary standing in for the desktop app (docs/08): it
-// spawns `beam daemon --exit-with-parent args...` with a stdin pipe it holds,
-// prints the daemon's pid, and waits to be killed.
+// spawns `beam daemon --exit-with-parent args...` with a stdin pipe it holds
+// and a stderr pipe it never reads, prints the daemon's pid, and waits to be
+// killed.
 func parent(args []string) {
 	d := exec.Command(os.Args[0], append([]string{"daemon", "--exit-with-parent"}, args...)...)
-	d.Stderr = os.Stderr
-	if _, err := d.StdinPipe(); err != nil {
+	stdin, err := d.StdinPipe()
+	if err != nil {
 		panic(err)
 	}
+	stderr, err := d.StderrPipe()
+	if err != nil {
+		panic(err)
+	}
+	held = append(held, stdin, stderr)
 	if err := d.Start(); err != nil {
 		panic(err)
 	}
 	fmt.Println(d.Process.Pid)
 	select {}
-}
-
-// answering reports whether m's daemon answers on its socket.
-func answering(m *machine) bool {
-	c, err := net.Dial("unix", m.paths().Socket)
-	if err == nil {
-		c.Close()
-	}
-	return err == nil
 }
 
 // docs/07 The daemon: a daemon started with --exit-with-parent shuts down
@@ -78,8 +75,9 @@ func TestExitWithParentStdinEnds(t *testing.T) {
 }
 
 // docs/10 "exit with parent": the daemon's parent is killed outright; the
-// kernel closes its end of the daemon's stdin, and the daemon shuts down,
-// leaving the lock free for the next.
+// kernel closes its end of the daemon's stdin, and the daemon shuts down
+// cleanly, removing its socket, though the line it logs goes to a stderr
+// pipe nobody holds any more.
 func TestExitWithParentKilled(t *testing.T) {
 	m := blank(t, "fresh")
 	p := exec.Command(os.Args[0], "parent", "--derp-map", relay.MapURL)
@@ -95,17 +93,18 @@ func TestExitWithParentKilled(t *testing.T) {
 	if err != nil || perr != nil {
 		t.Fatalf("the parent printed %q: %v %v", line, err, perr)
 	}
-	defer syscall.Kill(pid, syscall.SIGKILL)
+	t.Cleanup(func() {
+		if !ended(pid) {
+			syscall.Kill(pid, syscall.SIGKILL)
+		}
+	})
 	waitFor(t, 10*time.Second, "the daemon's socket", func() bool { return answering(m) })
 	p.Process.Kill()
 	p.Wait()
-	waitFor(t, 10*time.Second, "the daemon to exit", func() bool {
-		return errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
-	})
-	if answering(m) {
-		t.Error("the socket still answers")
+	waitFor(t, 10*time.Second, "the daemon to exit", func() bool { return ended(pid) })
+	if _, err := os.Stat(m.paths().Socket); !os.IsNotExist(err) {
+		t.Errorf("the socket file is left behind: the daemon did not shut down cleanly (%v)", err)
 	}
-	m.start(t) // the lock is free
 }
 
 // docs/07 The daemon: --exit-with-parent needs a stdin the parent holds, and
@@ -114,12 +113,11 @@ func TestExitWithParentUsage(t *testing.T) {
 	m := blank(t, "fresh")
 	devNull, _ := os.Open(os.DevNull)
 	defer devNull.Close()
-	ptmx, tty, err := pty.Open()
+	file, err := os.CreateTemp(t.TempDir(), "stdin")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer ptmx.Close()
-	defer tty.Close()
+	defer file.Close()
 	r, w, _ := os.Pipe()
 	defer r.Close()
 	defer w.Close()
@@ -128,7 +126,7 @@ func TestExitWithParentUsage(t *testing.T) {
 		args  []string
 	}{
 		"/dev/null":   {devNull, nil},
-		"a terminal":  {tty, nil},
+		"a file":      {file, nil},
 		"with detach": {r, []string{"--detach"}},
 	} {
 		var errb strings.Builder
