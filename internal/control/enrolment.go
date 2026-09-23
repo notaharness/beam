@@ -9,11 +9,13 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/notaharness/beam/internal/ceremony"
 	"github.com/notaharness/beam/internal/identity"
 	"github.com/notaharness/beam/internal/mailbox"
 	"github.com/notaharness/beam/internal/store"
+	"github.com/notaharness/beam/internal/stream"
 	"github.com/notaharness/beam/internal/transport"
 )
 
@@ -31,12 +33,46 @@ type enrolment struct {
 	mail   *mailbox.Subscribers
 
 	writing sync.Mutex // one directory write at a time: a publish, or a pass over the queue
+
+	serving  sync.Mutex
+	ending   bool           // end has begun: no new stream is served
+	handlers sync.WaitGroup // the streams served on e, until each has torn down
 }
 
-// end stops what runs on e; its store stays open for the caller to close.
+// teardown bounds how long end waits for e's streams: a pty session's
+// SIGHUP, its SIGKILL after 5 s, and its reap (docs/04).
+const teardown = 10 * time.Second
+
+// serve runs a stream's handler on e, unless e is ending, and counts it
+// until it returns.
+func (e *enrolment) serve(c *stream.Conn, handle func()) {
+	e.serving.Lock()
+	if e.ending {
+		e.serving.Unlock()
+		c.Close()
+		return
+	}
+	e.handlers.Add(1)
+	e.serving.Unlock()
+	defer e.handlers.Done()
+	handle()
+}
+
+// end stops what runs on e and waits, up to teardown, for its streams to
+// tear down, so that their processes are gone before the daemon is; its
+// store stays open for the caller to close.
 func (e *enrolment) end() {
+	e.serving.Lock()
+	e.ending = true
+	e.serving.Unlock()
 	e.cancel()
 	e.node.Close()
+	done := make(chan struct{})
+	go func() { e.handlers.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(teardown):
+	}
 }
 
 // self is this machine's peer id.
