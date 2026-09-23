@@ -35,6 +35,8 @@ type admission struct {
 	streams map[[32]byte]map[net.Conn]bool // open streams of each bound tunnel
 	dead    map[[32]byte]bool              // refused or superseded client keys
 	pending []unbound                      // tunnels in hello, oldest first
+
+	hook func(point string, c [32]byte) // tests pause here; nil otherwise
 }
 
 type unbound struct {
@@ -49,24 +51,53 @@ func newAdmission(k *Key, admit AdmitFunc, handle HandleFunc) *admission {
 
 // serve takes one accepted stream from the tunnel whose client key is c.
 func (a *admission) serve(conn net.Conn, c [32]byte) {
-	a.mu.Lock()
-	peer, ok := a.bound[c]
-	if ok { // registered under the lock that retirement takes to close it
-		a.streams[c][conn] = true
-	}
-	a.mu.Unlock()
-	if ok {
+	peer, class := a.classify(c, conn)
+	switch class {
+	case bound:
 		defer a.forget(c, conn)
 		a.serveBound(stream.NewConn(conn), peer)
-		return
+	case inHello:
+		defer conn.Close()
+		defer a.leave(conn)
+		conn.SetDeadline(time.Now().Add(helloTimeout))
+		a.hello(stream.NewConn(conn), c)
+	default:
+		conn.Close()
 	}
-	defer conn.Close()
-	if !a.enter(c, conn) {
-		return
+}
+
+// Stream classes.
+const (
+	refused = iota // dead, or its tunnel already has a hello under way
+	bound
+	inHello
+)
+
+// classify decides what a new stream is and registers it in one step under
+// the lock, so no bind or retirement can fall between the two. A new hello
+// beyond the budget evicts the oldest, whose tunnel counts as failed.
+func (a *admission) classify(c [32]byte, conn net.Conn) (string, int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if peer, ok := a.bound[c]; ok {
+		a.streams[c][conn] = true // retirement closes it under this lock
+		return peer, bound
 	}
-	defer a.leave(conn)
-	conn.SetDeadline(time.Now().Add(helloTimeout))
-	a.hello(stream.NewConn(conn), c)
+	if a.dead[c] {
+		return "", refused
+	}
+	for _, u := range a.pending {
+		if u.c == c {
+			return "", refused
+		}
+	}
+	if len(a.pending) == maxUnbound {
+		a.dead[a.pending[0].c] = true
+		a.pending[0].conn.Close()
+		a.pending = a.pending[1:]
+	}
+	a.pending = append(a.pending, unbound{c, conn})
+	return "", inHello
 }
 
 func (a *admission) serveBound(sc *stream.Conn, peer string) {
@@ -83,27 +114,6 @@ func (a *admission) serveBound(sc *stream.Conn, peer string) {
 		return
 	}
 	a.handle(peer, h, sc)
-}
-
-// enter registers an unbound tunnel's hello, closing the oldest one beyond the
-// budget. It refuses a tunnel whose hello failed or is already under way.
-func (a *admission) enter(c [32]byte, conn net.Conn) bool {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.dead[c] {
-		return false
-	}
-	for _, u := range a.pending {
-		if u.c == c {
-			return false
-		}
-	}
-	if len(a.pending) == maxUnbound {
-		a.pending[0].conn.Close()
-		a.pending = a.pending[1:]
-	}
-	a.pending = append(a.pending, unbound{c, conn})
-	return true
 }
 
 func (a *admission) leave(conn net.Conn) {
@@ -136,13 +146,21 @@ func (a *admission) hello(sc *stream.Conn, c [32]byte) {
 		return
 	}
 	peer, reason := a.verify(p, c)
+	if a.hook != nil {
+		a.hook("admitted", c)
+	}
 	if reason != "" {
 		a.fail(c)
 		writeResult(sc, reason)
 		return
 	}
-	a.bind(c, peer)
-	writeResult(sc, "")
+	ok := a.bind(c, peer)
+	if a.hook != nil {
+		a.hook("bound", c)
+	}
+	if ok {
+		writeResult(sc, "")
+	}
 }
 
 // firstStreamRefusal is why a tunnel's first stream is refused, if it is.
@@ -182,10 +200,14 @@ func (a *admission) fail(c [32]byte) {
 
 // bind attributes the tunnel to peer and retires any older tunnel of the same
 // peer: its open streams close and it is admitted no more, so exactly one
-// tunnel carries each peer's opens.
-func (a *admission) bind(c [32]byte, peer string) {
+// tunnel carries each peer's opens. It refuses a tunnel that failed while its
+// hello was verified.
+func (a *admission) bind(c [32]byte, peer string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.dead[c] { // evicted or retired while its hello verified
+		return false
+	}
 	for old, p := range a.bound {
 		if p != peer || old == c {
 			continue
@@ -199,6 +221,7 @@ func (a *admission) bind(c [32]byte, peer string) {
 	}
 	a.bound[c] = peer
 	a.streams[c] = map[net.Conn]bool{}
+	return true
 }
 
 func (a *admission) forget(c [32]byte, conn net.Conn) {
