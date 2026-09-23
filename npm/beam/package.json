@@ -1,0 +1,23 @@
+{
+  "name": "@notaharness/beam",
+  "version": "0.0.0",
+  "description": "Connect the machines one person owns: shells, commands and durable messages over an encrypted peer-to-peer fleet.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/notaharness/beam.git"
+  },
+  "bin": {
+    "beam": "bin/beam.js"
+  },
+  "main": "index.js",
+  "files": [
+    "bin/beam.js",
+    "index.js"
+  ],
+  "optionalDependencies": {
+    "@notaharness/beam-darwin-arm64": "0.0.0",
+    "@notaharness/beam-darwin-x64": "0.0.0",
+    "@notaharness/beam-linux-x64": "0.0.0",
+    "@notaharness/beam-linux-arm64": "0.0.0"
+  }
+}
