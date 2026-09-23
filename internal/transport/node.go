@@ -38,6 +38,8 @@ type Node struct {
 	mu      sync.Mutex
 	closed  bool
 	tunnels map[*Tunnel]bool
+
+	beforeRegister func() // tests act between hello and registration; nil otherwise
 }
 
 // ErrClosed is Dial's error once the node is closed.
@@ -131,6 +133,9 @@ func (n *Node) Dial(ctx context.Context, address string) (*Tunnel, error) {
 	defer context.AfterFunc(n.ctx, cancel)()
 	t := &Tunnel{node: n, client: &tailcat.Client{Server: tailcat.Addr(address), Logf: n.cfg.Logf}}
 	err = t.hello(ctx, r)
+	if err == nil && n.beforeRegister != nil {
+		n.beforeRegister()
+	}
 	n.mu.Lock()
 	if err == nil && n.closed {
 		err = ErrClosed
