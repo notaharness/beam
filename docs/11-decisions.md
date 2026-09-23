@@ -34,6 +34,7 @@
 | D28 | tailcat's own logs are discarded; `daemon.log` holds beam's lines only. | tailcat's logs are verbose and not actionable for a beam user. | 06 |
 | D29 | `status.derp.source` is `"key.json"`. | The relay region is fixed by the node key (D21); there is no other source yet. | 06 |
 | D30 | A `pty`/`exec` leader is reaped only after its group's teardown, under the lock its signals take; the acceptor reads its exit status without reaping it (`waitid` `WNOWAIT` and `/proc/<pid>/stat` `exit_code` on Linux, kqueue `NOTE_EXIT` with `NOTE_EXITSTATUS` on Darwin). | The unreaped leader holds the group id, so the SIGKILL reaches descendants that outlive it and never a group that reused the id. | 04 |
+| D31 | `pty`/`exec` input is flow-controlled: at most 4 frames outstanding, each answered `taken`; an overrun closes the stream `window`. The daemon holds its attach clients to the same window. | A reader that stops reading to push back hides the opener's close behind queued input. With a window every reader reads on, so a close, a detach or a departure is always seen, as with SSH channel windows. | 04, 06 |
 
 ## Milestone gate
 

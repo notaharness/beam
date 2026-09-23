@@ -142,19 +142,22 @@ func ended(pid int) bool {
 	return err == nil && i > 0 && i+2 < len(b) && b[i+2] == 'Z'
 }
 
-// docs/04: the opener's end kills a process that never reads its input,
-// whether the stream ends behind input the process has not taken, or the
-// tunnel is retired while that input is held back.
+// docs/04 Input: the acceptor always reads on, so however much input a
+// process leaves untaken, the opener's end reaches it. A close behind a full
+// window ends the process; one behind more than the window overruns it, which
+// closes the stream "window" and ends the process the same way; and a tunnel
+// retired with the window full takes the process with it.
 func TestInputNeverRead(t *testing.T) {
 	b := fleet(t, "beta")[0]
 	for _, kind := range []string{stream.KindExec, stream.KindPTY} {
 		for _, tc := range []struct {
 			name   string
 			frames int
-			end    func(s, sync *stream.Conn)
+			retire bool // else the opener closes the stream
 		}{
-			{"stream closed behind its input", 1, func(s, _ *stream.Conn) { s.Close() }},
-			{"tunnel retired while input is held back", 16, func(_, sync *stream.Conn) { sync.Close() }},
+			{"closed behind a full window", 4, false},
+			{"closed behind 16 frames", 16, false},
+			{"tunnel retired with a full window", 4, true},
 		} {
 			t.Run(kind+"/"+tc.name, func(t *testing.T) {
 				tun, _ := rawTunnel(t, b)
@@ -162,26 +165,57 @@ func TestInputNeverRead(t *testing.T) {
 				pidFile := filepath.Join(t.TempDir(), "pid")
 				s := rawOpen(t, tun, stream.Header{V: 1, Kind: kind, Cols: 80, Rows: 24,
 					Argv: []string{"sh", "-c", "echo $$ > " + pidFile + "; exec sleep 300"}})
+				defer s.Close()
 				pid := waitPid(t, pidFile)
-				frame := make([]byte, stream.MaxPayload) // for exec, channel 0: stdin
-				sent := make(chan struct{})
+				frame := make([]byte, 64<<10) // for exec, channel 0: stdin
 				go func() {
-					defer close(sent)
-					for range tc.frames {
+					for range tc.frames { // without waiting for any taken
 						if s.WriteFrame(stream.Data, frame) != nil {
 							return
 						}
 					}
 				}()
-				if tc.frames == 1 {
-					<-sent
-				} else {
-					time.Sleep(time.Second) // until the acceptor holds input back
+				switch {
+				case tc.frames > 4:
+					if msg := readClose(t, s); msg.Reason != "window" {
+						t.Errorf("close %+v, want window", msg)
+					}
+				case tc.retire:
+					time.Sleep(time.Second) // the window is full by now
+					sync.Close()
+				default:
+					time.Sleep(time.Second)
+					s.Close()
 				}
-				tc.end(s, sync)
 				waitGone(t, pid)
 			})
 		}
+	}
+}
+
+// docs/04 Input: stdin far beyond the window reaches a process that reads it
+// late, whole and in order, through the CLI and both daemons.
+func TestExecSlowReader(t *testing.T) {
+	ms := fleet(t, "alpha", "beta")
+	a := ms[0]
+	waitState(t, a, ms[1], "connected")
+	var in strings.Builder
+	for i := range 1 << 16 {
+		fmt.Fprintf(&in, "%015d\n", i) // 1 MiB
+	}
+	out := filepath.Join(t.TempDir(), "out")
+	done := make(chan result, 1)
+	go func() { done <- a.beam(in.String(), "exec", "beta", "--", "sh", "-c", "sleep 2; cat > "+out) }()
+	select {
+	case r := <-done:
+		if r.code != 0 {
+			t.Fatalf("exec: %+v", r)
+		}
+	case <-time.After(time.Minute):
+		t.Fatal("the input stalled")
+	}
+	if got, _ := os.ReadFile(out); string(got) != in.String() {
+		t.Errorf("the process read %d bytes, not the %d sent in order", len(got), in.Len())
 	}
 }
 
@@ -279,7 +313,9 @@ func readUntil(t *testing.T, ac *stream.Conn, want string) {
 		if err != nil || typ == stream.Close {
 			t.Fatalf("pty ended before %q; output %q, %v", want, out.String(), err)
 		}
-		out.Write(p)
+		if typ == stream.Data {
+			out.Write(p)
+		}
 	}
 }
 
@@ -292,11 +328,13 @@ func TestDetachHangsUp(t *testing.T) {
 	var out strings.Builder
 	ac.SetReadDeadline(time.Now().Add(20 * time.Second))
 	for !strings.Contains(out.String(), "\n") {
-		_, p, err := ac.ReadFrame()
+		typ, p, err := ac.ReadFrame()
 		if err != nil {
 			t.Fatal(err)
 		}
-		out.Write(p)
+		if typ == stream.Data {
+			out.Write(p)
+		}
 	}
 	pid, _ := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(strings.SplitN(out.String(), "\n", 2)[0], "pid=")))
 	if pid == 0 {
@@ -455,10 +493,14 @@ func TestDetachBeforeOpen(t *testing.T) {
 		name   string
 		close  bool // stream.close, else the client leaves
 		peerUp bool
+		frames int    // of input the client sends first
+		reason string // of the stream's end
 	}{
-		{"stream.close while dialing", true, false},
-		{"client leaves while dialing", false, false},
-		{"stream.close on a live tunnel", true, true},
+		{"stream.close while dialing", true, false, 0, "detached"},
+		{"client leaves while dialing", false, false, 0, "detached"},
+		{"stream.close on a live tunnel", true, true, 0, "detached"},
+		{"client leaves behind a full window", false, true, 4, "detached"},
+		{"client overruns its window", false, true, 8, "window"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a, b := newMachine(t, "alpha"), newMachine(t, "beta")
@@ -489,6 +531,11 @@ func TestDetachBeforeOpen(t *testing.T) {
 			}
 			defer ac.Close()
 			await(t, reached, "the attach")
+			for range tc.frames {
+				if err := ac.WriteFrame(stream.Data, []byte{0, 'x'}); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if tc.close {
 				if err := c.Call("stream.close", map[string]any{"streamId": res.StreamID}, nil); err != nil {
 					t.Fatal(err)
@@ -502,8 +549,8 @@ func TestDetachBeforeOpen(t *testing.T) {
 					t.Errorf("close %+v, want detached", msg)
 				}
 			}
-			if ev := nextClosed(t, next); ev.StreamID != res.StreamID || ev.Reason != "detached" {
-				t.Errorf("stream.closed %+v, want detached", ev)
+			if ev := nextClosed(t, next); ev.StreamID != res.StreamID || ev.Reason != tc.reason {
+				t.Errorf("stream.closed %+v, want %s", ev, tc.reason)
 			}
 			if !tc.peerUp {
 				b.start(t)

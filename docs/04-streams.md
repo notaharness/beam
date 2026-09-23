@@ -71,6 +71,14 @@ For both, the process group ends with the stream: descendants still running afte
 leader exited get the same teardown once the opener closes (after `close "exit"` or not).
 A process meant to outlive the stream starts its own session.
 
+**Input.** On `pty` and `exec` the opener's data and control frames are input, and at most
+4 of them may be outstanding: sent and not yet answered by the acceptor's
+`control {"kind":"taken"}`, which it sends for each once it has written it to the process
+or acted on it. The acceptor so reads on whatever the process does, and the opener's close
+is never queued behind input. A frame beyond the window is a protocol error: the stream
+ends as on the opener's close, with `close {"reason":"window"}`. Nothing else is
+acknowledged.
+
 ## `msg`
 
 Opened by the dialer; carries mail **from the dialer to the acceptor only**. One per
@@ -109,9 +117,4 @@ policy on the granting machine and travel nowhere.
 
 Header 64 KiB · frame payload 1 MiB · `pty`+`exec` 32 per peer · `argv` ≤ 1,024 items,
 each ≤ 64 KiB · `env` ≤ 256 · `sync` records/frame 200 · unbound tunnels in hello 16 ·
-opener input read ahead of the process 4 frames.
-
-Beyond that read-ahead the opener waits for the process. An opener close queued behind
-input the process never takes cannot arrive; the process ends when the acceptor closes the
-stream instead: the tunnel retires (docs/03), the peer is revoked or loses its grant, or
-the daemon stops.
+`pty`/`exec` input window 4 frames.

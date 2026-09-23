@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/signal"
 	"strings"
@@ -46,13 +47,22 @@ func (e *env) streamArgs(name string, withEnv bool) (peer, cwd string, env envFl
 	return e.args[0], cwd, env, fs.Args(), true
 }
 
-// frames is an attach connection with serialised writes.
+// frames is an attach connection with serialised writes. Each input frame,
+// data or control, waits for a place in the input window (docs/04, Input),
+// which relay gives back as the peer answers it taken.
 type frames struct {
-	mu sync.Mutex
-	c  *stream.Conn
+	mu     sync.Mutex
+	c      *stream.Conn
+	window chan struct{} // a place per input frame not yet taken
+	ended  chan struct{} // closed once relay returns
 }
 
 func (f *frames) write(t stream.Type, p []byte) error {
+	select {
+	case f.window <- struct{}{}:
+	case <-f.ended:
+		return net.ErrClosed
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.c.WriteFrame(t, p)
@@ -79,7 +89,7 @@ func (e *env) open(op string, params map[string]any) (*frames, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &frames{c: c}, nil
+	return &frames{c: c, window: make(chan struct{}, stream.InputWindow), ended: make(chan struct{})}, nil
 }
 
 // runExec is `beam exec`: stdin to the remote process, its stdout and stderr
@@ -112,8 +122,10 @@ func runExec(e *env) int {
 // relay hands the remote side's data frames to out until the stream closes,
 // and turns the close into an exit code.
 func (e *env) relay(f *frames, shell bool, out func([]byte)) int {
+	defer close(f.ended)
 	for {
 		t, p, err := f.c.ReadFrame()
+		var ctl stream.Ctl
 		switch {
 		case err != nil:
 			return e.closed(stream.CloseMsg{Reason: "connection-lost"}, shell)
@@ -121,6 +133,11 @@ func (e *env) relay(f *frames, shell bool, out func([]byte)) int {
 			out(p)
 		case t == stream.Close:
 			return e.closed(stream.ParseClose(p), shell)
+		case json.Unmarshal(p, &ctl) == nil && ctl.Kind == "taken":
+			select {
+			case <-f.window:
+			default: // one too many, from a daemon out of step
+			}
 		}
 	}
 }

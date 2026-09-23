@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -31,23 +32,29 @@ func PTY(c *Conn, h Header, sp Spawn) {
 		defer close(output)
 		pumpRaw(f, w)
 	}()
-	q := make(chan []byte, inputAhead)
-	go deliver(q, f)
-	openerDone := make(chan struct{}) // the opener has closed its side
+	win := &window{w: w}
+	q := make(chan []byte, InputWindow)
+	go deliver(q, f, win.taken)
+	openerDone := make(chan struct{}) // the opener has closed its side, or overran its window
 	killed := make(chan struct{})     // and the group got its SIGKILL
+	var overrun atomic.Bool
 	go func() {
-		feed(c, q, ptyFrame(f))
-		close(openerDone)
+		o := feed(c, q, win, ptyFrame(f))
+		overrun.Store(o)
 		g.signal(syscall.SIGHUP)
 		f.Close() // frees a write the session was not reading
 		time.AfterFunc(killGrace, func() { g.signal(syscall.SIGKILL); close(killed) })
+		if o {
+			discard(c)
+		}
+		close(openerDone)
 	}()
 	<-g.exited
 	select { // the terminal drains once every holder of it has closed
 	case <-output:
 	case <-time.After(time.Second):
 	}
-	w.finish(exitMsg(g.status), openerDone)
+	w.finish(ended(g.status, &overrun), openerDone)
 	<-killed // the group, which may outlive its leader, before the reap
 	g.reap()
 }
@@ -89,7 +96,7 @@ func pumpRaw(r io.Reader, w *writer) {
 }
 
 // ptyFrame is terminal input from the opener's frames; a resize is applied
-// as it arrives.
+// as it arrives, and any other frame is ignored.
 func ptyFrame(f *os.File) func(Type, []byte) ([]byte, bool) {
 	return func(t Type, p []byte) ([]byte, bool) {
 		var ctl Ctl

@@ -5,6 +5,7 @@ import (
 	"io"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"syscall"
 )
 
@@ -32,20 +33,26 @@ func Exec(c *Conn, h Header, sp Spawn) {
 	var drained sync.WaitGroup
 	drained.Go(func() { pumpOutput(stdout, chanStdout, w) })
 	drained.Go(func() { pumpOutput(stderr, chanStderr, w) })
-	q := make(chan []byte, inputAhead)
-	go deliver(q, stdin)
-	openerDone := make(chan struct{}) // the opener has closed its side
+	win := &window{w: w}
+	q := make(chan []byte, InputWindow)
+	go deliver(q, stdin, win.taken)
+	openerDone := make(chan struct{}) // the opener has closed its side, or overran its window
 	tornDown := make(chan struct{})   // and the group got its SIGKILL
+	var overrun atomic.Bool
 	go func() {
 		defer close(tornDown)
-		feed(c, q, execFrame)
-		close(openerDone)
+		o := feed(c, q, win, execFrame)
+		overrun.Store(o)
 		_ = stdin.Close() // frees a write the process was not reading
 		g.signal(syscall.SIGKILL)
+		if o {
+			discard(c)
+		}
+		close(openerDone)
 	}()
 	drained.Wait()
 	<-g.exited
-	w.finish(exitMsg(g.status), openerDone)
+	w.finish(ended(g.status, &overrun), openerDone)
 	<-tornDown // the group, which may outlive its leader, before the reap
 	g.reap()
 }
@@ -91,7 +98,7 @@ func pumpOutput(r io.Reader, ch byte, w *writer) {
 }
 
 // execFrame is stdin from the opener's frames: channel 0 data, and nil for
-// stdin-eof.
+// stdin-eof; any other frame is ignored.
 func execFrame(t Type, p []byte) ([]byte, bool) {
 	switch {
 	case t == Data && len(p) > 0 && p[0] == chanStdin:

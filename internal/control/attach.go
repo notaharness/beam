@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"sync/atomic"
 	"time"
 
 	"github.com/notaharness/beam/internal/stream"
@@ -41,7 +43,8 @@ func (d *daemon) reserve(peer string, h stream.Header) string {
 // attach runs an attach connection: dial the peer if needed, open the remote
 // stream, and pump frames until it ends. stream.close and the client's
 // departure detach it at any point, and one that is detached before the
-// remote open sends nothing. Every end reaches the client as a close frame.
+// remote open sends nothing; so does a client that overruns its input window.
+// Every end reaches the client as a close frame.
 func (d *daemon) attach(ac *stream.Conn, id string) {
 	defer ac.Close()
 	ctx, cancel := context.WithCancelCause(d.ctx)
@@ -64,10 +67,10 @@ func (d *daemon) attach(ac *stream.Conn, id string) {
 		delete(d.active, id)
 		d.mu.Unlock()
 	}()
-	in := make(chan frame, clientAhead)
-	go fromClient(ctx, ac, in, detach)
+	cl := &client{ac: ac, in: make(chan frame, stream.InputWindow)}
+	go cl.read(ctx, cancel)
 	d.at("attached", r.peer)
-	msg := d.relay(ctx, r, ac, in)
+	msg := d.relay(ctx, r, cl)
 	ac.SetWriteDeadline(time.Now().Add(closeGrace))
 	_ = ac.WriteJSON(stream.Close, msg) // closing either way
 	d.emit("stream.closed", streamClosed{id, msg.Reason, msg.ExitCode, msg.Signal})
@@ -80,20 +83,23 @@ type streamClosed struct {
 	Signal   *string `json:"signal,omitempty"`
 }
 
-// Attach limits.
-const (
-	clientAhead = 4           // client frames read ahead of the remote side
-	closeGrace  = time.Second // for a client that stopped reading to take its close
-)
+// closeGrace is how long a client that stopped reading has to take its close.
+const closeGrace = time.Second
 
-// errDetached ends an attach that stream.close or its client ended; the
-// daemon stopping ends the rest.
-var errDetached = errors.New("detached")
+// Why an attach ctx ended: stream.close or the client's end, or the client's
+// window overrun; the daemon stopping ends the rest.
+var (
+	errDetached = errors.New("detached")
+	errWindow   = errors.New("window")
+)
 
 // ended is the close of a stream whose attach ctx ended.
 func ended(ctx context.Context) stream.CloseMsg {
-	if context.Cause(ctx) == errDetached {
+	switch context.Cause(ctx) {
+	case errDetached:
 		return stream.CloseMsg{Reason: "detached"}
+	case errWindow:
+		return stream.CloseMsg{Reason: "window"}
 	}
 	return stream.CloseMsg{Reason: "connection-lost"}
 }
@@ -103,18 +109,33 @@ type frame struct {
 	p []byte
 }
 
-// fromClient reads the client's frames into in from attach on, so that its
-// departure detaches the stream even before the remote side is open.
-func fromClient(ctx context.Context, ac *stream.Conn, in chan<- frame, detach func()) {
-	defer close(in)
-	defer detach()
+// client is an attach's client side. Its frames are read from attach on, so
+// its departure ends the stream even before the remote side is open, and it
+// is held to the input window (docs/04, Input) as the acceptor holds this
+// daemon: at most a window of frames not yet answered taken, so in never
+// fills and the reading never stops.
+type client struct {
+	ac          *stream.Conn
+	in          chan frame   // read, not yet sent on
+	outstanding atomic.Int32 // input frames not yet answered taken
+}
+
+// read reads the client's frames into in until its side ends or it sends
+// close, which detach, or it overruns its window.
+func (cl *client) read(ctx context.Context, end context.CancelCauseFunc) {
+	defer close(cl.in)
 	for {
-		t, p, err := ac.ReadFrame()
-		if err != nil {
+		t, p, err := cl.ac.ReadFrame()
+		switch {
+		case err != nil || t == stream.Close:
+			end(errDetached)
+			return
+		case cl.outstanding.Add(1) > stream.InputWindow:
+			end(errWindow)
 			return
 		}
 		select {
-		case in <- frame{t, p}:
+		case cl.in <- frame{t, p}:
 		case <-ctx.Done():
 			return
 		}
@@ -122,7 +143,7 @@ func fromClient(ctx context.Context, ac *stream.Conn, in chan<- frame, detach fu
 }
 
 // relay opens the remote stream and pumps it; the end is its close.
-func (d *daemon) relay(ctx context.Context, r *reservation, ac *stream.Conn, in <-chan frame) stream.CloseMsg {
+func (d *daemon) relay(ctx context.Context, r *reservation, cl *client) stream.CloseMsg {
 	octx, cancel := context.WithTimeout(ctx, dialTimeout)
 	rc, msg := d.openRemote(octx, r)
 	cancel()
@@ -134,7 +155,7 @@ func (d *daemon) relay(ctx context.Context, r *reservation, ac *stream.Conn, in 
 	default:
 		return msg
 	}
-	return pump(ctx, ac, rc, in)
+	return pump(ctx, cl, rc)
 }
 
 func (d *daemon) openRemote(ctx context.Context, r *reservation) (*stream.Conn, stream.CloseMsg) {
@@ -153,17 +174,18 @@ func (d *daemon) openRemote(ctx context.Context, r *reservation) (*stream.Conn, 
 	return rc, stream.CloseMsg{}
 }
 
-// pump carries the client's frames to the peer and the peer's data frames to
-// the client until the peer sends its close, its side ends without one
-// (connection-lost), or the stream is detached.
-func pump(ctx context.Context, ac, rc *stream.Conn, in <-chan frame) stream.CloseMsg {
+// pump carries the client's frames to the peer and the peer's frames to the
+// client, counting each taken the peer answers, until the peer sends its
+// close, its side ends without one (connection-lost), or the stream is
+// detached.
+func pump(ctx context.Context, cl *client, rc *stream.Conn) stream.CloseMsg {
 	stop := context.AfterFunc(ctx, func() {
 		rc.Close()
-		ac.SetWriteDeadline(time.Now().Add(closeGrace))
+		cl.ac.SetWriteDeadline(time.Now().Add(closeGrace))
 	})
 	defer stop()
 	go func() {
-		for f := range in {
+		for f := range cl.in {
 			if rc.WriteFrame(f.t, f.p) != nil {
 				return
 			}
@@ -178,10 +200,19 @@ func pump(ctx context.Context, ac, rc *stream.Conn, in <-chan frame) stream.Clos
 			return stream.CloseMsg{Reason: "connection-lost"}
 		case t == stream.Close:
 			return stream.ParseClose(p)
-		case ac.WriteFrame(t, p) != nil:
+		case taken(t, p):
+			cl.outstanding.Add(-1)
+		}
+		if cl.ac.WriteFrame(t, p) != nil {
 			return stream.CloseMsg{Reason: "detached"} // the client has gone
 		}
 	}
+}
+
+// taken reports whether a peer's frame answers an input frame taken.
+func taken(t stream.Type, p []byte) bool {
+	var ctl stream.Ctl
+	return t == stream.Control && json.Unmarshal(p, &ctl) == nil && ctl.Kind == "taken"
 }
 
 // closeStream ends a reserved stream, or detaches an attached one.

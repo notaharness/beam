@@ -106,21 +106,17 @@ type Conn struct {
 
 	mu     sync.Mutex // orders Close against a process start
 	closed bool
-	done   chan struct{} // closed by Close
 }
 
 // NewConn wraps c.
 func NewConn(c net.Conn) *Conn {
-	return &Conn{Conn: c, r: bufio.NewReader(c), w: c, done: make(chan struct{})}
+	return &Conn{Conn: c, r: bufio.NewReader(c), w: c}
 }
 
-// Close closes the connection; Done is closed with it.
+// Close closes the connection.
 func (c *Conn) Close() error {
 	c.mu.Lock()
-	if !c.closed {
-		c.closed = true
-		close(c.done)
-	}
+	c.closed = true
 	c.mu.Unlock()
 	return c.Conn.Close()
 }
@@ -136,10 +132,6 @@ func (c *Conn) unlessClosed(start func() error) error {
 	}
 	return start()
 }
-
-// Done is closed once the stream has been closed on this side, which a reader
-// held back from the connection notices here.
-func (c *Conn) Done() <-chan struct{} { return c.done }
 
 func (c *Conn) Read(p []byte) (int, error)  { return c.r.Read(p) }
 func (c *Conn) Write(p []byte) (int, error) { return c.w.Write(p) }
@@ -188,7 +180,7 @@ func ReadLine(r *bufio.Reader, max int) ([]byte, error) {
 // NewConnReader is NewConn for a connection whose first bytes were already
 // read into r.
 func NewConnReader(c net.Conn, r *bufio.Reader) *Conn {
-	return &Conn{Conn: c, r: r, w: c, done: make(chan struct{})}
+	return &Conn{Conn: c, r: r, w: c}
 }
 
 // WriteFrame writes one frame.
