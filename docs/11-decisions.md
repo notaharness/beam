@@ -46,6 +46,8 @@
 | D40 | `--label` defaults to the host name up to its first dot, cut to 64 characters, and `--fleet-name` to `beam`. | Both are display text; a default beats a prompt. A full host name can pass 64 characters (CI runners do). | 02, 07 |
 | D41 | `beam join` on an enrolled machine re-enrols with the same passkey, homing the node key on the daemon's DERP map when its region is not on it. | 03's move to another DERP map is a re-join; the key, and so the peer id, stays. | 02, 03 |
 | D42 | The daemon takes its DERP map and directory URL as `control.Options`; the binary sets only the DERP map (`--derp-map`). | Tests need both; a user changes only the relay (D21). | 03, 10 |
+| D43 | Tag `vX.Y.Z` releases `X.Y.Z`: the binaries, `status.version` and the npm packages carry the version without the `v`. | npm versions have no `v`; one spelling everywhere a client compares. | 09 |
+| D44 | The shim's `optionalDependencies` are the one list of platforms: `binaryPath()` and `npm/pack.mjs` both read it. | A platform added in one place cannot be missing from another. | 09 |
 
 ## Milestone gate
 

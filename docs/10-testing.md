@@ -20,6 +20,10 @@ and over the cap; mailbox under random crash points between and inside the trans
 in [05](05-mailbox.md) (SQLite's commit hook turns a chosen commit into a rollback, and
 the machine restarts). Found counterexamples become fixed cases.
 
+The npm packages: `node --test` runs the shim with a shell script standing in for the
+binary (arguments, exit code, `128+signal`, each forwarded signal), and `npm/pack.mjs`
+over stand-in binaries.
+
 ## Dev DERP
 
 `internal/devderp` copies tailcat's `runDevDERP` (in-process `derpserver` behind an

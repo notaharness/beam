@@ -50,16 +50,21 @@ stripped ([03](03-transport.md), Footprint).
 
 ## Versioning
 
-beam has its own semver from the git tag. `status.version` on the socket is how clients
-check; the peer stream header's `v` is the wire protocol version and is separate. n10
+beam has its own semver from the git tag: tag `vX.Y.Z` releases `X.Y.Z`, which
+`beam version`, `status.version` and the five npm packages carry without the `v`.
+`status.version` on the socket is how clients check; the peer stream header's `v` is the wire protocol version and is separate. n10
 pins `@notaharness/beam` with a caret range.
 
 ## npm
 
 | Package | Contents |
 |---|---|
-| `@notaharness/beam` | `bin/beam.js`: resolves the platform package and runs the binary with `child_process.spawn(bin, argv, { stdio: "inherit" })`, forwards `SIGINT`/`SIGTERM`/`SIGWINCH`, exits with the child's code or `128+signal`. `index.js` exports `binaryPath()`. |
-| `@notaharness/beam-{darwin-arm64,darwin-x64,linux-x64,linux-arm64}` | one binary each; `os`/`cpu` set |
+| `@notaharness/beam` | `bin/beam.js`: resolves the platform package and runs the binary with `child_process.spawn(bin, argv, { stdio: "inherit" })`, forwards `SIGINT`/`SIGTERM`/`SIGWINCH`, exits with the child's code or `128+signal`. `index.js` exports `binaryPath()`. The platform packages are its `optionalDependencies`, the one list of platforms. |
+| `@notaharness/beam-{darwin-arm64,darwin-x64,linux-x64,linux-arm64}` | one binary each, named `beam`; `os`/`cpu` set |
+
+`npm/beam/` is the shim and `npm/platform/package.json` the platform packages' template.
+`node npm/pack.mjs X.Y.Z` writes all five into `dist/npm/` from the binaries `make dist`
+left in `dist/`.
 
 ## The worker
 
@@ -147,5 +152,9 @@ workerd (the CSP hashes included), `make lint`, `make crap` (`go test -race` wit
 coverage, the Playwright callback test among them, then the CRAP gate), `make dist`
 (cross-compile four targets), and the Go directory client's contract tests against the
 worker under `wrangler dev`. Job `darwin`: `make test` on macOS, where the process
-lifetimes (kqueue, not waitid) and the in-process daemons run for real. Tag: build, GitHub
-release with binaries, publish the five npm packages.
+lifetimes (kqueue, not waitid) and the in-process daemons run for real. The `ci` job also
+runs the npm packages' node tests.
+
+Tag (`.github/workflows/release.yml`, on `v*`): `make dist`, a GitHub release with the four
+binaries, `npm/pack.mjs`, then `npm publish` with provenance of the platform packages and
+last the shim, under `next` for a prerelease tag. It needs the `NPM_TOKEN` secret.
