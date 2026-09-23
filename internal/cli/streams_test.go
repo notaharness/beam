@@ -517,7 +517,7 @@ func TestDetachBeforeOpen(t *testing.T) {
 			if err := c.Call("exec.open", map[string]any{"peer": "beta", "argv": []string{bin}}, &res); err != nil {
 				t.Fatal(err)
 			}
-			reached, release := pauseAt(t, a, "attached", b)
+			reached, release := pauseAt(t, a, "attached", b.id())
 			ac, err := control.Attach(a.paths(), res.StreamID)
 			if err != nil {
 				t.Fatal(err)

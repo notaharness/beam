@@ -289,7 +289,7 @@ func TestRecordLearnedDuringDump(t *testing.T) {
 			a, b, c := newMachine(t, "alpha"), newMachine(t, "beta"), newMachine(t, "gamma")
 			a.knows(t, b, c)
 			b.knows(t, a, c)
-			reached, release := pauseAt(t, a, "dumped", b)
+			reached, release := pauseAt(t, a, "dumped", b.id())
 			a.start(t)
 			b.start(t)
 			await(t, reached, "alpha's dump to beta")
@@ -323,7 +323,7 @@ func TestRevocationBeatsPendingOpen(t *testing.T) {
 			b := fleet(t, "beta")[0]
 			tun, raw := rawTunnel(t, b)
 			bin, started := watchExec(t)
-			reached, release := pauseAt(t, b, point, raw)
+			reached, release := pauseAt(t, b, point, raw.id())
 			opened := make(chan error, 1)
 			open := func() {
 				go func() {
@@ -401,7 +401,7 @@ func TestPinnedBeforeOK(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer n.Close()
-	reached, release := pauseAt(t, b, "admitting", raw)
+	reached, release := pauseAt(t, b, "admitting", raw.id())
 	dialed := make(chan *transport.Tunnel, 1)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

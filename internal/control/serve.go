@@ -88,8 +88,9 @@ func allows(grant, kind string) bool {
 }
 
 // admitStream checks an inbound stream (its peer known and not revoked,
-// within the grant and, for pty and exec, the limit) and registers it in one
-// step under d.mu, which peer.grant also takes; a revocation committed
+// within the grant, and within the limit: 32 pty and exec streams, and one
+// msg stream, which keeps a sender's envelopes in order) and registers it in
+// one step under d.mu, which peer.grant also takes; a revocation committed
 // before the check refuses it. It returns the peer's row and release, which
 // unregisters the stream, or why it is refused.
 func (d *daemon) admitStream(id, kind string, c *stream.Conn) (p store.Peer, release func(), reason string) {
@@ -102,7 +103,7 @@ func (d *daemon) admitStream(id, kind string, c *stream.Conn) (p store.Peer, rel
 		return p, nil, "revoked"
 	case !allows(p.Grant, kind):
 		return p, nil, "grant"
-	case kind != stream.KindMsg && d.shellsLocked(id) >= maxShells:
+	case d.countLocked(id, kind) >= limits[kind]:
 		return p, nil, "limit"
 	}
 	if d.granted[id] == nil {
@@ -116,10 +117,16 @@ func (d *daemon) admitStream(id, kind string, c *stream.Conn) (p store.Peer, rel
 	}, ""
 }
 
-func (d *daemon) shellsLocked(id string) int {
+// limits are how many streams of a kind a peer may have open here; pty and
+// exec count together.
+var limits = map[string]int{stream.KindPTY: maxShells, stream.KindExec: maxShells, stream.KindMsg: 1}
+
+// countLocked is how many of the peer's open streams count against kind's
+// limit. d.mu must be held.
+func (d *daemon) countLocked(id, kind string) int {
 	n := 0
 	for g := range d.granted[id] {
-		if g.kind != stream.KindMsg {
+		if (g.kind == stream.KindMsg) == (kind == stream.KindMsg) {
 			n++
 		}
 	}

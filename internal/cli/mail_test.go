@@ -3,10 +3,13 @@
 package cli_test
 
 import (
+	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -18,6 +21,7 @@ import (
 	"github.com/notaharness/beam/internal/mailbox"
 	"github.com/notaharness/beam/internal/store"
 	"github.com/notaharness/beam/internal/stream"
+	"github.com/notaharness/beam/internal/transport"
 )
 
 // subscribeMail subscribes to m's mail; next waits for the next envelope.
@@ -187,16 +191,38 @@ func TestMsgQueuePages(t *testing.T) {
 	}
 }
 
-// docs/05: msg.send rejects what it cannot send and stores nothing.
+// docs/05: msg.send rejects what it cannot send and stores nothing: an
+// unknown or revoked peer, a bad topic, a payload too large, a full queue
+// (quarantine included), or a store that failed (here, a lost send counter).
 func TestMsgRejected(t *testing.T) {
-	a := fleet(t, "alpha", "beta")[0]
+	a, b, gone, full, lost := newMachine(t, "alpha"), newMachine(t, "beta"), newMachine(t, "gone"), newMachine(t, "full"), newMachine(t, "lost")
+	a.knows(t, b, gone, full, lost)
+	st, err := store.Open(filepath.Join(a.dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Revoke(revocation(gone), 1)
+	st.Close()
+	sqlite(t, a, func(db *sql.Tx) error {
+		for i := range store.MaxQueued {
+			if _, err := db.Exec(`INSERT INTO quarantine VALUES (?, ?, '{}', 'invalid-envelope')`, full.id(), i+1); err != nil {
+				return err
+			}
+		}
+		_, err := db.Exec(`DELETE FROM send_seq WHERE peer = ?`, lost.id())
+		return err
+	})
+	a.start(t)
 	for _, tc := range []struct {
 		stdin, reason string
 		args          []string
 	}{
 		{"", "unknown-peer", []string{"nobody", "x"}},
+		{"", "revoked-peer", []string{"gone", "x"}},
 		{"", "invalid-topic", []string{"beta", "--topic", "a/b", "x"}},
 		{strings.Repeat("x", mailbox.MaxPayload+1), "payload-too-large", []string{"beta", "-"}},
+		{"", "queue-full", []string{"full", "x"}},
+		{"", "storage-failure", []string{"lost", "x"}},
 	} {
 		r := a.beam(tc.stdin, append([]string{"msg", "send"}, tc.args...)...)
 		if r.code != 1 || r.err != "rejected: "+tc.reason+"\n" {
@@ -205,6 +231,74 @@ func TestMsgRejected(t *testing.T) {
 	}
 	if q := queue(t, a); len(q) != 0 {
 		t.Errorf("outbound after rejections: %v", q)
+	}
+}
+
+// sqlite runs f in one transaction on m's state.db, its daemon stopped.
+func sqlite(t *testing.T, m *machine, f func(*sql.Tx) error) {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(m.dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	tx, err := db.Begin()
+	if err == nil {
+		err = f(tx)
+	}
+	if err == nil {
+		err = tx.Commit()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// docs/06 msg.queue: pages of large envelopes each fit a control line, and
+// msg queue lists every envelope.
+func TestMsgQueueLargePages(t *testing.T) {
+	a, b := newMachine(t, "alpha"), newMachine(t, "beta")
+	a.knows(t, b)
+	a.start(t)
+	for i := range 5 {
+		payload := strconv.Itoa(i) + strings.Repeat("x", mailbox.MaxPayload-1)
+		if r := a.beam(payload, "msg", "send", "beta", "-"); r.code != 0 {
+			t.Fatalf("send %d: %+v", i, r)
+		}
+	}
+	q := queue(t, a)
+	if len(q) != 5 {
+		t.Fatalf("%d lines, want 5", len(q))
+	}
+	for i, line := range q {
+		if !strings.Contains(line, `"payload":"`+strconv.Itoa(i)+"x") {
+			t.Errorf("line %d: %.80s", i, line)
+		}
+	}
+}
+
+// docs/05 Subscribers: a subscribe that its client left before the daemon
+// ran it holds nothing; the mail goes to a subscriber that is there.
+func TestSubscribeRacingDisconnect(t *testing.T) {
+	ms := fleet(t, "alpha", "beta")
+	a, b := ms[0], ms[1]
+	waitState(t, a, b, "connected")
+	reached, release := pauseAt(t, b, "subscribing", "")
+	c, err := net.Dial("unix", b.paths().Socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Write([]byte(`{"id":1,"op":"msg.subscribe"}` + "\n"))
+	await(t, reached, "the subscribe")
+	c.Close()
+	time.Sleep(300 * time.Millisecond) // for the connection's cleanup
+	release()
+	if r := a.beam("", "msg", "send", "beta", "for whoever is there"); r.out != "delivered to beta\n" {
+		t.Fatalf("send: %+v", r)
+	}
+	_, next := subscribeMail(t, b, nil)
+	if e := next(); e.Payload != "for whoever is there" {
+		t.Errorf("got %+v", e)
 	}
 }
 
@@ -338,4 +432,32 @@ func TestMsgListen(t *testing.T) {
 	if code := <-done; code != 1 {
 		t.Errorf("listen exited %d when the daemon went away, want 1", code)
 	}
+}
+
+// docs/04 msg: one msg stream per tunnel, so envelopes from one sender are
+// stored in order. A second is refused limit while the first is open, and
+// one opened after it closed is admitted; exec and pty streams count apart.
+func TestMsgOneStreamPerTunnel(t *testing.T) {
+	b := fleet(t, "beta")[0]
+	tun, _ := rawTunnel(t, b)
+	defer rawOpen(t, tun, stream.Header{V: 1, Kind: stream.KindExec, Argv: []string{"sleep", "30"}}).Close()
+	h := stream.Header{V: 1, Kind: stream.KindMsg}
+	first := rawOpen(t, tun, h)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var ref *transport.Refused
+	if sc, err := tun.Open(ctx, h); !errors.As(err, &ref) || ref.Reason != "limit" {
+		if sc != nil {
+			sc.Close()
+		}
+		t.Fatalf("a second msg stream: %v, want limit", err)
+	}
+	first.Close()
+	waitFor(t, 5*time.Second, "a msg stream after the first closed", func() bool {
+		sc, err := tun.Open(ctx, h)
+		if err == nil {
+			sc.Close()
+		}
+		return err == nil
+	})
 }
