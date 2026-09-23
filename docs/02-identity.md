@@ -55,6 +55,7 @@ $BEAM_DIR/
   derpmap.json       last fetched DERP map
   run/beam.sock      control socket                                                     0600
   run/beam.lock      exclusive lock held by the running daemon
+  daemon.log         the output of a daemon started with --detach
 ```
 
 `entry` in `fleet.json` is this machine's own signed membership entry.

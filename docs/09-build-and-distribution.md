@@ -31,8 +31,9 @@ beam/
   docs/
 ```
 
-`transport` is the only package importing tailcat; `directory` and `ceremony` are the
-only ones speaking HTTP.
+`transport` is the only package importing tailcat. In the daemon's own code `directory`
+and `ceremony` are the only ones speaking HTTP; `transport.HomeKey` fetches the DERP map
+through tailcat, and `fakeworker` serves HTTP in tests.
 
 ## Build
 
@@ -44,8 +45,8 @@ CGO_ENABLED=0 go build -trimpath -buildvcs=false -tags "$(cat build-tags.txt)" \
 `make dist` runs this for each target. `build-tags.txt` is copied from tailcat: one
 comma-separated line; tests and lint use the same tags. SQLite via `modernc.org/sqlite`
 (pure Go). Targets in the first release: `darwin/arm64`, `darwin/amd64`, `linux/amd64`,
-`linux/arm64`. Windows follows when a Windows runner exists. Measured on linux/amd64: 15–16.4 MB per
-binary stripped, 21.5 s cold build with warm module cache, 0.14 s warm rebuild.
+`linux/arm64`. Windows follows when a Windows runner exists. 21.2–22.5 MB per binary
+stripped ([03](03-transport.md), Footprint).
 
 ## Versioning
 

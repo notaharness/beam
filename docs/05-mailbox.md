@@ -31,8 +31,8 @@ running daemon, so a daemon start clears them. Every state change below is one
 transaction. There are no per-envelope files, no link tricks and no separate counter
 files; durability is SQLite's.
 
-Bounds per peer per direction: 10,000 envelopes, 64 MiB. A recipient's outbound bound
-counts its quarantine too.
+Bounds per peer per direction: 10,000 envelopes, 64 MiB. A sender's outbound bound for a
+recipient counts its quarantine for that recipient too.
 
 ## Sequence numbers
 

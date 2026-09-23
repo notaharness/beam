@@ -13,7 +13,8 @@ refused before anything else, naming `BEAM_SOCKET`.
   with `another daemon holds $BEAM_DIR`. A socket file with no listener is removed after
   a failed connect.
 - **Unenrolled state.** With no `fleet.json` the daemon serves the socket and answers
-  `status`, the ceremony ops and `daemon.shutdown`; everything else is `not-enrolled`.
+  `status`, `events.subscribe`, the ceremony ops, `fleet.reset` and `daemon.shutdown`;
+  everything else is `not-enrolled`.
   The socket is ready before transport starts; `status.ready` reports transport state.
   `status` answers at once; every other op waits until the daemon has started.
 - **Connect-or-spawn**, one shared helper used by the CLI and the desktop: connect; on
@@ -23,8 +24,9 @@ refused before anything else, naming `BEAM_SOCKET`.
   `$BEAM_DIR/daemon.log`, and returns.
 - **Shutdown.** Only an explicit `daemon.shutdown` or SIGTERM stops the daemon, whoever
   started it. Clients treat a closed socket after `daemon.shutdown` as deliberate and do
-  not respawn until asked; any other disconnect is unexpected and the helper reconnects
-  with backoff (500 ms → 30 s).
+  not respawn until asked; any other disconnect is unexpected. The desktop's port of the
+  helper reconnects with backoff (500 ms → 30 s, [08](08-desktop.md)); the CLI is one
+  call per process and reconnects never.
 
 ## Two kinds of connection
 
@@ -136,7 +138,7 @@ streamId, reason, exitCode?, signal? }` · `ceremony { ceremonyUrl }` ·
 
 `not-enrolled` `already-enrolled` `unknown-peer` `ambiguous-peer` `revoked-peer`
 `grant` `limit` `params` `offline` `spawn` `bad-entry` `wrong-passkey` `bad-assertion`
-`possession` `ceremony-timeout` `ceremony-state` `ceremony-cancelled` `prf-unsupported`
+`ceremony-timeout` `ceremony-state` `ceremony-cancelled` `prf-unsupported`
 `directory-unavailable` `queue-full` `storage-failure` `busy` `internal`.
 `revoked-peer` on the socket corresponds to `revoked` in entry verification and stream
 refusal; the mapping is one to one and listed here once.

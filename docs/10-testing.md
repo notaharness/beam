@@ -7,7 +7,8 @@ worker, and daemons that take `$BEAM_DIR`, the DERP map and the directory URL as
 
 ## Unit
 
-`go test ./...`. Table tests for every table in the spec. Vectors in
+`go test ./...`. Every table in the spec has a test: a table test where the table is a
+list of cases, a scenario where it is a protocol (grants, outcomes, transactions). Vectors in
 `internal/identity/testdata/`: fixed node keys, a fixed ES256 credential, canonical
 statements, their hashes, valid assertions, and one failing vector per verifier check
 (bad peerId, address key mismatch, zero PSK, wrong credential id, wrong origin, wrong
