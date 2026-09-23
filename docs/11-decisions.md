@@ -60,6 +60,7 @@
 | D54 | Shutdown, reset and re-join wait, bounded, for the streams they end to tear down (06). | A pty session that ignores SIGHUP is killed 5 s later by a timer in the daemon; a daemon that exited first would leave it running. The bound keeps a stuck handler from holding shutdown forever. | 04, 06 |
 | D55 | beam checks that `$BEAM_DIR`, `run/`, the socket's directory and its files are its user's alone, and refuses what is not; it creates what is missing `0700` and changes no existing permission. | A directory others can write lets them swap the socket or the key; a file they can read gives them the node key or the directory key. Fixing it silently would `chmod` a shared directory such as `/tmp`. | 02 |
 | D56 | `BEAM_CONFIG_DIR`, `BEAM_SOCKET` and `HOME` must be absolute; a relative `XDG_CONFIG_HOME` is ignored. | A relative path names a different daemon from each working directory: a client started elsewhere would spawn a second one. The XDG spec says to ignore a relative value. | 02, 08 |
+| D57 | A stopping daemon sends subscribers `shutdown { reason }` before closing, and emits each event to every subscriber at once. | Without it a client cannot tell a deliberate stop from a crash and respawns a daemon someone just stopped. Sending one subscriber after another let a stalled one delay the rest by its full timeout. | 06, 08 |
 
 ## Milestone gate
 

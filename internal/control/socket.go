@@ -183,9 +183,11 @@ func (d *daemon) emit(name string, data any) {
 		subs = append(subs, cc)
 	}
 	d.mu.Unlock()
+	var sent sync.WaitGroup // each subscriber at its own pace, one that stalls holding up none
 	for _, cc := range subs {
-		_ = cc.send(event{name, data}) // a failed send closes the connection
+		sent.Go(func() { _ = cc.send(event{name, data}) }) // a failed send closes the connection
 	}
+	sent.Wait()
 }
 
 func (d *daemon) emitPeer(e *enrolment, peerID string) {
