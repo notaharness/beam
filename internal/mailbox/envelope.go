@@ -9,16 +9,18 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"unicode/utf8"
 
 	"github.com/notaharness/beam/internal/identity"
 )
 
-// Limits (docs/05).
+// Limits (docs/05, docs/06).
 const (
-	MaxPayload  = 256 << 10 // decoded
-	MaxEnvelope = 1 << 20   // serialized
-	maxTopic    = 128       // scalar values
+	MaxPayload     = 256 << 10 // decoded
+	MaxEnvelope    = 960 << 10 // serialized: one fits a control line with what wraps it
+	maxTopic       = 128       // scalar values
+	MaxDeferReason = 1 << 10   // bytes
 )
 
 // Payload encodings. base64 is unpadded base64url, like every binary field.
@@ -99,7 +101,8 @@ func (e Envelope) Marshal() ([]byte, string) {
 }
 
 // parse reads an envelope from peer addressed to self, or returns why it is
-// refused. The id is returned whenever it can be read, for the ack.
+// refused: it must be one JSON object in valid UTF-8 and nothing after it.
+// The id is returned whenever it can be read, for the ack.
 func parse(b []byte, peer, self string) (Envelope, string) {
 	var e Envelope
 	d := json.NewDecoder(bytes.NewReader(b))
@@ -107,13 +110,21 @@ func parse(b []byte, peer, self string) (Envelope, string) {
 	switch {
 	case len(b) > MaxEnvelope:
 		return e, PayloadTooLarge
-	case d.Decode(&e) != nil || d.More():
+	case d.Decode(&e) != nil || !utf8.Valid(b):
+		return Envelope{ID: e.ID}, InvalidEnvelope
+	case !atEOF(d):
 		return Envelope{ID: e.ID}, InvalidEnvelope
 	case e.From != peer || e.To != self || e.Seq < 1 || e.Seq > 1<<53-1 || !validID(e.ID) ||
 		!identity.ValidText(e.Topic, 0, maxTopic):
 		return e, InvalidEnvelope
 	}
 	return e, e.checkPayload()
+}
+
+// atEOF reports whether d has nothing left but white space.
+func atEOF(d *json.Decoder) bool {
+	_, err := d.Token()
+	return err == io.EOF
 }
 
 func validID(id string) bool {
