@@ -13,14 +13,14 @@ import (
 // hear rejected revoked-peer, their envelopes quarantined with the peer's
 // reason. Any other (limit, or one this version does not know) is retried
 // as an unopened stream is, and the sends wait on.
-func (d *daemon) msgRefused(peer, reason string) error {
+func (d *daemon) msgRefused(e *enrolment, peer, reason string) error {
 	d.at("msg-refused", peer)
 	switch reason {
 	case "grant":
-		d.answer(peer, sendResult{Outcome: stored, PendingReason: "grant"}, "")
+		d.answer(e, peer, sendResult{Outcome: stored, PendingReason: "grant"}, "")
 		return fmt.Errorf("%w: %s", mailbox.ErrNotGranted, reason)
 	case "revoked":
-		d.answer(peer, sendResult{Outcome: rejected, Reason: "revoked-peer"}, reason)
+		d.answer(e, peer, sendResult{Outcome: rejected, Reason: "revoked-peer"}, reason)
 	}
 	return errors.New("the peer refuses the msg stream: " + reason)
 }
@@ -28,12 +28,12 @@ func (d *daemon) msgRefused(peer, reason string) error {
 // answer gives every msg.send waiting on peer res, first moving its envelope
 // to quarantine with the peer's reason when there is one; an envelope that
 // cannot be moved stays queued and its send waits on.
-func (d *daemon) answer(peer string, res sendResult, quarantine string) {
+func (d *daemon) answer(e *enrolment, peer string, res sendResult, quarantine string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for seq, done := range d.sends[peer] {
 		if quarantine != "" {
-			if err := d.store.Quarantine(peer, seq, quarantine); err != nil {
+			if err := e.store.Quarantine(peer, seq, quarantine); err != nil {
 				d.o.Logf("quarantine %s %d: %v", peer[:8], seq, err)
 				continue
 			}

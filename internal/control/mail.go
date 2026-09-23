@@ -36,11 +36,11 @@ type rejection string
 
 func (r rejection) Error() string { return string(r) }
 
-func opMsgSend(d *daemon, _ *clientConn, r request) (any, error) {
-	to, err := d.resolve(r.To)
+func opMsgSend(d *daemon, e *enrolment, _ *clientConn, r request) (any, error) {
+	to, err := e.resolve(r.To)
 	var p store.Peer
 	if err == nil {
-		p, _, err = d.store.Peer(to)
+		p, _, err = e.store.Peer(to)
 	}
 	var oe *OpError
 	switch {
@@ -58,7 +58,7 @@ func opMsgSend(d *daemon, _ *clientConn, r request) (any, error) {
 	if encoding == "" {
 		encoding = mailbox.UTF8
 	}
-	e, reason := mailbox.New(d.fleet.Entry.PeerID, to, deref(r.Topic), r.Payload, encoding, now())
+	env, reason := mailbox.New(e.self(), to, deref(r.Topic), r.Payload, encoding, now())
 	switch reason {
 	case "":
 	case mailbox.InvalidEnvelope:
@@ -66,19 +66,19 @@ func opMsgSend(d *daemon, _ *clientConn, r request) (any, error) {
 	default:
 		return sendResult{Outcome: rejected, To: to, Reason: reason}, nil
 	}
-	outcome := d.send(to, e)
+	outcome := d.send(e, to, env)
 	outcome.To = to
 	return outcome, nil
 }
 
-// send queues e for its recipient and waits up to sendWait for the ack, or
+// send queues env for its recipient and waits up to sendWait for the ack, or
 // for the recipient to refuse the msg stream.
-func (d *daemon) send(to string, e mailbox.Envelope) sendResult {
+func (d *daemon) send(e *enrolment, to string, env mailbox.Envelope) sendResult {
 	done := make(chan sendResult, 1)
 	var seq int64
-	_, err := d.store.Enqueue(to, now(), func(s int64) ([]byte, error) {
-		e.Seq, seq = s, s
-		b, reason := e.Marshal()
+	_, err := e.store.Enqueue(to, now(), func(s int64) ([]byte, error) {
+		env.Seq, seq = s, s
+		b, reason := env.Marshal()
 		if reason != "" {
 			return nil, rejection(reason)
 		}
@@ -162,23 +162,23 @@ func (d *daemon) wakeFlusher(peer string) bool {
 // flush runs peer's flusher on the tunnel this machine dialed, for as long as
 // ctx lives. A refusal of the msg stream is answered by its reason
 // (msgRefused).
-func (d *daemon) flush(ctx context.Context, peer string, ps *peerState, tun *transport.Tunnel) {
+func (d *daemon) flush(ctx context.Context, e *enrolment, peer string, ps *peerState, tun *transport.Tunnel) {
 	open := func(ctx context.Context) (*stream.Conn, error) {
 		sc, err := tun.Open(ctx, stream.Header{V: 1, Kind: stream.KindMsg})
 		var ref *transport.Refused
 		if !errors.As(err, &ref) {
 			return sc, err
 		}
-		return nil, d.msgRefused(peer, ref.Reason)
+		return nil, d.msgRefused(e, peer, ref.Reason)
 	}
-	mailbox.Flush(ctx, d.store, peer, open, ps.wake, d.settled(peer))
+	mailbox.Flush(ctx, e.store, peer, open, ps.wake, d.settled(peer))
 }
 
-func opMsgSubscribe(d *daemon, cc *clientConn, r request) (any, error) {
+func opMsgSubscribe(d *daemon, e *enrolment, cc *clientConn, r request) (any, error) {
 	d.at("subscribing", "")
 	from := make([]string, len(r.From))
 	for i, arg := range r.From {
-		id, err := d.resolve(arg)
+		id, err := e.resolve(arg)
 		if err != nil {
 			return nil, err
 		}
@@ -190,32 +190,33 @@ func opMsgSubscribe(d *daemon, cc *clientConn, r request) (any, error) {
 		return nil, errors.New("the connection is closed")
 	}
 	if cc.sub != nil {
-		if err := d.mail.Close(cc.sub); err != nil {
+		if err := cc.mail.Close(cc.sub); err != nil {
 			return nil, err
 		}
 	}
-	cc.sub = d.mail.Subscribe(r.Topic, from, func(env json.RawMessage) error { return cc.send(event{"mail", env}) })
+	cc.sub = e.mail.Subscribe(r.Topic, from, func(env json.RawMessage) error { return cc.send(event{"mail", env}) })
+	cc.mail = e.mail
 	return struct{}{}, nil
 }
 
-func opMsgAck(d *daemon, cc *clientConn, r request) (any, error) {
-	return d.settleMail(cc, func(s *mailbox.Sub) error { return d.mail.Ack(s, r.EnvelopeID) })
+func opMsgAck(_ *daemon, _ *enrolment, cc *clientConn, r request) (any, error) {
+	return settleMail(cc, func(h *mailbox.Subscribers, s *mailbox.Sub) error { return h.Ack(s, r.EnvelopeID) })
 }
 
-func opMsgDefer(d *daemon, cc *clientConn, r request) (any, error) {
+func opMsgDefer(_ *daemon, _ *enrolment, cc *clientConn, r request) (any, error) {
 	if len(r.Reason) > mailbox.MaxDeferReason {
 		return nil, fail("params", "reason is at most 1 KiB")
 	}
-	return d.settleMail(cc, func(s *mailbox.Sub) error { return d.mail.Defer(s, r.EnvelopeID, r.Reason) })
+	return settleMail(cc, func(h *mailbox.Subscribers, s *mailbox.Sub) error { return h.Defer(s, r.EnvelopeID, r.Reason) })
 }
 
-func (d *daemon) settleMail(cc *clientConn, f func(*mailbox.Sub) error) (any, error) {
+func settleMail(cc *clientConn, f func(*mailbox.Subscribers, *mailbox.Sub) error) (any, error) {
 	cc.subMu.Lock()
 	defer cc.subMu.Unlock()
 	if cc.sub == nil {
 		return nil, fail("params", "not subscribed")
 	}
-	err := f(cc.sub)
+	err := f(cc.mail, cc.sub)
 	if errors.Is(err, mailbox.ErrNotInFlight) {
 		return nil, fail("params", err.Error())
 	}
@@ -229,7 +230,7 @@ func (d *daemon) unsubscribeMail(cc *clientConn) {
 	defer cc.subMu.Unlock()
 	cc.closed = true
 	if cc.sub != nil {
-		_ = d.mail.Close(cc.sub) // its rows are released again at the next start
+		_ = cc.mail.Close(cc.sub) // its rows are released again at the next start
 		cc.sub = nil
 	}
 }
@@ -239,10 +240,10 @@ type queueResult struct {
 	Next  string            `json:"next,omitempty"`
 }
 
-func opMsgQueue(d *daemon, _ *clientConn, r request) (any, error) {
+func opMsgQueue(_ *daemon, e *enrolment, _ *clientConn, r request) (any, error) {
 	peer := ""
 	if r.Peer != "" {
-		id, err := d.resolve(r.Peer)
+		id, err := e.resolve(r.Peer)
 		if err != nil {
 			return nil, err
 		}
@@ -262,7 +263,7 @@ func opMsgQueue(d *daemon, _ *clientConn, r request) (any, error) {
 	if which == "" {
 		which = store.Outbound
 	}
-	items, next, err := d.store.Queue(which, peer, cursor, limit)
+	items, next, err := e.store.Queue(which, peer, cursor, limit)
 	if err != nil {
 		return nil, fail("params", err.Error())
 	}

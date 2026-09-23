@@ -13,22 +13,24 @@ import (
 	"github.com/notaharness/beam/internal/store"
 )
 
-func mailDaemon(t *testing.T) *daemon {
+// mailDaemon is a daemon enrolled on a bare store.
+func mailDaemon(t *testing.T) (*daemon, *enrolment) {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	return &daemon{o: Options{Logf: t.Logf}, store: st, mail: mailbox.NewSubscribers(st)}
+	e := &enrolment{fleet: &identity.Fleet{}, store: st, mail: mailbox.NewSubscribers(st)}
+	return &daemon{o: Options{Logf: t.Logf}, en: e}, e
 }
 
 // docs/05 Outcomes: a storage failure before anything is stored is msg.send's
 // rejected outcome, storage-failure.
 func TestSendStorageFailure(t *testing.T) {
-	d := mailDaemon(t)
-	d.store.Close() // every read fails
-	res, err := opMsgSend(d, nil, request{To: "beta", Payload: "x"})
+	d, e := mailDaemon(t)
+	e.store.Close() // every read fails
+	res, err := opMsgSend(d, e, nil, request{To: "beta", Payload: "x"})
 	if r, ok := res.(sendResult); err != nil || !ok || r.Outcome != rejected || r.Reason != mailbox.StorageFailure {
 		t.Fatalf("%+v, %v; want rejected storage-failure", res, err)
 	}
@@ -52,19 +54,19 @@ func TestMsgRefusals(t *testing.T) {
 		{"kind", nil, false, 1},
 	} {
 		t.Run(tc.reason, func(t *testing.T) {
-			d := mailDaemon(t)
+			d, e := mailDaemon(t)
 			d.sends = map[string]map[int64]chan sendResult{}
 			peer := strings.Repeat("b", 32)
-			if _, err := d.store.Pin(identity.Record{V: 1, Kind: identity.Member, PeerID: peer, Label: "b"}, 1); err != nil {
+			if _, err := e.store.Pin(identity.Record{V: 1, Kind: identity.Member, PeerID: peer, Label: "b"}, 1); err != nil {
 				t.Fatal(err)
 			}
-			seq, err := d.store.Enqueue(peer, 1, func(int64) ([]byte, error) { return []byte("{}"), nil })
+			seq, err := e.store.Enqueue(peer, 1, func(int64) ([]byte, error) { return []byte("{}"), nil })
 			if err != nil {
 				t.Fatal(err)
 			}
 			done := make(chan sendResult, 1)
 			d.await(peer, seq, done)
-			err = d.msgRefused(peer, tc.reason)
+			err = d.msgRefused(e, peer, tc.reason)
 			if errors.Is(err, mailbox.ErrNotGranted) != tc.notGranted || err == nil {
 				t.Errorf("flusher error %v, want ErrNotGranted %v", err, tc.notGranted)
 			}
@@ -78,7 +80,7 @@ func TestMsgRefusals(t *testing.T) {
 					t.Errorf("not answered, want %+v", *tc.want)
 				}
 			}
-			items, _, err := d.store.Queue("outbound", peer, 0, 10)
+			items, _, err := e.store.Queue("outbound", peer, 0, 10)
 			if err != nil || len(items) != tc.queued {
 				t.Errorf("outbound %d, %v; want %d", len(items), err, tc.queued)
 			}
@@ -89,12 +91,12 @@ func TestMsgRefusals(t *testing.T) {
 // docs/06 msg.subscribe: a subscribe that runs after its connection's cleanup
 // registers nothing, so nothing is held for a connection that is gone.
 func TestSubscribeAfterCleanup(t *testing.T) {
-	d := mailDaemon(t)
+	d, e := mailDaemon(t)
 	ours, theirs := net.Pipe()
 	defer theirs.Close()
 	cc := &clientConn{c: ours}
 	d.unsubscribeMail(cc)
-	if _, err := opMsgSubscribe(d, cc, request{}); err == nil || cc.sub != nil {
+	if _, err := opMsgSubscribe(d, e, cc, request{}); err == nil || cc.sub != nil {
 		t.Fatalf("subscribed a closed connection: %v", err)
 	}
 }
@@ -124,8 +126,8 @@ func TestStalledClientDisconnected(t *testing.T) {
 // docs/06 msg.defer: a reason is at most 1 KiB, so a refused envelope with
 // its reason fits a msg.queue page.
 func TestDeferReasonBounded(t *testing.T) {
-	d := mailDaemon(t)
-	_, err := opMsgDefer(d, &clientConn{}, request{EnvelopeID: "x", Reason: strings.Repeat("r", mailbox.MaxDeferReason+1)})
+	d, e := mailDaemon(t)
+	_, err := opMsgDefer(d, e, &clientConn{}, request{EnvelopeID: "x", Reason: strings.Repeat("r", mailbox.MaxDeferReason+1)})
 	var oe *OpError
 	if !errors.As(err, &oe) || oe.Code != "params" || !strings.Contains(oe.Detail, "reason") {
 		t.Fatalf("%v, want params for the reason", err)

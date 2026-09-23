@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/notaharness/beam/internal/identity"
 	"github.com/notaharness/beam/internal/transport"
@@ -61,10 +62,60 @@ func readJSON(path string, v any) error {
 
 // Enrolment files.
 const (
-	keyFile   = "key.json"
-	fleetFile = "fleet.json"
-	stateFile = "state.db"
+	keyFile      = "key.json"
+	fleetFile    = "fleet.json"
+	stateFile    = "state.db"
+	derpFileName = "derpmap.json"
 )
+
+// save writes a config file as docs/02 says: a temporary file, mode 0600,
+// renamed into place.
+func (p Paths) save(name string, v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(p.Dir, name+".*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name()) // gone once renamed
+	if _, err := f.Write(b); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Chmod(0o600); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), p.file(name))
+}
+
+// derpCache is derpmap.json: the last DERP map fetched, with where from and
+// its ETag, which tailcat revalidates after an hour.
+type derpCache struct{ p Paths }
+
+type derpFile struct {
+	URL  string          `json:"url"`
+	ETag string          `json:"etag"`
+	Map  json.RawMessage `json:"map"`
+}
+
+func (c derpCache) Get(url string) ([]byte, string, time.Time, bool) {
+	var f derpFile
+	st, err := os.Stat(c.p.file(derpFileName))
+	if err != nil || readJSON(c.p.file(derpFileName), &f) != nil || f.URL != url {
+		return nil, "", time.Time{}, false
+	}
+	return f.Map, f.ETag, st.ModTime(), true
+}
+
+func (c derpCache) Put(url string, data []byte, etag string) error {
+	return c.p.save(derpFileName, derpFile{url, etag, data})
+}
 
 func (p Paths) loadKey() (*transport.Key, error) {
 	k := new(transport.Key)

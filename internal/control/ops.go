@@ -10,14 +10,24 @@ import (
 
 type opFunc func(d *daemon, cc *clientConn, r request) (any, error)
 
-// Ops an unenrolled daemon answers; ceremony ops join them in M4.
+// enrolledOp is an op on the enrolment under way when it arrived.
+type enrolledOp func(d *daemon, e *enrolment, cc *clientConn, r request) (any, error)
+
+// Ops an unenrolled daemon answers.
 var anytimeOps = map[string]opFunc{
 	"status":           opStatus,
 	"events.subscribe": func(d *daemon, cc *clientConn, _ request) (any, error) { d.subscribe(cc); return struct{}{}, nil },
 	"daemon.shutdown":  func(*daemon, *clientConn, request) (any, error) { return struct{}{}, nil },
+
+	"init.start":      opInitStart,
+	"init.wait":       func(d *daemon, cc *clientConn, _ request) (any, error) { return d.finish("init", cc) },
+	"join.start":      opJoinStart,
+	"join.wait":       func(d *daemon, cc *clientConn, _ request) (any, error) { return d.finish("join", cc) },
+	"ceremony.cancel": opCeremonyCancel,
+	"fleet.reset":     opFleetReset,
 }
 
-var enrolledOps = map[string]opFunc{
+var enrolledOps = map[string]enrolledOp{
 	"peers":        opPeers,
 	"peer.resolve": opResolve,
 	"peer.alias":   opAlias,
@@ -31,6 +41,9 @@ var enrolledOps = map[string]opFunc{
 	"msg.ack":       opMsgAck,
 	"msg.defer":     opMsgDefer,
 	"msg.queue":     opMsgQueue,
+
+	"revoke.start": opRevokeStart,
+	"revoke.wait":  func(d *daemon, _ *enrolment, cc *clientConn, _ request) (any, error) { return d.finish("revoke", cc) },
 }
 
 // op runs r. Every op but status waits for the daemon's start: the socket is
@@ -48,13 +61,14 @@ func (d *daemon) op(cc *clientConn, r request) (any, error) {
 		return f(d, cc, r)
 	}
 	f, ok := enrolledOps[r.Op]
+	e := d.enrolment()
 	switch {
 	case !ok:
 		return nil, fail("params", "unknown op "+r.Op)
-	case !d.enrolled():
+	case e == nil:
 		return nil, fail("not-enrolled", "")
 	}
-	return f(d, cc, r)
+	return f(d, e, cc, r)
 }
 
 type statusResult struct {
@@ -83,14 +97,15 @@ type peerCounts struct {
 
 func opStatus(d *daemon, _ *clientConn, _ request) (any, error) {
 	res := statusResult{Version: d.o.Version}
-	if !d.enrolled() {
+	e := d.enrolment()
+	if e == nil {
 		return res, nil
 	}
-	e := d.fleet.Entry
+	me := e.fleet.Entry
 	res.Ready, res.Enrolled = true, true
-	res.PeerID, res.Label, res.FleetID, res.Address = e.PeerID, e.Label, d.fleet.FleetID, e.Address
-	res.DERP = derpStatus{Region: d.key.RegionCode(), Source: "key.json"}
-	views, err := d.peerViews()
+	res.PeerID, res.Label, res.FleetID, res.Address = me.PeerID, me.Label, e.fleet.FleetID, me.Address
+	res.DERP = derpStatus{Region: e.key.RegionCode(), Source: "key.json"}
+	views, err := d.peerViews(e)
 	for _, v := range views {
 		switch v.State {
 		case stateConnected:
@@ -129,10 +144,10 @@ type QueueCounts struct {
 	Refused  int `json:"refused"`
 }
 
-func (d *daemon) view(p store.Peer) PeerView {
+func (d *daemon) view(e *enrolment, p store.Peer) PeerView {
 	v := PeerView{PeerID: p.Entry.PeerID, Label: p.Entry.Label, Alias: p.Alias, State: stateOffline,
 		LastSeenAt: p.LastSeenAt, Grant: grantOf(p.Grant), RevokedAt: p.RevokedAt, PinnedAt: p.PinnedAt,
-		Path: d.node.Path(p.Entry.PeerID)}
+		Path: e.node.Path(p.Entry.PeerID)}
 	d.mu.Lock()
 	if ps, ok := d.peers[v.PeerID]; ok {
 		v.State = ps.state
@@ -140,23 +155,23 @@ func (d *daemon) view(p store.Peer) PeerView {
 	v.Inbound = d.inbound[v.PeerID] > 0
 	d.mu.Unlock()
 	q := &v.Queue
-	q.Outbound, q.Inbound, q.Refused, _ = d.store.QueueCounts(v.PeerID) // zero counts if the store fails
+	q.Outbound, q.Inbound, q.Refused, _ = e.store.QueueCounts(v.PeerID) // zero counts if the store fails
 	if p.Revoked {
 		v.State = stateRevoked
 	}
 	return v
 }
 
-func (d *daemon) peerView(peerID string) PeerView {
-	p, _, _ := d.store.Peer(peerID)
-	return d.view(p)
+func (d *daemon) peerView(e *enrolment, peerID string) PeerView {
+	p, _, _ := e.store.Peer(peerID)
+	return d.view(e, p)
 }
 
-func (d *daemon) peerViews() ([]PeerView, error) {
-	ps, err := d.store.Peers()
+func (d *daemon) peerViews(e *enrolment) ([]PeerView, error) {
+	ps, err := e.store.Peers()
 	views := make([]PeerView, len(ps))
 	for i, p := range ps {
-		views[i] = d.view(p)
+		views[i] = d.view(e, p)
 	}
 	return views, err
 }
@@ -166,7 +181,7 @@ type peersResult struct {
 	Next  string     `json:"next,omitempty"`
 }
 
-func opPeers(d *daemon, _ *clientConn, r request) (any, error) {
+func opPeers(d *daemon, e *enrolment, _ *clientConn, r request) (any, error) {
 	limit := r.Limit
 	if limit == 0 {
 		limit = 200
@@ -174,7 +189,7 @@ func opPeers(d *daemon, _ *clientConn, r request) (any, error) {
 	if limit < 0 || limit > 200 {
 		return nil, fail("params", "limit is 1–200")
 	}
-	views, err := d.peerViews()
+	views, err := d.peerViews(e)
 	i := sort.Search(len(views), func(i int) bool { return views[i].PeerID > r.Cursor })
 	res := peersResult{Peers: views[i:min(i+limit, len(views))]}
 	if i+limit < len(views) {
@@ -183,32 +198,41 @@ func opPeers(d *daemon, _ *clientConn, r request) (any, error) {
 	return res, err
 }
 
-func opAlias(d *daemon, _ *clientConn, r request) (any, error) {
-	id, err := d.resolve(r.Peer)
+type resolveResult struct {
+	PeerID string `json:"peerId"`
+}
+
+func opResolve(_ *daemon, e *enrolment, _ *clientConn, r request) (any, error) {
+	id, err := e.resolve(r.Peer)
+	return resolveResult{id}, err
+}
+
+func opAlias(d *daemon, e *enrolment, _ *clientConn, r request) (any, error) {
+	id, err := e.resolve(r.Peer)
 	if err != nil {
 		return nil, err
 	}
 	if r.Alias != nil && !identity.ValidLabel(*r.Alias) {
 		return nil, fail("params", "an alias follows the label rules")
 	}
-	if err := d.store.SetAlias(id, r.Alias); err != nil {
+	if err := e.store.SetAlias(id, r.Alias); err != nil {
 		return nil, err
 	}
-	d.emitPeer(id)
+	d.emitPeer(e, id)
 	return struct{}{}, nil
 }
 
 // opGrant sets a grant and ends the peer's open streams it no longer allows.
-func opGrant(d *daemon, _ *clientConn, r request) (any, error) {
+func opGrant(d *daemon, e *enrolment, _ *clientConn, r request) (any, error) {
 	if grantOf(r.Grant) != r.Grant {
 		return nil, fail("params", "grant is all, msg or none")
 	}
-	id, err := d.resolve(r.Peer)
+	id, err := e.resolve(r.Peer)
 	if err != nil {
 		return nil, err
 	}
 	d.mu.Lock()
-	err = d.store.SetGrant(id, r.Grant)
+	err = e.store.SetGrant(id, r.Grant)
 	if err == nil {
 		d.closeUngrantedLocked(id, r.Grant)
 	}
@@ -216,7 +240,7 @@ func opGrant(d *daemon, _ *clientConn, r request) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	d.emitPeer(id)
+	d.emitPeer(e, id)
 	return struct{}{}, nil
 }
 
@@ -224,29 +248,29 @@ type openResult struct {
 	StreamID string `json:"streamId"`
 }
 
-func (d *daemon) open(r request, h stream.Header) (any, error) {
-	id, err := d.resolve(r.Peer)
+func (d *daemon) open(e *enrolment, r request, h stream.Header) (any, error) {
+	id, err := e.resolve(r.Peer)
 	if err != nil {
 		return nil, err
 	}
-	if d.isRevoked(id) {
+	if e.isRevoked(id) {
 		return nil, fail("revoked-peer", id)
 	}
 	return openResult{d.reserve(id, h)}, nil
 }
 
-func opPTYOpen(d *daemon, _ *clientConn, r request) (any, error) {
-	return d.open(r, stream.Header{V: 1, Kind: stream.KindPTY, Argv: r.Argv, Cwd: r.Cwd, Env: r.Env, Cols: r.Cols, Rows: r.Rows})
+func opPTYOpen(d *daemon, e *enrolment, _ *clientConn, r request) (any, error) {
+	return d.open(e, r, stream.Header{V: 1, Kind: stream.KindPTY, Argv: r.Argv, Cwd: r.Cwd, Env: r.Env, Cols: r.Cols, Rows: r.Rows})
 }
 
-func opExecOpen(d *daemon, _ *clientConn, r request) (any, error) {
+func opExecOpen(d *daemon, e *enrolment, _ *clientConn, r request) (any, error) {
 	if len(r.Argv) == 0 {
 		return nil, fail("params", "argv is required")
 	}
-	return d.open(r, stream.Header{V: 1, Kind: stream.KindExec, Argv: r.Argv, Cwd: r.Cwd, Env: r.Env})
+	return d.open(e, r, stream.Header{V: 1, Kind: stream.KindExec, Argv: r.Argv, Cwd: r.Cwd, Env: r.Env})
 }
 
-func opStreamClose(d *daemon, _ *clientConn, r request) (any, error) {
+func opStreamClose(d *daemon, _ *enrolment, _ *clientConn, r request) (any, error) {
 	if !d.closeStream(r.StreamID) {
 		return nil, fail("params", "no such stream")
 	}
