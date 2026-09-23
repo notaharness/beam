@@ -16,6 +16,8 @@ processes; `BEAM_CONFIG_DIR` selects the directory and therefore the default pat
 - **Connect-or-spawn**, one shared helper used by the CLI and the desktop: connect; on
   `ECONNREFUSED`/`ENOENT` run `beam daemon --detach`, wait ≤ 5 s for the socket, connect.
   A spawn that loses the lock race exits 1 and the helper simply connects to the winner.
+  `--detach` starts the daemon in a new session, its output appended to
+  `$BEAM_DIR/daemon.log`, and returns.
 - **Shutdown.** Only an explicit `daemon.shutdown` or SIGTERM stops the daemon, whoever
   started it. Clients treat a closed socket after `daemon.shutdown` as deliberate and do
   not respawn until asked; any other disconnect is unexpected and the helper reconnects
@@ -24,8 +26,8 @@ processes; `BEAM_CONFIG_DIR` selects the directory and therefore the default pat
 ## Two kinds of connection
 
 **Control**: newline-delimited JSON, ≤ 1 MiB per line, `{ id, op, … }` → `{ id, ok,
-result | error, detail? }`, out-of-order replies allowed, events only after
-`events.subscribe`.
+result | error, detail? }`, out-of-order replies allowed, events (each a line `{ event,
+data }`) only after `events.subscribe`.
 
 **Attach**: first line `{ "attach": "<streamId>" }`, then the frame format from
 [04](04-streams.md) verbatim in both directions. The daemon is a byte pump.
@@ -92,7 +94,14 @@ with `directory-unavailable` because it cannot proceed without the read.
 
 On attach the daemon dials the peer if needed (bounded 20 s; `offline` on failure is
 delivered as a `close` frame on the attach connection), opens the remote stream, and
-pumps. A reservation not attached within 10 s expires; nothing ran remotely.
+pumps. A reservation not attached within 10 s expires; nothing ran remotely, and an
+attach for it (or any unknown `streamId`) gets `close {"reason":"params"}`.
+
+Every end of an attached stream reaches the client as a `close` frame and subscribers as
+`stream.closed`: the peer's own `close` (`exit`, or a refusal reason from
+[04](04-streams.md)), `offline`, or `connection-lost` when the peer's stream ends without
+one. `stream.close`, or the client closing its connection, ends it as `detached` and closes
+the remote side.
 
 ### Events
 

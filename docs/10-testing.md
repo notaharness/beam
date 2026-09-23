@@ -53,7 +53,10 @@ CI so the fake cannot drift.
 
 ## Integration
 
-Two to four daemons, temp `$BEAM_DIR`s, dev DERP, fake worker, test authenticator:
+Two to four daemons, temp `$BEAM_DIR`s, dev DERP, fake worker, test authenticator. The
+daemons run in the test process (`control.Run`, built with the `beamtest` tag) and the CLI
+is called as `cli.Main`; where a scenario needs a dialer that misbehaves or falls silent, a
+bare member node (transport only) stands in for a daemon:
 
 | Scenario | Proves |
 |---|---|

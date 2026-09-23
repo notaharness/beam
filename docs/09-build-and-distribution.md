@@ -11,12 +11,13 @@ beam/
   internal/
     identity/               peerId, canonical JSON, entry/revocation build and verify, fleet.json
     transport/              tailcat Server/Client, addresses, admission (hello), possession MAC, liveness
-    stream/                 header, frames, pty, exec, msg, sync handlers
+    stream/                 header, frames, pty and exec processes, msg framing
     store/                  SQLite: peers, revocations, mailbox tables, pending appends
     mailbox/                flusher, receiver, subscriber fan-out over store
     directory/              worker HTTP client, blob encryption, append retry
     ceremony/               loopback listener, /cb landing page, URL building, PRF derivation
-    control/                the socket: ops, events, attach pump, lock, connect-or-spawn
+    control/                the daemon: dial loop, sync, stream dispatch; the socket: ops,
+                            events, attach pump, lock, connect-or-spawn
     cli/                    subcommands
     devderp/                in-process DERP + STUN for tests
     fakeworker/             in-process worker API for tests

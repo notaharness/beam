@@ -55,8 +55,9 @@ directly, no shell. `cwd` absolute or `~/`-relative, resolved on the acceptor. `
 merged over the daemon's environment; injected variables last. Unix: `creack/pty`.
 
 Control from the opener: `{"kind":"resize","cols":…,"rows":…}` (2–500). Data both ways
-raw. Process exit → `close {"reason":"exit","exitCode":n,"signal":s|null}`. Opener close
-or connection loss → SIGHUP then SIGKILL to the process group after 5 s.
+raw. Process exit → `close {"reason":"exit","exitCode":n,"signal"?:s}`; a process ended
+by a signal has `exitCode` 128+signal and `signal` its name (`SIGKILL`). Opener close or
+connection loss → SIGHUP then SIGKILL to the process group after 5 s.
 
 ## `exec`
 

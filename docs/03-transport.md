@@ -97,7 +97,10 @@ are TCP's. No multiplexer. One port, kind in the header.
   open `sync`. `connected` means hello succeeded on *our* dialed tunnel;
   the peer's own dial to us is independent and reported separately as `inbound`.
 - **Liveness.** A `ping` control frame on the `sync` stream every 15 s; no reply within
-  30 s closes the tunnel. WireGuard keepalives and `Server.Status()` are advisory.
+  30 s closes the tunnel. The dialer keeps a tunnel exactly as long as its `sync`, so the
+  acceptor retires the tunnel, closing every stream it carried, when that inbound `sync`
+  ends or is silent for 30 s: a stream's own close can be lost with the tunnel. WireGuard
+  keepalives and `Server.Status()` are advisory.
 - **Retry.** Exponential backoff 2 s → 5 min with jitter, forever while the daemon runs;
   reset on inbound contact from that peer, on a learned entry for it, and on
   `msg.send` to it. There is no give-up state: queued mail must eventually flow.

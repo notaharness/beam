@@ -29,6 +29,10 @@
 | D23 | A `Makefile` with `dist`, `test`, `crap`, `lint` is the one entry point for local and CI builds; `golangci-lint` is the one linter and is run by `go run` at a pinned version. | Three shell lines do not need a Go build tool; `go run` needs no install step and builds the linter with the module's Go. | 09 |
 | D24 | Per-function CRAP ≤ 30 gates CI, computed by `tools/crap` from the module-wide coverage profile. | Coverage alone rewards testing trivial code; CRAP demands tests where complexity is. A hundred-line tool beats a dependency. | 09 |
 | D25 | A hello that ends without a verdict (deadline passed, dialer left) leaves its tunnel unbound rather than failed. | Failure marks a refused proof or an eviction. A stalled hello has already spent its 5 s and its budget slot, and a fresh tunnel would cost the dialer no more. | 03 |
+| D26 | The acceptor retires a tunnel, closing every stream it carried, when its inbound `sync` ends or is silent 30 s. | The dialer keeps a tunnel exactly as long as its `sync`; a stream's own close can be lost with the tunnel, and a remote shell must not outlive its opener. | 03 |
+| D27 | A `pty` or `exec` without `cwd` starts in the acceptor's home directory. | Where a login shell starts; the opener's directory means nothing on another machine. | 04 |
+| D28 | tailcat's own logs are discarded; `daemon.log` holds beam's lines only. | tailcat's logs are verbose and not actionable for a beam user. | 06 |
+| D29 | `status.derp.source` is `"key.json"`. | The relay region is fixed by the node key (D21); there is no other source yet. | 06 |
 
 ## Milestone gate
 
