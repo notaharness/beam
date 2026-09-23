@@ -20,7 +20,7 @@ const (
 // frames until the process exits (close "exit" once output drains) or the
 // opener goes away (its input is closed and the group killed).
 func Exec(c *Conn, h Header, sp Spawn) {
-	cmd, stdin, stdout, stderr, ref := startExec(h, sp)
+	cmd, stdin, stdout, stderr, ref := startExec(c, h, sp)
 	if ref != nil {
 		refuse(c, ref)
 		return
@@ -45,7 +45,7 @@ func Exec(c *Conn, h Header, sp Spawn) {
 	w.finish(exitMsg(cmd.ProcessState), openerDone)
 }
 
-func startExec(h Header, sp Spawn) (*exec.Cmd, io.WriteCloser, io.Reader, io.Reader, *refusal) {
+func startExec(c *Conn, h Header, sp Spawn) (*exec.Cmd, io.WriteCloser, io.Reader, io.Reader, *refusal) {
 	if ref := checkHeader(h); ref != nil {
 		return nil, nil, nil, nil, ref
 	}
@@ -57,10 +57,15 @@ func startExec(h Header, sp Spawn) (*exec.Cmd, io.WriteCloser, io.Reader, io.Rea
 		return nil, nil, nil, nil, ref
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	stdin, _ := cmd.StdinPipe()
-	stdout, _ := cmd.StdoutPipe()
-	stderr, _ := cmd.StderrPipe()
-	if err := cmd.Start(); err != nil {
+	var stdin io.WriteCloser
+	var stdout, stderr io.Reader
+	err := c.unlessClosed(func() error {
+		stdin, _ = cmd.StdinPipe()
+		stdout, _ = cmd.StdoutPipe()
+		stderr, _ = cmd.StderrPipe()
+		return cmd.Start()
+	})
+	if err != nil {
 		return nil, nil, nil, nil, &refusal{"spawn", err.Error()}
 	}
 	return cmd, stdin, stdout, stderr, nil

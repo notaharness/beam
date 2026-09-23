@@ -127,6 +127,11 @@ func sendRecords(sc *stream.Conn, recs []identity.Record) error {
 func (d *daemon) serveSync(peerID string, sc *stream.Conn) {
 	defer sc.Close()
 	defer d.node.Retire(sc)
+	if d.isRevoked(peerID) {
+		refuse(sc, "revoked")
+		return
+	}
+	d.seen(peerID)
 	if sc.WriteLine(stream.Response{OK: true}) != nil {
 		return
 	}
@@ -180,6 +185,7 @@ func (d *daemon) learn(raw json.RawMessage) {
 	if r.Kind == identity.Revoke {
 		changed, _ = d.store.Revoke(r, now())
 		if changed {
+			d.at("revoking", r.PeerID)
 			d.applyRevocation(r.PeerID)
 		}
 	} else if r.PeerID != d.fleet.Entry.PeerID {

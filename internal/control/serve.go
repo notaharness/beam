@@ -19,17 +19,11 @@ type shell struct {
 // handle serves a stream an admitted peer opened here. Revocation and the
 // grant are read per open.
 func (d *daemon) handle(peerID string, h stream.Header, c *stream.Conn) {
-	p, ok, err := d.store.Peer(peerID)
-	if err != nil || !ok || p.Revoked {
-		refuse(c, "revoked")
-		return
-	}
-	d.seen(peerID)
 	switch h.Kind {
 	case stream.KindSync:
 		d.serveSync(peerID, c)
 	case stream.KindPTY, stream.KindExec:
-		d.serveShell(p, h, c)
+		d.serveShell(peerID, h, c)
 	default:
 		refuse(c, "kind")
 	}
@@ -56,19 +50,26 @@ func grantOf(g string) string {
 	return store.GrantNone
 }
 
-func (d *daemon) serveShell(p store.Peer, h stream.Header, c *stream.Conn) {
-	id := p.Entry.PeerID
+// serveShell runs a pty or exec stream. It is checked and registered in one
+// step under d.mu, which peer.grant also takes, and a revocation committed
+// before the check refuses it. A revocation or grant change after it closes
+// the stream, and a stream closed before its process starts never starts it.
+func (d *daemon) serveShell(id string, h stream.Header, c *stream.Conn) {
 	sh := &shell{c}
 	d.mu.Lock()
-	cur, _, err := d.store.Peer(id) // under the lock, so peer.grant cannot slip between check and register
+	p, ok, err := d.store.Peer(id)
+	reason := ""
 	switch {
-	case err != nil || grantOf(cur.Grant) != store.GrantAll:
-		d.mu.Unlock()
-		refuse(c, "grant")
-		return
+	case err != nil || !ok || p.Revoked:
+		reason = "revoked"
+	case grantOf(p.Grant) != store.GrantAll:
+		reason = "grant"
 	case len(d.shells[id]) >= maxShells:
+		reason = "limit"
+	}
+	if reason != "" {
 		d.mu.Unlock()
-		refuse(c, "limit")
+		refuse(c, reason)
 		return
 	}
 	if d.shells[id] == nil {
@@ -81,6 +82,8 @@ func (d *daemon) serveShell(p store.Peer, h stream.Header, c *stream.Conn) {
 		delete(d.shells[id], sh)
 		d.mu.Unlock()
 	}()
+	d.seen(id)
+	d.at("admitted", id)
 	sp := d.spawn(p)
 	if h.Kind == stream.KindPTY {
 		stream.PTY(c, h, sp)

@@ -17,7 +17,7 @@ import (
 // acceptor sends close "exit"; when the opener closes or goes away the session
 // gets SIGHUP, then SIGKILL after 5 s.
 func PTY(c *Conn, h Header, sp Spawn) {
-	cmd, f, ref := startPTY(h, sp)
+	cmd, f, ref := startPTY(c, h, sp)
 	if ref != nil {
 		refuse(c, ref)
 		return
@@ -56,7 +56,7 @@ func PTY(c *Conn, h Header, sp Spawn) {
 	w.finish(exitMsg(cmd.ProcessState), openerDone)
 }
 
-func startPTY(h Header, sp Spawn) (*exec.Cmd, *os.File, *refusal) {
+func startPTY(c *Conn, h Header, sp Spawn) (*exec.Cmd, *os.File, *refusal) {
 	if ref := checkHeader(h); ref != nil {
 		return nil, nil, ref
 	}
@@ -68,7 +68,11 @@ func startPTY(h Header, sp Spawn) (*exec.Cmd, *os.File, *refusal) {
 		return nil, nil, ref
 	}
 	size := &pty.Winsize{Cols: uint16(h.Cols), Rows: uint16(h.Rows)}
-	f, err := pty.StartWithAttrs(cmd, size, &syscall.SysProcAttr{Setsid: true, Setctty: true})
+	var f *os.File
+	err := c.unlessClosed(func() (err error) {
+		f, err = pty.StartWithAttrs(cmd, size, &syscall.SysProcAttr{Setsid: true, Setctty: true})
+		return err
+	})
 	if err != nil {
 		return nil, nil, &refusal{"spawn", err.Error()}
 	}

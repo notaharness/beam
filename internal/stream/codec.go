@@ -104,8 +104,9 @@ type Conn struct {
 	r *bufio.Reader
 	w io.Writer
 
-	closeOnce sync.Once
-	done      chan struct{} // closed by Close
+	mu     sync.Mutex // orders Close against a process start
+	closed bool
+	done   chan struct{} // closed by Close
 }
 
 // NewConn wraps c.
@@ -115,8 +116,25 @@ func NewConn(c net.Conn) *Conn {
 
 // Close closes the connection; Done is closed with it.
 func (c *Conn) Close() error {
-	c.closeOnce.Do(func() { close(c.done) })
+	c.mu.Lock()
+	if !c.closed {
+		c.closed = true
+		close(c.done)
+	}
+	c.mu.Unlock()
 	return c.Conn.Close()
+}
+
+// unlessClosed runs start unless the stream has been closed here, holding
+// Close off until it returns: a stream closed before its process starts never
+// starts it.
+func (c *Conn) unlessClosed(start func() error) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return net.ErrClosed
+	}
+	return start()
 }
 
 // Done is closed once the stream has been closed on this side, which a reader

@@ -18,16 +18,29 @@ import (
 	"github.com/notaharness/beam/internal/identity"
 	"github.com/notaharness/beam/internal/stream"
 	"github.com/notaharness/beam/internal/transport"
+	"golang.org/x/sys/unix"
 	"tailscale.com/types/logger"
 )
 
 // push forwards signed records to m over sync, from a member of its own
-// (a forwarder's word counts for nothing; each record carries the passkey's).
+// (a forwarder's word counts for nothing; each record carries the passkey's),
+// and returns once m has applied them.
 func push(t *testing.T, m *machine, recs ...identity.Record) {
+	t.Helper()
+	sc := forward(t, m, recs...)
+	defer sc.Close()
+	// A ping answered means everything before it was applied.
+	sc.WriteJSON(stream.Control, stream.Ctl{Kind: "ping", T: 1})
+	if _, _, err := sc.ReadFrame(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// forward sends signed records to m over sync as push does, without waiting.
+func forward(t *testing.T, m *machine, recs ...identity.Record) *stream.Conn {
 	t.Helper()
 	tun, _ := rawTunnel(t, m)
 	sc := rawOpen(t, tun, stream.Header{V: 1, Kind: stream.KindSync})
-	defer sc.Close()
 	var f struct {
 		Records []identity.Record `json:"records"`
 	}
@@ -35,11 +48,7 @@ func push(t *testing.T, m *machine, recs ...identity.Record) {
 	if err := sc.WriteJSON(stream.Data, f); err != nil {
 		t.Fatal(err)
 	}
-	// A ping answered means everything before it was applied.
-	sc.WriteJSON(stream.Control, stream.Ctl{Kind: "ping", T: 1})
-	if _, _, err := sc.ReadFrame(); err != nil {
-		t.Fatal(err)
-	}
+	return sc
 }
 
 // rawTunnel dials m from a member that runs no daemon, only a node that
@@ -198,6 +207,84 @@ func TestRecordLearnedDuringDump(t *testing.T) {
 	push(t, a, revocation(c))
 	release()
 	waitState(t, b, c, "revoked")
+}
+
+// docs/02: a revocation applies before a pending open proceeds. An exec
+// checked while a revocation is being applied, or that passed its checks just
+// before one lands, never starts.
+func TestRevocationBeatsPendingOpen(t *testing.T) {
+	for _, tc := range []struct{ kind, point string }{
+		{stream.KindExec, "revoking"}, {stream.KindExec, "admitted"}, {stream.KindPTY, "admitted"},
+	} {
+		point := tc.point
+		t.Run(tc.kind+"/"+point, func(t *testing.T) {
+			b := fleet(t, "beta")[0]
+			tun, raw := rawTunnel(t, b)
+			bin, started := watchExec(t)
+			reached, release := pauseAt(t, b, point, raw)
+			opened := make(chan error, 1)
+			open := func() {
+				go func() {
+					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer cancel()
+					c, err := tun.Open(ctx, stream.Header{V: 1, Kind: tc.kind, Argv: []string{bin}, Cols: 80, Rows: 24})
+					if err == nil {
+						c.Close()
+					}
+					opened <- err
+				}()
+			}
+			if point == "revoking" { // committed, not yet applied
+				defer forward(t, b, revocation(raw)).Close()
+				await(t, reached, "the revocation")
+				open()
+				var ref *transport.Refused
+				if err := <-opened; !errors.As(err, &ref) || ref.Reason != "revoked" {
+					t.Errorf("open during the revocation: %v, want revoked", err)
+				}
+				release()
+			} else { // checked, not yet started
+				open()
+				await(t, reached, "the open")
+				push(t, b, revocation(raw))
+				release()
+				if err := <-opened; err == nil {
+					t.Error("the open succeeded")
+				}
+			}
+			time.Sleep(time.Second) // time enough to start it, had it been let
+			if started() {
+				t.Fatal("the exec started")
+			}
+		})
+	}
+}
+
+// watchExec copies true(1) to a file of the test's own and reports whether it
+// has been executed: an exec opens it, which inotify reports, and a process
+// start returns only once its exec has succeeded.
+func watchExec(t *testing.T) (bin string, started func() bool) {
+	t.Helper()
+	b, err := os.ReadFile("/bin/true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin = filepath.Join(t.TempDir(), "run-me")
+	if err := os.WriteFile(bin, b, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fd, err := unix.InotifyInit1(unix.IN_NONBLOCK | unix.IN_CLOEXEC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { unix.Close(fd) })
+	if _, err := unix.InotifyAddWatch(fd, bin, unix.IN_OPEN); err != nil {
+		t.Fatal(err)
+	}
+	return bin, func() bool {
+		n, _ := unix.Read(fd, make([]byte, 4096))
+		return n > 0
+	}
 }
 
 // docs/10 "junk in the log": a record that does not verify is ignored.
