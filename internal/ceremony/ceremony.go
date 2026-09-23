@@ -129,10 +129,15 @@ func (c *Ceremony) Wait(ctx context.Context) (Result, error) {
 // TimedOut is closed if the ceremony's timeout ended it.
 func (c *Ceremony) TimedOut() <-chan struct{} { return c.timedOut }
 
-// Close ends the ceremony's listener and its clock.
+// Close ends the ceremony's listener and its clock. A request under way, the
+// result that ended the wait among them, is answered first, for at most a
+// second.
 func (c *Ceremony) Close() {
 	c.timer.Stop()
-	_ = c.srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_ = c.srv.Shutdown(ctx)
+	_ = c.srv.Close() // what the second did not end
 }
 
 // finish ends the ceremony with r or err, and reports whether this was its
