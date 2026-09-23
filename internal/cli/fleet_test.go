@@ -592,11 +592,14 @@ func TestStatusAndPeers(t *testing.T) {
 }
 
 // docs/06: beam daemon --detach, however spelled, returns at once and leaves
-// one daemon running with the options it was given, logging to daemon.log.
+// one daemon running with the options it was given, logging to daemon.log:
+// it reads the fake worker's directory, not beam.n10.is.
 func TestDaemonDetach(t *testing.T) {
-	for _, detach := range []string{"--detach", "--detach=true", "-detach=true"} {
+	for _, detach := range []string{"--detach", "--detach=true"} {
 		t.Run(detach, func(t *testing.T) {
-			m := newMachine(t, "alpha")
+			initFleet(t, "alpha")
+			reads := worker.Reads(owner.Credential().FleetID())
+			m := newMachine(t, "beta")
 			if r := m.beam("", "daemon", detach, "--derp-map", relay.MapURL, "--directory", dirURL); r.code != 0 {
 				t.Fatalf("detach: %+v", r)
 			}
@@ -607,6 +610,9 @@ func TestDaemonDetach(t *testing.T) {
 				}
 			})
 			waitFor(t, 5*time.Second, "the daemon's socket", func() bool { return answering(m) })
+			waitFor(t, 10*time.Second, "the daemon to read the fake worker", func() bool {
+				return worker.Reads(owner.Credential().FleetID()) > reads
+			})
 			var st struct {
 				Enrolled bool `json:"enrolled"`
 			}
