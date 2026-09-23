@@ -160,9 +160,9 @@ included:
   return a result through a slot at all. A loopback path kept beside it for machines
   with a browser would not remove that; it would only keep a second path.
 - What loopback would still buy on a desktop is protection from an onlooker at first
-  enrolment, where the URL opens in the local browser at once and is never drawn for a
-  camera. That onlooker has to read a URL of several hundred characters off the screen
-  and answer before the owner's first tap; the owner's page tells them if they did.
+  enrolment, where the URL opens in the local browser at once: the QR code is drawn
+  there too, but the owner's tap in the browser that just opened usually comes before an
+  onlooker can scan and approve on a phone, and the owner's page says so when it does not.
 - A headless machine, which is where this is for, gets the relay either way.
 
 ### Blast radius

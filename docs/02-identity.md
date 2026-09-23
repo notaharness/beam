@@ -15,6 +15,8 @@ full. Validated as exactly 32 lowercase hex characters wherever it arrives from 
 
 A `label` is a human name chosen at join, defaulting to the short host name: 1–64
 Unicode scalar values, none of `/ \ { }` or C0/C1 controls. Rejected, never rewritten.
+A fleet name (`beam init --fleet-name`, shown by the passkey provider) is held to the
+same bound.
 Labels may collide; disambiguation is by id.
 
 ## The passkey and what it yields
@@ -155,19 +157,34 @@ Per ceremony the daemon makes:
 ```
 sk, pk   = a fresh X25519 key pair                          sk never leaves the daemon
 readKey  = 32 random bytes                                  never leaves the daemon
-slot     = lowercase hex of SHA-256(readKey)[0:16]          32 characters, 128 bits
+slot     = unpadded base64url of SHA-256(readKey)[0:16]     22 characters, 128 bits
 ```
 
-and builds a URL whose fragment carries `op`, `slot`, `key` (`pk`, unpadded base64url),
-`action`, `label`, `fingerprint`, `challenge` and, for `create`, `fleetName`. Fragments
-are not sent in HTTP requests, so the worker never sees `pk` or the challenge. The daemon
+and builds a URL whose fragment is kept short, since it is drawn as a QR code
+([07](07-cli.md)):
+
+| Key | Value |
+|---|---|
+| `o` | what the tap approves: `c` creates the fleet's passkey (`create`); `a` adds the machine `l` (`get` over its member statement); `r` removes the machine `l` (`get` over its revocation) |
+| `s` | `slot` |
+| `k` | `pk`, unpadded base64url |
+| `c` | the challenge, unpadded base64url |
+| `l` | the label of the machine added or removed |
+| `f` | its fingerprint, the first 16 hex characters of its `peerId`, without spaces |
+| `n` | the fleet name, for `o=c` only |
+
+The daemon writes `url.Values` order (keys sorted), spaces as `+`. Fragments are not
+sent in HTTP requests, so the worker never sees `pk` or the challenge. The daemon
 then waits on the slot, reading with `readKey` as its bearer token; since the slot is a
 hash of `readKey`, whoever sees the URL can write to the slot but cannot read it.
 
 The page:
 
-1. Renders `action`, `label` and `fingerprint` as text, with "Continue only if you
-   started this just now", and a button. It imports `key` first; a browser whose Web
+1. Renders a heading it composes from `o` and `l` ("Create your beam fleet", "Add
+   buildbox to your fleet", "Remove oldlaptop from your fleet"), the label, the
+   fingerprint in groups of four as `beam status` prints it, "Continue only if you
+   started this just now", and a button. A fragment without a known `o`, `s`, `k` and
+   `c` gets "This link is incomplete" and no button. It imports `key` first; a browser whose Web
    Crypto has no X25519 is told so and gets no button.
 2. On click, calls `navigator.credentials.create({ publicKey: { rp: { id: "beam.n10.is", name: "beam" }, user: { id, name: fleetName, displayName: fleetName }, challenge, pubKeyCredParams: [ES256, Ed25519], authenticatorSelection: { residentKey: "required", userVerification: "required" }, extensions: { prf: {} } } })` or
    `navigator.credentials.get({ publicKey: { rpId: "beam.n10.is", challenge, userVerification: "required", extensions: { prf: { eval: { first: salt } } } } })`.

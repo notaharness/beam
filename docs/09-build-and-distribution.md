@@ -100,7 +100,7 @@ CREATE TABLE entries (
   UNIQUE (fleet_id, statement_hash)  -- appends are idempotent
 );
 CREATE TABLE slots (
-  slot_id        TEXT PRIMARY KEY,   -- 32 hex, SHA-256(readKey)[0:16]
+  slot_id        TEXT PRIMARY KEY,   -- 22 base64url, SHA-256(readKey)[0:16]
   sealed         BLOB,               -- ≤ 8192 bytes; NULL once read
   created_at     INTEGER NOT NULL    -- the write; the row lives five minutes from it
 );
@@ -134,8 +134,8 @@ Assertion verification (`@simplewebauthn/server`): origin `https://beam.n10.is`,
 credential id must be the fleet's. A refused append is `403`, a body or a blob over its
 cap or a full fleet `413`, and a fleet over its rate `429`, through Workers' rate-limit
 binding. A
-revoked machine holds `T_read` and can read; it cannot append. A slot is `:slot` as 32
-lowercase hex; any other is `404`. The worker can open no slot's ciphertext; it never
+revoked machine holds `T_read` and can read; it cannot append. A slot is `:slot` as 22
+base64url characters encoding 16 bytes; any other is `404`. The worker can open no slot's ciphertext; it never
 sees the key.
 
 ### Ceremony page headers

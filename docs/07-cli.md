@@ -29,8 +29,8 @@ beam version
 
 ## Enrolment
 
-Each ceremony prints its URL, draws it as a QR code below when stdout is a terminal, and
-opens the browser when the machine has one (a display, and not an SSH session). The owner
+Each ceremony draws its URL as a QR code when stdout is a terminal, prints the URL under
+it whether or not, and opens the browser when the machine has one (a display, and not an SSH session). The owner
 finishes in whichever they like: the browser that opened, or a phone that scanned the
 code. Nothing else differs between a desktop and a headless machine. Output shows
 stages: `starting daemon`, `preparing network`, `waiting for your passkey (create)`,
@@ -65,17 +65,20 @@ A ceremony shows:
 
 ```
 waiting for your passkey (sign)
-  https://beam.n10.is/#op=get&slot=…&key=…&action=…
-  ▄▄▄▄▄▄▄ ▄ ▄▄ … (the QR code)
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+⣿⡏⠉⠉⠉⢹… (the QR code, 28 × 14 for a typical URL)
+https://beam.n10.is/#c=…&f=b7f39a210c4e55d1&k=…&l=buildbox&o=a&s=…
 scan with your phone or open the link; continue only on a page that shows this machine
 ```
 
-The QR code encodes the URL byte for byte, at error correction level L, two modules
-per character cell with Unicode half blocks (`▀ ▄ █` and space), black on white by SGR
-colours whatever the terminal's theme, with a four-module quiet zone. A URL with an
-ASCII label fits version 13 (69 modules), 77 columns with the quiet zone, so an
-80-column terminal holds it; a long non-ASCII label can make it wider, and the URL
-above it still works. The page on the phone checks nothing against the terminal: the
+The QR code encodes the URL byte for byte at error correction level L. Each character
+cell is a braille pattern (U+2800–U+28FF) holding 2 × 4 modules, a light module a raised
+dot, drawn white on black by SGR whatever the terminal's theme, with a three-module
+quiet zone. A typical URL is version 8, 55 modules with the quiet zone, 28 columns by
+14 rows; a 64-character ASCII label is version 9 (30 × 15), and `init` with a
+64-character label and fleet name version 11 (34 × 17). A non-ASCII label, which
+percent-encoding triples, makes it larger. The URL below it is the fallback: it is
+printed on every output, a terminal's or a pipe's. The page on the phone checks nothing against the terminal: the
 owner compares the action, machine and fingerprint it shows with what they ran
 ([01](01-model.md), The relayed result).
 
