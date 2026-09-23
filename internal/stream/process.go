@@ -167,13 +167,14 @@ func (g *group) signal(sig syscall.Signal) {
 	}
 }
 
-// reap collects the exited leader's status; the group is signalled no more.
+// reap collects the exited leader, under the lock signals take: no signal to
+// its group follows the reap that frees the group id.
 func (g *group) reap() {
 	<-g.exited
-	_ = g.cmd.Wait() // the status is in cmd.ProcessState
 	g.mu.Lock()
+	defer g.mu.Unlock()
+	_ = g.cmd.Wait() // the status is in cmd.ProcessState
 	g.reaped = true
-	g.mu.Unlock()
 }
 
 // inputAhead is how many of the opener's frames are read ahead of a process
