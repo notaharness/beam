@@ -68,6 +68,32 @@ func TestTestAuthenticator(t *testing.T) {
 	}
 }
 
+// docs/02 init step 2: a create verifies only for its challenge, as a create,
+// from beam's origin, for beam's RP, with the user verified. Each vector
+// breaks one check of an otherwise valid create.
+func TestCredentialChecks(t *testing.T) {
+	a := identity.NewAuthenticator()
+	challenge := []byte("0123456789abcdef0123456789abcdef")
+	create := func(typ, origin, rpID string, flags byte) Result {
+		return Result{CredentialID: a.CredentialID, ClientDataJSON: identity.ClientDataJSON(typ, challenge, origin),
+			AttestationObject: a.AttestationObject(rpID, flags)}
+	}
+	uv := identity.FlagUP | identity.FlagUV
+	if _, err := create("webauthn.create", identity.Origin, identity.RPID, uv).Credential(challenge); err != nil {
+		t.Fatalf("the valid create: %v", err)
+	}
+	for name, r := range map[string]Result{
+		"type":     create("webauthn.get", identity.Origin, identity.RPID, uv),
+		"origin":   create("webauthn.create", "https://beam.n10.is.example", identity.RPID, uv),
+		"rpIdHash": create("webauthn.create", identity.Origin, "n10.is", uv),
+		"UV":       create("webauthn.create", identity.Origin, identity.RPID, identity.FlagUP),
+	} {
+		if _, err := r.Credential(challenge); err == nil {
+			t.Errorf("a create with the wrong %s verified", name)
+		}
+	}
+}
+
 // docs/02 Ceremonies: the URL's fragment carries what the page needs, and
 // fleetName only for a create.
 func TestURL(t *testing.T) {
