@@ -10,7 +10,7 @@ directory = "./public"
 [[d1_databases]]
 binding = "DB"
 database_name = "beam"
-database_id = "00000000-0000-0000-0000-000000000000" # replaced by `wrangler d1 create beam`'s id
+database_id = "7e0d3382-8f3d-45a9-bf67-b341360650da"
 
 [[ratelimits]]
 name = "LIMITER"
