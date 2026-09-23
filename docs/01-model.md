@@ -31,9 +31,9 @@ would be the same over any transport.
    it means a new fleet; the old one keeps working because trust, once verified, is
    pinned locally.
 3. **No server in the trust path.** The one hosted component stores ciphertext it cannot
-   read containing statements it cannot forge, verifies passkey assertions on writes so
-   only a tap can append, and is consulted when a machine joins or a revocation is
-   published, never per connection. Its code is open.
+   read containing statements it cannot forge, and verifies passkey assertions on writes
+   so only a tap can append. It is read at join and at daemon start, written at init,
+   join and revoke, and never polled or consulted per connection. Its code is open.
 4. **Verify on contact, pin forever.** A machine proves membership the first time it
    connects to another by presenting its signed entry and proving possession of the key
    the entry names. The receiver checks once and stores the result.
@@ -61,7 +61,7 @@ would be the same over any transport.
 |---|---|---|---|
 | Node key | One machine's identity | Membership | That machine is impersonated until revoked. A shell-capable member is the owner's OS account on every machine it reaches, so a stolen member that was used before revocation may have copied other keys; see "Blast radius". |
 | Passkey | Membership and revocation, one statement per tap | Anything per connection | Total. The owner starts a new fleet. |
-| Directory worker | Storing and returning ciphertext; refusing writes that lack a valid assertion | Contents; membership; anything at runtime | Refuses to serve: joining and publishing revocations stall. Cannot read an address, forge an entry or remove one a machine already holds. Sees blob sizes, timing and a fleet identifier. |
+| Directory worker | Storing and returning ciphertext; refusing writes that lack a valid assertion | Contents; membership; anything at runtime | Refuses to serve: init, join and publishing stall, and a starting daemon learns no revocation from it. Nothing at runtime waits on it. Cannot read an address, forge an entry or remove one a machine already holds. Sees blob sizes, timing and a fleet identifier. |
 | Ceremony page | Running one WebAuthn call honestly | Anything beyond the operation being approved | Can substitute the statement being signed during that one tap, and can keep the PRF output (directory read access). Cannot sign a later statement. |
 | A fleet machine's disk | Its pins, its mailbox, the directory key | Membership | Stolen: tunnel access until revoked; permanent read access to the directory. Cannot add or remove a machine. |
 | DERP relay | Delivery of encrypted packets; rendezvous | Contents; identity; membership | New connections stall while down. Cannot complete a handshake or join a tunnel it observes. |
@@ -69,11 +69,15 @@ would be the same over any transport.
 ### The ceremony as the trusted moment
 
 During a tap the page runs in the owner's browser at `https://beam.n10.is`. It could
-show "add buildbox" while asking the authenticator to sign a different entry. What it
-gets is one signature over one statement; there is no seed to keep and no future
-authority. It also receives the PRF output, so a hostile page learns the directory key,
-which grants reading addresses and labels. Both are accepted: this is the relying-party
-trust every passkey system has, bounded to one operation. The page has
+show "add buildbox" while asking the authenticator to sign a different entry. From that
+one tap a hostile page obtains an assertion over a statement of its choosing and the PRF
+output. The PRF output yields the read token and the directory key, and with them the
+page can append that one entry, or that one revocation, to the directory itself: add a
+machine it holds the key of, or remove one of the owner's. It gets one statement per
+tap and none after: there is no seed to keep and no future signing authority. What it
+keeps is the directory key, which reads addresses and labels for as long as the fleet
+exists. That is the full exposure, and it is accepted: this is the relying-party trust
+every passkey system has, bounded to one operation. The page has
 `Content-Security-Policy: default-src 'none'`, its source is public and its hash is
 pinned in CI; none of that is a cryptographic guarantee, and the spec does not claim one.
 
