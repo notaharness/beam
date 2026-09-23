@@ -15,7 +15,8 @@ var ErrNotInFlight = errors.New("no such envelope in flight to this subscriber")
 // Subscribers hands inbound mail to subscribed connections, one envelope in
 // flight to each at a time (docs/05). Mail no subscriber matches stays in
 // inbound. Deliveries happen outside the lock, so a subscriber that does not
-// take its envelope holds up no one else.
+// take its envelope holds up no one else; each holds its subscription's own
+// lock, which settling or ending it takes too, so none is stale.
 type Subscribers struct {
 	st *store.Store
 
@@ -26,11 +27,14 @@ type Subscribers struct {
 
 // Sub is one subscription.
 type Sub struct {
-	id       int64
-	topic    *string
-	from     []string
-	deliver  func(json.RawMessage) error
-	inflight bool
+	id      int64
+	topic   *string
+	from    []string
+	deliver func(json.RawMessage) error
+	mu      sync.Mutex // held across a delivery, and to settle or end s
+
+	inflight bool  // under Subscribers.mu
+	handed   int64 // envelopes handed to s; a delivery is current while it is the last, in flight
 }
 
 // NewSubscribers fans st's inbound mail out.
@@ -64,12 +68,14 @@ func (h *Subscribers) Defer(s *Sub, id, reason string) error {
 }
 
 func (h *Subscribers) settle(s *Sub, f func() (bool, error)) error {
+	s.mu.Lock()
 	h.mu.Lock()
 	ok, err := f()
 	if ok {
 		s.inflight = false
 	}
 	h.mu.Unlock()
+	s.mu.Unlock()
 	switch {
 	case err != nil:
 		return err
@@ -82,10 +88,12 @@ func (h *Subscribers) settle(s *Sub, f func() (bool, error)) error {
 
 // Close ends s, whose connection is gone, releasing what it held.
 func (h *Subscribers) Close(s *Sub) error {
+	s.mu.Lock() // a delivery under way ends first
 	h.mu.Lock()
 	delete(h.subs, s)
 	err := h.st.Release(s.id)
 	h.mu.Unlock()
+	s.mu.Unlock()
 	h.Offer()
 	return err
 }
@@ -102,14 +110,23 @@ func (h *Subscribers) Offer() {
 		env, ok, err := h.st.Take(s.id, s.topic, s.from)
 		if err == nil && ok {
 			s.inflight = true
-			go h.hand(s, env) // one at a time per subscription
+			s.handed++
+			go h.hand(s, env, s.handed) // one at a time per subscription
 		}
 	}
 }
 
-// hand delivers env to s. A delivery that fails ends s, releasing env.
-func (h *Subscribers) hand(s *Sub, env json.RawMessage) {
-	if s.deliver(env) != nil {
+// hand delivers env, the nth envelope handed to s, unless s has since ended,
+// settled it or been handed another. A delivery that fails ends s, releasing
+// env.
+func (h *Subscribers) hand(s *Sub, env json.RawMessage, n int64) {
+	s.mu.Lock()
+	h.mu.Lock()
+	current := h.subs[s] && s.inflight && s.handed == n
+	h.mu.Unlock()
+	failed := current && s.deliver(env) != nil
+	s.mu.Unlock()
+	if failed {
 		_ = h.Close(s) // what it held is released at the next start if this fails
 	}
 }
