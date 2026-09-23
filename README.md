@@ -51,3 +51,7 @@ key it names, verifies, and pins. From then on nobody consults anyone. Streams a
 through the tunnel; the daemon exposes one local socket for the CLI, n10 desktop and
 scripts. Revoking is another tap, pushed to connected peers at once and to the rest as
 they connect.
+
+## Licence
+
+MIT, in [LICENSE](LICENSE).
