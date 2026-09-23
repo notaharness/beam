@@ -25,6 +25,7 @@ func runDaemon(e *env) int {
 	detach := fs.Bool("detach", false, "")
 	withParent := fs.Bool("exit-with-parent", false, "")
 	derpMap := fs.String("derp-map", "", "")
+	dir := directoryFlag(fs)
 	if fs.Parse(e.args) != nil || fs.NArg() != 0 {
 		return e.fail(errUsage)
 	}
@@ -48,7 +49,7 @@ func runDaemon(e *env) int {
 		ctx = untilParentExits(ctx, e.stdin)
 	}
 	logf := log.New(e.stderr, "", log.LstdFlags).Printf
-	if err := control.Run(ctx, control.Options{Paths: p, Version: Version, Logf: logf, DERPMap: *derpMap}); err != nil {
+	if err := control.Run(ctx, control.Options{Paths: p, Version: Version, Logf: logf, DERPMap: *derpMap, Directory: *dir}); err != nil {
 		return e.fail(err)
 	}
 	if errors.Is(context.Cause(ctx), errParentExited) {

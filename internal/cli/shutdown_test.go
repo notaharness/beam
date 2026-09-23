@@ -4,29 +4,68 @@ package cli_test
 
 import (
 	"os"
+	"os/exec"
+	"syscall"
 	"testing"
 	"time"
 
-	"github.com/notaharness/beam/internal/stream"
+	"github.com/notaharness/beam/internal/control"
 )
 
-// docs/04, docs/06 Shutdown: a daemon that stops tears down the streams it
-// serves before it exits: a pty session whose processes ignore SIGHUP gets
-// its SIGKILL after the grace, and is gone by the time the daemon is.
+// docs/10 "shutdown ends sessions": a daemon, a process of its own stopped by
+// SIGTERM, tears down the streams it serves before it exits: a pty session
+// and an exec whose processes ignore SIGHUP and SIGTERM are gone by the time
+// the daemon is, the pty's after its SIGKILL grace.
 func TestShutdownEndsSessions(t *testing.T) {
-	b := fleet(t, "beta")[0]
-	tun, _ := rawTunnel(t, b)
-	dir := t.TempDir()
-	os.WriteFile(dir+"/child.sh", []byte("trap '' HUP; echo $$ > "+dir+"/child; exec sleep 300\n"), 0o600)
-	rawOpen(t, tun, stream.Header{V: 1, Kind: stream.KindPTY, Cols: 80, Rows: 24, Argv: []string{"sh", "-c",
-		"trap '' HUP; sh " + dir + "/child.sh >/dev/null 2>&1 </dev/null & echo $$ > " + dir + "/leader; exec sleep 300"}})
-	leader, child := waitPid(t, dir+"/leader"), waitPid(t, dir+"/child")
-	start := time.Now()
-	b.stop()
-	if !ended(leader) || !ended(child) {
-		t.Errorf("after the daemon stopped (%v): leader ended %v, child ended %v", time.Since(start), ended(leader), ended(child))
+	a, b := newMachine(t, "alpha"), newMachine(t, "beta")
+	a.knows(t, b)
+	b.knows(t, a)
+	a.start(t)
+	d := exec.Command(os.Args[0], "daemon", "--derp-map", relay.MapURL, "--directory", dirURL)
+	d.Env, d.Stderr = append(os.Environ(), "BEAM_CONFIG_DIR="+b.dir), os.Stderr
+	if err := d.Start(); err != nil {
+		t.Fatal(err)
 	}
-	if d := time.Since(start); d > 12*time.Second {
-		t.Errorf("shutdown took %v", d)
+	exited := make(chan struct{})
+	go func() { d.Wait(); close(exited) }()
+	t.Cleanup(func() { d.Process.Kill(); <-exited })
+	waitFor(t, 10*time.Second, "beta's socket", func() bool { return answering(b) })
+	waitState(t, a, b, "connected")
+
+	dir := t.TempDir()
+	stubborn := func(name string) []string {
+		return []string{"sh", "-c", "trap '' HUP TERM; echo $$ > " + dir + "/" + name + "; exec sleep 300"}
+	}
+	openPTY(t, a, "beta", stubborn("pty")...)
+	c, err := control.Connect(a.paths(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	var res struct {
+		StreamID string `json:"streamId"`
+	}
+	if err := c.Call("exec.open", map[string]any{"peer": "beta", "argv": stubborn("exec")}, &res); err != nil {
+		t.Fatal(err)
+	}
+	ac, err := control.Attach(a.paths(), res.StreamID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ac.Close()
+	ptyPid, execPid := waitPid(t, dir+"/pty"), waitPid(t, dir+"/exec")
+
+	start := time.Now()
+	d.Process.Signal(syscall.SIGTERM)
+	select {
+	case <-exited:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the daemon did not exit")
+	}
+	if !ended(ptyPid) || !ended(execPid) {
+		t.Errorf("when the daemon exited (after %v): pty ended %v, exec ended %v", time.Since(start), ended(ptyPid), ended(execPid))
+	}
+	if took := time.Since(start); took > 12*time.Second {
+		t.Errorf("shutdown took %v", took)
 	}
 }
