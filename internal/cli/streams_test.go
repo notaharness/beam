@@ -386,6 +386,9 @@ func TestStreamClose(t *testing.T) {
 	if ev := nextClosed(t, next); ev.StreamID != id || ev.Reason != "detached" {
 		t.Errorf("stream.closed %+v, want %s detached", ev, id)
 	}
+	if msg := readClose(t, ac); msg.Reason != "detached" {
+		t.Errorf("close %+v, want detached", msg)
+	}
 	if _, _, err := ac.ReadFrame(); err == nil {
 		t.Error("the attach connection outlived stream.close")
 	}
@@ -402,5 +405,90 @@ func TestStreamClose(t *testing.T) {
 	var oe *control.OpError
 	if err := c.Call("stream.close", map[string]any{"streamId": res.StreamID}, nil); !errors.As(err, &oe) || oe.Code != "params" {
 		t.Errorf("closing it again: %v, want params", err)
+	}
+}
+
+// readClose reads an attach connection's frames up to its close.
+func readClose(t *testing.T, ac *stream.Conn) stream.CloseMsg {
+	t.Helper()
+	ac.SetReadDeadline(time.Now().Add(20 * time.Second))
+	for {
+		typ, p, err := ac.ReadFrame()
+		if err != nil {
+			t.Fatalf("no close frame: %v", err)
+		}
+		if typ == stream.Close {
+			return stream.ParseClose(p)
+		}
+	}
+}
+
+// docs/06: stream.close, or the client leaving, before the remote stream is
+// open ends the stream there: nothing is sent, whether the daemon was still
+// dialing the peer or about to open on a live tunnel.
+func TestDetachBeforeOpen(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		close  bool // stream.close, else the client leaves
+		peerUp bool
+	}{
+		{"stream.close while dialing", true, false},
+		{"client leaves while dialing", false, false},
+		{"stream.close on a live tunnel", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, b := newMachine(t, "alpha"), newMachine(t, "beta")
+			a.knows(t, b)
+			b.knows(t, a)
+			a.start(t)
+			if tc.peerUp {
+				b.start(t)
+				waitState(t, a, b, "connected")
+			}
+			bin, started := watchExec(t)
+			next := events(t, a)
+			c, err := control.Connect(a.paths(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer c.Close()
+			var res struct {
+				StreamID string `json:"streamId"`
+			}
+			if err := c.Call("exec.open", map[string]any{"peer": "beta", "argv": []string{bin}}, &res); err != nil {
+				t.Fatal(err)
+			}
+			reached, release := pauseAt(t, a, "attached", b)
+			ac, err := control.Attach(a.paths(), res.StreamID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer ac.Close()
+			await(t, reached, "the attach")
+			if tc.close {
+				if err := c.Call("stream.close", map[string]any{"streamId": res.StreamID}, nil); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				ac.Close()
+			}
+			release()
+			if tc.close {
+				if msg := readClose(t, ac); msg.Reason != "detached" {
+					t.Errorf("close %+v, want detached", msg)
+				}
+			}
+			if ev := nextClosed(t, next); ev.StreamID != res.StreamID || ev.Reason != "detached" {
+				t.Errorf("stream.closed %+v, want detached", ev)
+			}
+			if !tc.peerUp {
+				b.start(t)
+				waitState(t, a, b, "connected")
+			}
+			time.Sleep(time.Second) // time enough for an open still under way to arrive
+			if started() {
+				t.Fatal("the exec started after its stream was closed")
+			}
+		})
 	}
 }

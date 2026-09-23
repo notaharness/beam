@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"io"
 	"time"
 
 	"github.com/notaharness/beam/internal/stream"
@@ -40,16 +39,20 @@ func (d *daemon) reserve(peer string, h stream.Header) string {
 }
 
 // attach runs an attach connection: dial the peer if needed, open the remote
-// stream, and pump frames until it closes. Every way it ends reaches the
-// client as a close frame.
+// stream, and pump frames until it ends. stream.close and the client's
+// departure detach it at any point, and one that is detached before the
+// remote open sends nothing. Every end reaches the client as a close frame.
 func (d *daemon) attach(ac *stream.Conn, id string) {
 	defer ac.Close()
+	ctx, cancel := context.WithCancelCause(d.ctx)
+	detach := func() { cancel(errDetached) }
+	defer detach()
 	d.mu.Lock()
 	r, ok := d.reservations[id]
 	if ok {
 		r.timer.Stop()
 		delete(d.reservations, id)
-		d.active[id] = ac
+		d.active[id] = detach
 	}
 	d.mu.Unlock()
 	if !ok {
@@ -61,14 +64,12 @@ func (d *daemon) attach(ac *stream.Conn, id string) {
 		delete(d.active, id)
 		d.mu.Unlock()
 	}()
-	ctx, cancel := context.WithTimeout(d.ctx, dialTimeout)
-	rc, msg := d.openRemote(ctx, r)
-	cancel()
-	if rc != nil {
-		msg = pump(ac, rc)
-	} else {
-		_ = ac.WriteJSON(stream.Close, msg) // closing either way
-	}
+	in := make(chan frame, clientAhead)
+	go fromClient(ctx, ac, in, detach)
+	d.at("attached", r.peer)
+	msg := d.relay(ctx, r, ac, in)
+	ac.SetWriteDeadline(time.Now().Add(closeGrace))
+	_ = ac.WriteJSON(stream.Close, msg) // closing either way
 	d.emit("stream.closed", streamClosed{id, msg.Reason, msg.ExitCode, msg.Signal})
 }
 
@@ -77,6 +78,63 @@ type streamClosed struct {
 	Reason   string  `json:"reason"`
 	ExitCode *int    `json:"exitCode,omitempty"`
 	Signal   *string `json:"signal,omitempty"`
+}
+
+// Attach limits.
+const (
+	clientAhead = 4           // client frames read ahead of the remote side
+	closeGrace  = time.Second // for a client that stopped reading to take its close
+)
+
+// errDetached ends an attach that stream.close or its client ended; the
+// daemon stopping ends the rest.
+var errDetached = errors.New("detached")
+
+// ended is the close of a stream whose attach ctx ended.
+func ended(ctx context.Context) stream.CloseMsg {
+	if context.Cause(ctx) == errDetached {
+		return stream.CloseMsg{Reason: "detached"}
+	}
+	return stream.CloseMsg{Reason: "connection-lost"}
+}
+
+type frame struct {
+	t stream.Type
+	p []byte
+}
+
+// fromClient reads the client's frames into in from attach on, so that its
+// departure detaches the stream even before the remote side is open.
+func fromClient(ctx context.Context, ac *stream.Conn, in chan<- frame, detach func()) {
+	defer close(in)
+	defer detach()
+	for {
+		t, p, err := ac.ReadFrame()
+		if err != nil {
+			return
+		}
+		select {
+		case in <- frame{t, p}:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// relay opens the remote stream and pumps it; the end is its close.
+func (d *daemon) relay(ctx context.Context, r *reservation, ac *stream.Conn, in <-chan frame) stream.CloseMsg {
+	octx, cancel := context.WithTimeout(ctx, dialTimeout)
+	rc, msg := d.openRemote(octx, r)
+	cancel()
+	switch {
+	case rc != nil:
+		defer rc.Close()
+	case ctx.Err() != nil:
+		return ended(ctx)
+	default:
+		return msg
+	}
+	return pump(ctx, ac, rc, in)
 }
 
 func (d *daemon) openRemote(ctx context.Context, r *reservation) (*stream.Conn, stream.CloseMsg) {
@@ -95,41 +153,38 @@ func (d *daemon) openRemote(ctx context.Context, r *reservation) (*stream.Conn, 
 	return rc, stream.CloseMsg{}
 }
 
-// pump copies the client's frames to the peer as bytes, and the peer's frames
-// to the client one by one, watching for the close. The stream is detached
-// when the client's side ends first, and connection-lost when the peer's
-// ends without a close.
-func pump(ac, rc *stream.Conn) stream.CloseMsg {
-	detached := make(chan struct{})
-	go func() {
-		_, _ = io.Copy(rc, ac) // ends with either side
-		close(detached)
+// pump carries the client's frames to the peer and the peer's data frames to
+// the client until the peer sends its close, its side ends without one
+// (connection-lost), or the stream is detached.
+func pump(ctx context.Context, ac, rc *stream.Conn, in <-chan frame) stream.CloseMsg {
+	stop := context.AfterFunc(ctx, func() {
 		rc.Close()
+		ac.SetWriteDeadline(time.Now().Add(closeGrace))
+	})
+	defer stop()
+	go func() {
+		for f := range in {
+			if rc.WriteFrame(f.t, f.p) != nil {
+				return
+			}
+		}
 	}()
 	for {
 		t, p, err := rc.ReadFrame()
-		select {
-		case <-detached:
-			return stream.CloseMsg{Reason: "detached"}
-		default:
-		}
-		if err != nil {
-			msg := stream.CloseMsg{Reason: "connection-lost"}
-			_ = ac.WriteJSON(stream.Close, msg) // closing either way
-			return msg
-		}
-		if ac.WriteFrame(t, p) != nil {
-			rc.Close()
-			return stream.CloseMsg{Reason: "detached"}
-		}
-		if t == stream.Close {
+		switch {
+		case ctx.Err() != nil:
+			return ended(ctx)
+		case err != nil:
+			return stream.CloseMsg{Reason: "connection-lost"}
+		case t == stream.Close:
 			return stream.ParseClose(p)
+		case ac.WriteFrame(t, p) != nil:
+			return stream.CloseMsg{Reason: "detached"} // the client has gone
 		}
 	}
 }
 
-// closeStream ends a reserved stream, or detaches an attached one: pump
-// closes the remote side once the client's has ended.
+// closeStream ends a reserved stream, or detaches an attached one.
 func (d *daemon) closeStream(id string) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -138,9 +193,9 @@ func (d *daemon) closeStream(id string) bool {
 		delete(d.reservations, id)
 		return true
 	}
-	ac, ok := d.active[id]
+	detach, ok := d.active[id]
 	if ok {
-		ac.Close()
+		detach()
 	}
 	return ok
 }

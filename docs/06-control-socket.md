@@ -30,7 +30,8 @@ result | error, detail? }`, out-of-order replies allowed, events (each a line `{
 data }`) only after `events.subscribe`.
 
 **Attach**: first line `{ "attach": "<streamId>" }`, then the frame format from
-[04](04-streams.md) verbatim in both directions. The daemon is a byte pump.
+[04](04-streams.md) verbatim in both directions. The daemon relays frames unchanged, reading
+the client's from the moment it attaches.
 
 ## Operations
 
@@ -100,8 +101,9 @@ attach for it (or any unknown `streamId`) gets `close {"reason":"params"}`.
 Every end of an attached stream reaches the client as a `close` frame and subscribers as
 `stream.closed`: the peer's own `close` (`exit`, or a refusal reason from
 [04](04-streams.md)), `offline`, or `connection-lost` when the peer's stream ends without
-one. `stream.close`, or the client closing its connection, ends it as `detached` and closes
-the remote side.
+one, or when this daemon stops. `stream.close`, or the client closing its connection,
+ends it as `detached` at any point: it closes the remote side, and before the remote stream
+is open nothing is sent to the peer.
 
 ### Events
 

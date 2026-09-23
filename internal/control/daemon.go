@@ -16,7 +16,6 @@ import (
 
 	"github.com/notaharness/beam/internal/identity"
 	"github.com/notaharness/beam/internal/store"
-	"github.com/notaharness/beam/internal/stream"
 	"github.com/notaharness/beam/internal/transport"
 )
 
@@ -49,7 +48,7 @@ type daemon struct {
 	shells       map[string]map[*shell]bool // inbound pty and exec streams, by peer
 	inbound      map[string]int             // open inbound sync streams, by peer
 	reservations map[string]*reservation
-	active       map[string]*stream.Conn // attached streams: the client's connection
+	active       map[string]context.CancelFunc // attached streams: each one's detach
 	subscribers  map[*clientConn]bool
 }
 
@@ -76,7 +75,7 @@ func Run(ctx context.Context, o Options) error {
 	defer stop()
 	d := &daemon{o: o, ctx: ctx, stop: stop,
 		peers: map[string]*peerState{}, shells: map[string]map[*shell]bool{}, inbound: map[string]int{},
-		reservations: map[string]*reservation{}, active: map[string]*stream.Conn{}, subscribers: map[*clientConn]bool{}}
+		reservations: map[string]*reservation{}, active: map[string]context.CancelFunc{}, subscribers: map[*clientConn]bool{}}
 	go d.serveSocket(ln)
 	if err := d.enroll(); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
