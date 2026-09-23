@@ -33,10 +33,60 @@ var (
 	ErrFrameType = errors.New("stream: unknown frame type")
 )
 
-// Header opens a stream.
+// Header opens a stream. Argv, Cwd and Env are for pty and exec, Cols and
+// Rows for pty.
 type Header struct {
-	V    int    `json:"v"`
+	V    int               `json:"v"`
+	Kind string            `json:"kind"`
+	Argv []string          `json:"argv,omitempty"`
+	Cwd  string            `json:"cwd,omitempty"`
+	Env  map[string]string `json:"env,omitempty"`
+	Cols int               `json:"cols,omitempty"`
+	Rows int               `json:"rows,omitempty"`
+}
+
+// Stream kinds.
+const (
+	KindHello = "hello"
+	KindSync  = "sync"
+	KindPTY   = "pty"
+	KindExec  = "exec"
+	KindMsg   = "msg"
+)
+
+// Ctl is a control frame's payload; each kind uses some of the fields.
+type Ctl struct {
 	Kind string `json:"kind"`
+	T    int64  `json:"t,omitempty"`    // ping, pong
+	Cols int    `json:"cols,omitempty"` // resize
+	Rows int    `json:"rows,omitempty"` // resize
+}
+
+// CloseMsg is a close frame's payload.
+type CloseMsg struct {
+	Reason   string  `json:"reason"`
+	Detail   string  `json:"detail,omitempty"`
+	ExitCode *int    `json:"exitCode,omitempty"`
+	Signal   *string `json:"signal,omitempty"`
+}
+
+// ParseClose decodes a close frame's payload. One that is malformed, or an
+// exit without its code, reads as connection-lost.
+func ParseClose(p []byte) CloseMsg {
+	var m CloseMsg
+	if json.Unmarshal(p, &m) != nil || m.Reason == "exit" && m.ExitCode == nil {
+		return CloseMsg{Reason: "connection-lost"}
+	}
+	return m
+}
+
+// WriteJSON writes v as the payload of a frame of type t.
+func (c *Conn) WriteJSON(t Type, v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	return c.WriteFrame(t, b)
 }
 
 // Response answers a header, and carries the result of hello.
@@ -77,21 +127,36 @@ func (c *Conn) WriteLine(v any) error {
 
 // ReadLine reads one JSON line into v.
 func (c *Conn) ReadLine(v any) error {
-	var line []byte
-	for {
-		chunk, err := c.r.ReadSlice('\n')
-		line = append(line, chunk...)
-		if len(line) > MaxLine {
-			return ErrTooLarge
-		}
-		if err == nil {
-			break
-		}
-		if err != bufio.ErrBufferFull {
-			return err
-		}
+	line, err := ReadLine(c.r, MaxLine)
+	if err != nil {
+		return err
 	}
 	return json.Unmarshal(line, v) // the whole line is one value
+}
+
+// ReadLine reads one newline-terminated line of at most max bytes, newline
+// included.
+func ReadLine(r *bufio.Reader, max int) ([]byte, error) {
+	var line []byte
+	for {
+		chunk, err := r.ReadSlice('\n')
+		line = append(line, chunk...)
+		if len(line) > max {
+			return nil, ErrTooLarge
+		}
+		if err == nil {
+			return line, nil
+		}
+		if err != bufio.ErrBufferFull {
+			return nil, err
+		}
+	}
+}
+
+// NewConnReader is NewConn for a connection whose first bytes were already
+// read into r.
+func NewConnReader(c net.Conn, r *bufio.Reader) *Conn {
+	return &Conn{Conn: c, r: r, w: c}
 }
 
 // WriteFrame writes one frame.

@@ -26,7 +26,7 @@ func TestLineRoundTrip(t *testing.T) {
 	if err := b.ReadLine(&h); err != nil {
 		t.Fatal(err)
 	}
-	if h != (Header{V: 1, Kind: "hello"}) {
+	if h.V != 1 || h.Kind != "hello" {
 		t.Fatalf("got %+v", h)
 	}
 }
@@ -171,5 +171,24 @@ func TestConnReadsThroughBuffer(t *testing.T) {
 	rest, err := io.ReadAll(b)
 	if err != nil || string(rest) != "raw" {
 		t.Fatalf("bytes after the line: %q, %v", rest, err)
+	}
+}
+
+func TestParseClose(t *testing.T) {
+	lost := CloseMsg{Reason: "connection-lost"}
+	for _, tc := range []struct {
+		payload string
+		want    string // the reason
+		code    int
+	}{
+		{`{"reason":"exit","exitCode":3}`, "exit", 3},
+		{`{"reason":"exit"}`, lost.Reason, 0},
+		{`{"reason":"offline","detail":"x"}`, "offline", 0},
+		{`{"reason":`, lost.Reason, 0},
+	} {
+		m := ParseClose([]byte(tc.payload))
+		if m.Reason != tc.want || m.ExitCode != nil && *m.ExitCode != tc.code {
+			t.Errorf("%s: got %+v", tc.payload, m)
+		}
 	}
 }
