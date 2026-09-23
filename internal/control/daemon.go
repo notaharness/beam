@@ -156,7 +156,11 @@ func (d *daemon) enroll(f *identity.Fleet, own *identity.Record) (*enrolment, er
 		return nil, err
 	}
 	if own != nil {
-		if err := errors.Join(st.AddPending(*own, now()), d.o.Paths.save(fleetFile, f)); err != nil {
+		err := st.AddPending(*own, now())
+		if err == nil {
+			err = d.o.Paths.save(fleetFile, f)
+		}
+		if err != nil {
 			st.Close()
 			return nil, err
 		}
