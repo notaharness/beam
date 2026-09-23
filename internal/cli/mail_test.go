@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -111,6 +112,74 @@ func TestMsgDelivered(t *testing.T) {
 	}
 	if q := queue(t, a); len(q) != 0 {
 		t.Errorf("outbound after delivery: %v", q)
+	}
+}
+
+// docs/05: mail the recipient does not acknowledge within 10 s, here because
+// its inbound queue for this sender is full, which it refuses for now, is
+// stored and said so.
+func TestMsgNoAck(t *testing.T) {
+	a, b := newMachine(t, "alpha"), newMachine(t, "beta")
+	a.knows(t, b)
+	b.knows(t, a)
+	sqlite(t, b, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`INSERT INTO inbound (peer, seq, id, topic, envelope, received_at) VALUES (?, 1, 'full', '', zeroblob(?), 1)`,
+			a.id(), store.MaxQueuedBytes)
+		return err
+	})
+	a.start(t)
+	b.start(t)
+	waitState(t, a, b, "connected")
+	want := "stored for beta; delivery pending (beta has not acknowledged it). beam will keep delivering it until beta does. Do not send it again.\n"
+	if r := a.beam("", "msg", "send", "beta", "x"); r.code != 0 || r.out != want {
+		t.Errorf("send: %+v", r)
+	}
+}
+
+// docs/05: mail to a peer whose grant refuses this machine's msg stream is
+// stored and said so without the 10 s wait; the refused stream is opened
+// again for new mail, not every 2 s, and the queue flows once the grant
+// allows it.
+func TestMsgGrantRefused(t *testing.T) {
+	ms := fleet(t, "alpha", "beta")
+	a, b := ms[0], ms[1]
+	waitState(t, a, b, "connected")
+	if r := b.beam("", "peer", "grant", "alpha", "none"); r.code != 0 {
+		t.Fatalf("grant: %+v", r)
+	}
+	var opens atomic.Int64
+	control.SetHook(func(self, p, _ string) {
+		if self == a.id() && p == "msg-refused" {
+			opens.Add(1)
+		}
+	})
+	t.Cleanup(func() { control.SetHook(nil) })
+	want := "stored for beta; delivery pending (beta's grant refuses mail from this machine). beam will deliver it once beta allows it. Do not send it again.\n"
+	for _, payload := range []string{"one", "two"} {
+		start := time.Now()
+		if r := a.beam("", "msg", "send", "beta", payload); r.code != 0 || r.out != want || time.Since(start) > 5*time.Second {
+			t.Fatalf("send %s: %+v after %v", payload, r, time.Since(start))
+		}
+	}
+	time.Sleep(5 * time.Second)
+	if n := opens.Load(); n > 2 {
+		t.Errorf("the refused msg stream was opened %d times for two sends", n)
+	}
+	if r := b.beam("", "peer", "grant", "alpha", "all"); r.code != 0 {
+		t.Fatalf("grant: %+v", r)
+	}
+	if r := a.beam("", "msg", "send", "beta", "three"); r.code != 0 || r.out != "delivered to beta\n" {
+		t.Fatalf("send once allowed: %+v", r)
+	}
+	c, next := subscribeMail(t, b, nil)
+	for _, want := range []string{"one", "two", "three"} {
+		e := next()
+		if e.Payload != want {
+			t.Errorf("got %+v, want %s", e, want)
+		}
+		if err := c.Call("msg.ack", map[string]any{"envelopeId": e.ID}, nil); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

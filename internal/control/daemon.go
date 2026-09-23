@@ -53,8 +53,8 @@ type daemon struct {
 	reservations map[string]*reservation
 	active       map[string]context.CancelFunc // attached streams: each one's detach
 	subscribers  map[*clientConn]bool
-	conns        map[net.Conn]bool                // every client connection, closed at shutdown
-	sends        map[string]map[int64]chan string // msg.send waiting for its ack, by peer and seq
+	conns        map[net.Conn]bool                    // every client connection, closed at shutdown
+	sends        map[string]map[int64]chan sendResult // msg.send waiting for its ack, by peer and seq
 }
 
 // Run runs a daemon until ctx ends or a client sends daemon.shutdown. It takes
@@ -81,7 +81,7 @@ func Run(ctx context.Context, o Options) error {
 	d := &daemon{o: o, ctx: ctx, stop: stop, started: make(chan struct{}),
 		peers: map[string]*peerState{}, granted: map[string]map[*granted]bool{}, inbound: map[string]int{},
 		reservations: map[string]*reservation{}, active: map[string]context.CancelFunc{}, subscribers: map[*clientConn]bool{}, conns: map[net.Conn]bool{},
-		sends: map[string]map[int64]chan string{}}
+		sends: map[string]map[int64]chan sendResult{}}
 	go d.serveSocket(ln)
 	d.at("starting", "")
 	if err := d.enroll(); err != nil && !errors.Is(err, fs.ErrNotExist) {

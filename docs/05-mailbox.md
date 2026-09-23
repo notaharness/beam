@@ -65,7 +65,9 @@ recognised as a duplicate only if it was actually stored.
 
 One flusher per recipient, on the tunnel this machine dialed to it. Triggers: the peer
 becoming `connected`, a new `outbound` row while connected, and a 2 s retry for an
-unacked head while the tunnel lives. Strictly sequential: head, ack, delete, next.
+unacked head while the tunnel lives. Strictly sequential: head, ack, delete, next. A
+recipient that refuses the `msg` stream itself (its grant for this machine is `none`)
+is asked again on new mail, or after 5 min, not every 2 s; the queue stays.
 
 Permanent refusals (`payload-too-large`, `invalid-envelope`) quarantine the envelope so
 it does not block the queue; `queue-full`, `storage-failure` and unknown reasons retry.
@@ -75,14 +77,21 @@ it does not block the queue; `queue-full`, `storage-failure` and unknown reasons
 | Outcome | Meaning | Caller |
 |---|---|---|
 | `delivered` | recipient daemon stored it and acked | done |
-| `stored` | on this machine's disk; delivery pending (peer offline, or no ack within 10 s) | **success**; do not resend |
+| `stored` | on this machine's disk; delivery pending (peer offline, its grant refusing mail, or no ack within 10 s) | **success**; do not resend |
 | `rejected` | nothing stored: `unknown-peer`, `revoked-peer` (revoked here, or refusing this machine as revoked), `invalid-topic`, `payload-too-large`, `queue-full`, `storage-failure`; or refused for good by the recipient within the 10 s (`payload-too-large`, `invalid-envelope`), and kept only in quarantine | failure |
 
-`stored` carries `pendingReason: "offline" | "no-ack"`. Every surface reports it as:
+`stored` carries `pendingReason: "offline" | "grant" | "no-ack"`. Every surface reports it as:
 
 ```
 stored for workbox; delivery pending (workbox is offline). beam will deliver it when
 workbox connects. Do not send it again.
+```
+
+for `grant`, as soon as the recipient refuses the stream:
+
+```
+stored for workbox; delivery pending (workbox's grant refuses mail from this machine).
+beam will deliver it once workbox allows it. Do not send it again.
 ```
 
 and, for `no-ack`:

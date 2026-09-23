@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -71,9 +72,10 @@ func opMsgSend(d *daemon, _ *clientConn, r request) (any, error) {
 	return outcome, nil
 }
 
-// send queues e for its recipient and waits up to sendWait for the ack.
+// send queues e for its recipient and waits up to sendWait for the ack, or
+// for the recipient to refuse the msg stream.
 func (d *daemon) send(to string, e mailbox.Envelope) sendResult {
-	done := make(chan string, 1)
+	done := make(chan sendResult, 1)
 	var seq int64
 	_, err := d.store.Enqueue(to, now(), func(s int64) ([]byte, error) {
 		e.Seq, seq = s, s
@@ -101,22 +103,19 @@ func (d *daemon) send(to string, e mailbox.Envelope) sendResult {
 		return sendResult{Outcome: stored, PendingReason: "offline"}
 	}
 	select {
-	case reason := <-done:
-		if reason != "" {
-			return sendResult{Outcome: rejected, Reason: reason}
-		}
-		return sendResult{Outcome: delivered}
+	case res := <-done:
+		return res
 	case <-time.After(sendWait):
 		d.unawait(to, seq)
 		return sendResult{Outcome: stored, PendingReason: "no-ack"}
 	}
 }
 
-func (d *daemon) await(peer string, seq int64, done chan string) {
+func (d *daemon) await(peer string, seq int64, done chan sendResult) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.sends[peer] == nil {
-		d.sends[peer] = map[int64]chan string{}
+		d.sends[peer] = map[int64]chan sendResult{}
 	}
 	d.sends[peer][seq] = done
 }
@@ -134,9 +133,24 @@ func (d *daemon) settled(peer string) func(seq int64, reason string) {
 		done, ok := d.sends[peer][seq]
 		delete(d.sends[peer], seq)
 		d.mu.Unlock()
-		if ok {
-			done <- reason
+		switch {
+		case !ok:
+		case reason != "":
+			done <- sendResult{Outcome: rejected, Reason: reason}
+		default:
+			done <- sendResult{Outcome: delivered}
 		}
+	}
+}
+
+// refused answers every msg.send waiting on peer, whose flusher the peer
+// has just refused the msg stream, that its mail is stored, and why.
+func (d *daemon) refused(peer, reason string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for seq, done := range d.sends[peer] {
+		done <- sendResult{Outcome: stored, PendingReason: reason}
+		delete(d.sends[peer], seq)
 	}
 }
 
@@ -158,10 +172,18 @@ func (d *daemon) wakeFlusher(peer string) bool {
 }
 
 // flush runs peer's flusher on the tunnel this machine dialed, for as long as
-// ctx lives.
+// ctx lives. A refusal of the msg stream is the peer's grant: the flusher
+// waits for new mail rather than retrying, and the sends waiting hear why.
 func (d *daemon) flush(ctx context.Context, peer string, ps *peerState, tun *transport.Tunnel) {
 	open := func(ctx context.Context) (*stream.Conn, error) {
-		return tun.Open(ctx, stream.Header{V: 1, Kind: stream.KindMsg})
+		sc, err := tun.Open(ctx, stream.Header{V: 1, Kind: stream.KindMsg})
+		var ref *transport.Refused
+		if !errors.As(err, &ref) {
+			return sc, err
+		}
+		d.at("msg-refused", peer)
+		d.refused(peer, ref.Reason)
+		return nil, fmt.Errorf("%w: %s", mailbox.ErrRefused, ref.Reason)
 	}
 	mailbox.Flush(ctx, d.store, peer, open, ps.wake, d.settled(peer))
 }

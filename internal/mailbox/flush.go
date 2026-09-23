@@ -3,6 +3,7 @@ package mailbox
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/notaharness/beam/internal/store"
@@ -17,6 +18,13 @@ const retryEvery = 2 * time.Second
 // dropped and the head sent again on a new one.
 const writeTimeout = 30 * time.Second
 
+// refusedWait is how long the flusher waits, short of new mail, to open a msg
+// stream the peer refused (its grant) again.
+const refusedWait = 5 * time.Minute
+
+// ErrRefused is an open of the msg stream that the peer refused.
+var ErrRefused = errors.New("the peer refuses the msg stream")
+
 // Flush delivers peer's outbound queue while ctx lives (the life of the
 // tunnel this machine dialed): it opens the msg stream once there is mail,
 // sends the head, and moves on only when it is acked. wake says a new
@@ -24,7 +32,7 @@ const writeTimeout = 30 * time.Second
 // for delivered or the reason it was quarantined.
 func Flush(ctx context.Context, st *store.Store, peer string, open func(context.Context) (*stream.Conn, error),
 	wake <-chan struct{}, settled func(seq int64, reason string)) {
-	var f flusher
+	f := flusher{st: st, peer: peer, open: open, wake: wake, settled: settled}
 	defer f.close()
 	for ctx.Err() == nil {
 		seq, env, ok, err := st.Head(peer)
@@ -36,35 +44,58 @@ func Flush(ctx context.Context, st *store.Store, peer string, open func(context.
 			case <-wake:
 			case <-ctx.Done():
 			}
-		case f.send(ctx, open, env) != nil:
-			f.close()
-			sleep(ctx, retryEvery)
 		default:
-			a, acked := f.await(ctx, idOf(env))
-			if !acked {
-				continue // resend the head
-			}
-			reason, done, err := Settle(st, peer, seq, a)
-			if err != nil || !done {
-				sleep(ctx, retryEvery)
-			} else {
-				settled(seq, reason)
-			}
+			f.deliver(ctx, seq, env)
 		}
 	}
 }
 
 // flusher is the dialer's side of one msg stream, which ctx's end closes.
 type flusher struct {
+	st      *store.Store
+	peer    string
+	open    func(context.Context) (*stream.Conn, error)
+	wake    <-chan struct{}
+	settled func(seq int64, reason string)
+
 	sc   *stream.Conn
 	acks chan Ack      // closed when the stream ends
 	done chan struct{} // closed when the flusher drops the stream
 	stop func() bool   // unties the stream from ctx
 }
 
-func (f *flusher) send(ctx context.Context, open func(context.Context) (*stream.Conn, error), env []byte) error {
+// deliver sends the head and settles it once acked. After a failed send it
+// waits: for new mail or refusedWait if the peer refused the stream, else
+// retryEvery.
+func (f *flusher) deliver(ctx context.Context, seq int64, env []byte) {
+	if err := f.send(ctx, env); err != nil {
+		f.close()
+		if !errors.Is(err, ErrRefused) {
+			sleep(ctx, retryEvery)
+			return
+		}
+		select {
+		case <-f.wake:
+		case <-time.After(refusedWait):
+		case <-ctx.Done():
+		}
+		return
+	}
+	a, acked := f.await(ctx, idOf(env))
+	if !acked {
+		return // resend the head
+	}
+	reason, done, err := Settle(f.st, f.peer, seq, a)
+	if err != nil || !done {
+		sleep(ctx, retryEvery)
+		return
+	}
+	f.settled(seq, reason)
+}
+
+func (f *flusher) send(ctx context.Context, env []byte) error {
 	if f.sc == nil {
-		sc, err := open(ctx)
+		sc, err := f.open(ctx)
 		if err != nil {
 			return err
 		}

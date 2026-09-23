@@ -52,18 +52,24 @@ func runMsgSend(e *env) int {
 	if err := e.call("msg.send", params, &res); err != nil {
 		return e.fail(err)
 	}
-	switch {
-	case res.Outcome == "delivered":
+	switch res.Outcome {
+	case "delivered":
 		fmt.Fprintf(e.stdout, "delivered to %s\n", peer)
-	case res.Outcome == "stored" && res.PendingReason == "no-ack":
-		fmt.Fprintf(e.stdout, "stored for %s; delivery pending (%s has not acknowledged it). beam will keep delivering it until %s does. Do not send it again.\n", peer, peer, peer)
-	case res.Outcome == "stored":
-		fmt.Fprintf(e.stdout, "stored for %s; delivery pending (%s is offline). beam will deliver it when %s connects. Do not send it again.\n", peer, peer, peer)
+	case "stored":
+		fmt.Fprintf(e.stdout, storedSays[res.PendingReason], peer)
 	default:
 		fmt.Fprintf(e.stderr, "rejected: %s\n", res.Reason)
 		return 1
 	}
 	return 0
+}
+
+// storedSays is what `beam msg send` says of mail stored for a peer, by its
+// pendingReason (docs/05).
+var storedSays = map[string]string{
+	"offline": "stored for %[1]s; delivery pending (%[1]s is offline). beam will deliver it when %[1]s connects. Do not send it again.\n",
+	"grant":   "stored for %[1]s; delivery pending (%[1]s's grant refuses mail from this machine). beam will deliver it once %[1]s allows it. Do not send it again.\n",
+	"no-ack":  "stored for %[1]s; delivery pending (%[1]s has not acknowledged it). beam will keep delivering it until %[1]s does. Do not send it again.\n",
 }
 
 // runMsgListen is `beam msg listen [--topic T] [<peer>...]`: one envelope per
