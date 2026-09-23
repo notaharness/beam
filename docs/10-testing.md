@@ -1,8 +1,9 @@
 # 10 · Testing
 
-Everything but the real browser and real authenticator runs offline: an in-process DERP,
-a test authenticator behind a build tag, an in-process fake worker, and daemons that take
-`$BEAM_DIR`, DERP map and directory URL from flags.
+Everything but the real browser and real authenticator runs offline: an in-process DERP
+that also serves its DERP map, a test authenticator behind a build tag, an in-process fake
+worker, and daemons that take `$BEAM_DIR`, the DERP map and the directory URL as
+`control.Options` (the binary's `--derp-map` sets the map).
 
 ## Unit
 
