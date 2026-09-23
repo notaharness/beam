@@ -341,7 +341,7 @@ func TestMsgRefusedRevoked(t *testing.T) {
 // sqlite runs f in one transaction on m's state.db, its daemon stopped.
 func sqlite(t *testing.T, m *machine, f func(*sql.Tx) error) {
 	t.Helper()
-	db, err := sql.Open("sqlite", filepath.Join(m.dir, "state.db"))
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(m.dir, "state.db")+"?_pragma=busy_timeout(5000)") // the daemon may be writing
 	if err != nil {
 		t.Fatal(err)
 	}
