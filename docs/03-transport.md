@@ -64,9 +64,9 @@ the dialer opens a `hello` stream ([04](04-streams.md)) and the acceptor checks:
    already received on this or other tunnels have been applied.
 
 Pass: bind `C → E.peerId` for this tunnel, pin `E` if new (and schedule a dial back),
-answer `ok`. A new binding for a peer replaces its older one: a peer dials us from one
-`Client` per process, so the older tunnel belongs to a process that is gone. Fail: answer
-`refused` with a reason, close, and remember `C` as failed. Any other first stream from
+answer `ok`. A new binding for a peer retires its older tunnel: that tunnel's open
+streams close and it is treated as failed from then on, so exactly one tunnel carries a
+peer's opens. Fail: answer `refused` with a reason, close, and remember `C` as failed. Any other first stream from
 an unbound `C` is answered `unauthenticated` and closed; any stream after a failed hello
 is closed unread. Budgets: 16 concurrent unbound tunnels in hello, 5 s each, counted
 from the stream's arrival; beyond that the oldest is closed. Every stream's header must
@@ -89,8 +89,9 @@ are TCP's. No multiplexer. One port, kind in the header.
 
 ## Lifecycle
 
-- **Up.** For each member, create a `Client`, `DialTCPPort(7000)` with a 20 s deadline,
-  open `hello`, then `sync`. `connected` means hello succeeded on *our* dialed tunnel;
+- **Up.** For each member, create a `Client`, `DialTCPPort(7000)` and complete `hello`
+  within one 20 s deadline (ended early by the caller's cancellation or by shutdown), then
+  open `sync`. `connected` means hello succeeded on *our* dialed tunnel;
   the peer's own dial to us is independent and reported separately as `inbound`.
 - **Liveness.** A `ping` control frame on the `sync` stream every 15 s; no reply within
   30 s closes the tunnel. WireGuard keepalives and `Server.Status()` are advisory.
