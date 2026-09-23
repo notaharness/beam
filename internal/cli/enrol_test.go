@@ -23,6 +23,7 @@ import (
 	"github.com/notaharness/beam/internal/directory"
 	"github.com/notaharness/beam/internal/fakeworker"
 	"github.com/notaharness/beam/internal/identity"
+	"github.com/notaharness/beam/internal/transport"
 	"tailscale.com/types/logger"
 )
 
@@ -144,6 +145,11 @@ func TestRevokeLive(t *testing.T) {
 	}
 	if d := time.Since(start); d > 4*time.Second {
 		t.Errorf("revoke took %v with every peer acknowledging", d)
+	}
+	var queued int
+	sqlite(t, a, func(tx *sql.Tx) error { return tx.QueryRow(`SELECT count(*) FROM pending`).Scan(&queued) })
+	if queued != 0 {
+		t.Errorf("%d writes queued once published", queued)
 	}
 	waitFor(t, 5*time.Second, "beta to refuse gamma", func() bool { return b.peers(t)[c.id()].RevokedAt != nil })
 	if r := c.beam("", "join"); r.code != 1 || !strings.Contains(r.err, "revoked-peer") {
@@ -527,6 +533,64 @@ func TestRefusedWriteDropped(t *testing.T) {
 		sqlite(t, a, func(tx *sql.Tx) error { return tx.QueryRow(`SELECT count(*) FROM pending`).Scan(&queued) })
 		return queued == 0
 	})
+}
+
+// docs/02: a record this machine signs is queued with the state it commits,
+// so a daemon that stops before the worker has it, or before it hears back,
+// publishes it once it runs again, and leaves nothing queued.
+func TestPublishOutlivesDaemon(t *testing.T) {
+	// crash stops m's daemon when it reaches point for peer during beam args,
+	// and starts it again.
+	crash := func(t *testing.T, m *machine, point, peer string, args ...string) {
+		t.Helper()
+		reached, release := pauseAt(t, m, point, peer)
+		go m.beam("", args...)
+		await(t, reached, point)
+		m.stop()
+		release()
+		m.start(t)
+	}
+	// keyed gives a blank machine its key, so its peer id is known.
+	keyed := func(t *testing.T, label string) *machine {
+		m := blank(t, label)
+		k := transport.NewKey(relay.Region)
+		writeJSON(t, filepath.Join(m.dir, "key.json"), k)
+		m.entry.PeerID = identity.PeerID(k.NodePublic())
+		m.start(t)
+		return m
+	}
+	published := func(t *testing.T, m *machine, want int) {
+		t.Helper()
+		waitFor(t, 10*time.Second, "the record in the directory, and nothing queued", func() bool {
+			var queued int
+			sqlite(t, m, func(tx *sql.Tx) error { return tx.QueryRow(`SELECT count(*) FROM pending`).Scan(&queued) })
+			return queued == 0 && worker.Len(owner.Credential().FleetID()) == want
+		})
+	}
+	for _, point := range []string{"publishing", "published"} {
+		t.Run(point+"/init", func(t *testing.T) {
+			prev := owner
+			owner = identity.NewAuthenticator()
+			authenticate(owner)
+			t.Cleanup(func() { owner = prev; authenticate(prev) })
+			m := keyed(t, "alpha")
+			crash(t, m, point, m.id(), "init", "--label", "alpha")
+			published(t, m, 1)
+		})
+		t.Run(point+"/join", func(t *testing.T) {
+			initFleet(t, "alpha")
+			m := keyed(t, "beta")
+			crash(t, m, point, m.id(), "join", "--label", "beta")
+			published(t, m, 2)
+		})
+		t.Run(point+"/revoke", func(t *testing.T) {
+			a := initFleet(t, "alpha")
+			c := join(t, "gamma")
+			connectedAll(t, a, c)
+			crash(t, a, point, c.id(), "revoke", "gamma")
+			published(t, a, 3)
+		})
+	}
 }
 
 // docs/02: a daemon reads the directory at start. The second was offline

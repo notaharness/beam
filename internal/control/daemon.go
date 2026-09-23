@@ -96,9 +96,12 @@ func Run(ctx context.Context, o Options) error {
 		sends: map[string]map[int64]chan sendResult{}, pending: make(chan struct{}, 1)}
 	go d.serveSocket(ln)
 	d.at("starting", "")
-	d.enrolling.Lock()
-	_, err = d.enroll()
-	d.enrolling.Unlock()
+	f, err := o.Paths.loadFleet()
+	if err == nil {
+		d.enrolling.Lock()
+		_, err = d.enroll(f, nil)
+		d.enrolling.Unlock()
+	}
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
@@ -134,15 +137,12 @@ func listen(path string) (net.Listener, error) {
 	return ln, os.Chmod(path, 0o600)
 }
 
-// enroll loads fleet.json, key.json and state.db, starts the transport and
+// enroll enrolls with f, key.json and state.db: it starts the transport and
 // dials every member, then reads the directory and retries queued writes
-// while enrolled. With no fleet.json it returns fs.ErrNotExist and the daemon
-// stays unenrolled. d.enrolling must be held.
-func (d *daemon) enroll() (*enrolment, error) {
-	f, err := d.o.Paths.loadFleet()
-	if err != nil {
-		return nil, err
-	}
+// while enrolled. A new enrolment has its own entry: that is queued for the
+// directory before f is written as fleet.json, so an enrolment on disk
+// always has its publication queued or done. d.enrolling must be held.
+func (d *daemon) enroll(f *identity.Fleet, own *identity.Record) (*enrolment, error) {
 	k, err := d.o.Paths.loadKey()
 	if err != nil {
 		return nil, err
@@ -154,6 +154,12 @@ func (d *daemon) enroll() (*enrolment, error) {
 	st, err := store.Open(d.o.Paths.file(stateFile))
 	if err != nil {
 		return nil, err
+	}
+	if own != nil {
+		if err := errors.Join(st.AddPending(*own, now()), d.o.Paths.save(fleetFile, f)); err != nil {
+			st.Close()
+			return nil, err
+		}
 	}
 	ctx, cancel := context.WithCancel(d.ctx)
 	e := &enrolment{ctx: ctx, cancel: cancel, key: k, fleet: f, store: st, mail: mailbox.NewSubscribers(st),

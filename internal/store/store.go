@@ -111,8 +111,17 @@ func (s *Store) Pin(e identity.Record, now int64) (bool, error) {
 
 // Revoke stores a verified revocation. It reports whether it was new.
 func (s *Store) Revoke(r identity.Record, now int64) (bool, error) {
+	return revoke(s.db, r, now)
+}
+
+// execer is a database or a transaction.
+type execer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+func revoke(db execer, r identity.Record, now int64) (bool, error) {
 	b, _ := json.Marshal(r)
-	res, err := s.db.Exec(`INSERT INTO revocations (peer_id, record, revoked_at) VALUES (?, ?, ?)
+	res, err := db.Exec(`INSERT INTO revocations (peer_id, record, revoked_at) VALUES (?, ?, ?)
 		ON CONFLICT (peer_id) DO NOTHING`, r.PeerID, b, now)
 	if err != nil {
 		return false, err
