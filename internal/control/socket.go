@@ -43,6 +43,10 @@ type request struct {
 	EnvelopeID string   `json:"envelopeId"`
 	Reason     string   `json:"reason"`
 	Which      string   `json:"which"`
+
+	Label     string `json:"label"`
+	FleetName string `json:"fleetName"`
+	Confirm   string `json:"confirm"`
 }
 
 type response struct {
@@ -78,8 +82,9 @@ type clientConn struct {
 	c  net.Conn
 
 	subMu  sync.Mutex
-	sub    *mailbox.Sub // its msg.subscribe
-	closed bool         // the connection is gone: no subscription follows
+	sub    *mailbox.Sub         // its msg.subscribe
+	mail   *mailbox.Subscribers // the enrolment's that sub is on
+	closed bool                 // the connection is gone: no subscription follows
 }
 
 // send writes one line. A client that leaves it unread for sendTimeout is
@@ -183,11 +188,11 @@ func (d *daemon) emit(name string, data any) {
 	}
 }
 
-func (d *daemon) emitPeer(peerID string) {
+func (d *daemon) emitPeer(e *enrolment, peerID string) {
 	d.mu.Lock()
 	n := len(d.subscribers)
 	d.mu.Unlock()
 	if n > 0 {
-		d.emit("peer", d.peerView(peerID))
+		d.emit("peer", d.peerView(e, peerID))
 	}
 }

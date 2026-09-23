@@ -2,8 +2,10 @@ package control
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"os"
 
+	"github.com/notaharness/beam/internal/identity"
 	"github.com/notaharness/beam/internal/mailbox"
 	"github.com/notaharness/beam/internal/store"
 	"github.com/notaharness/beam/internal/stream"
@@ -20,12 +22,12 @@ type granted struct {
 
 // handle serves a stream an admitted peer opened here. Revocation and the
 // grant are read per open.
-func (d *daemon) handle(peerID string, h stream.Header, c *stream.Conn) {
+func (d *daemon) handle(e *enrolment, peerID string, h stream.Header, c *stream.Conn) {
 	switch h.Kind {
 	case stream.KindSync:
-		d.serveSync(peerID, c)
+		d.serveSync(e, peerID, c)
 	case stream.KindPTY, stream.KindExec, stream.KindMsg:
-		d.serveGranted(peerID, h, c)
+		d.serveGranted(e, peerID, h, c)
 	default:
 		refuse(c, "kind")
 	}
@@ -34,24 +36,24 @@ func (d *daemon) handle(peerID string, h stream.Header, c *stream.Conn) {
 // serveGranted runs a stream the peer's grant governs. A revocation or grant
 // change after admitStream closes it, and a stream closed before its process
 // starts never starts it.
-func (d *daemon) serveGranted(id string, h stream.Header, c *stream.Conn) {
-	p, release, reason := d.admitStream(id, h.Kind, c)
+func (d *daemon) serveGranted(e *enrolment, id string, h stream.Header, c *stream.Conn) {
+	p, release, reason := d.admitStream(e, id, h.Kind, c)
 	if reason != "" {
 		refuse(c, reason)
 		return
 	}
 	defer release()
-	d.seen(id)
+	d.seen(e, id)
 	d.at("admitted", id)
 	switch h.Kind {
 	case stream.KindMsg:
 		if c.WriteLine(stream.Response{OK: true}) == nil {
-			mailbox.Serve(c, d.store, id, d.fleet.Entry.PeerID, d.mail.Offer)
+			mailbox.Serve(c, e.store, id, e.self(), e.mail.Offer)
 		}
 	case stream.KindPTY:
-		stream.PTY(c, h, d.spawn(p))
+		stream.PTY(c, h, d.spawn(e, p))
 	default:
-		stream.Exec(c, h, d.spawn(p))
+		stream.Exec(c, h, d.spawn(e, p))
 	}
 }
 
@@ -61,8 +63,8 @@ func refuse(c *stream.Conn, reason string) {
 }
 
 // seen records that peerID was heard from; the time is advisory.
-func (d *daemon) seen(peerID string) {
-	if err := d.store.Seen(peerID, now()); err != nil {
+func (d *daemon) seen(e *enrolment, peerID string) {
+	if err := e.store.Seen(peerID, now()); err != nil {
 		d.o.Logf("seen %s: %v", peerID[:8], err)
 	}
 }
@@ -93,11 +95,11 @@ func allows(grant, kind string) bool {
 // one step under d.mu, which peer.grant also takes; a revocation committed
 // before the check refuses it. It returns the peer's row and release, which
 // unregisters the stream, or why it is refused.
-func (d *daemon) admitStream(id, kind string, c *stream.Conn) (p store.Peer, release func(), reason string) {
+func (d *daemon) admitStream(e *enrolment, id, kind string, c *stream.Conn) (p store.Peer, release func(), reason string) {
 	g := &granted{c, kind}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	p, ok, err := d.store.Peer(id)
+	p, ok, err := e.store.Peer(id)
 	switch {
 	case err != nil || !ok || p.Revoked:
 		return p, nil, "revoked"
@@ -134,7 +136,7 @@ func (d *daemon) countLocked(id, kind string) int {
 }
 
 // spawn is the environment for a process a peer runs here (docs/04).
-func (d *daemon) spawn(p store.Peer) stream.Spawn {
+func (d *daemon) spawn(e *enrolment, p store.Peer) stream.Spawn {
 	home, _ := os.UserHomeDir()
 	label := p.Entry.Label
 	if p.Alias != nil {
@@ -146,7 +148,7 @@ func (d *daemon) spawn(p store.Peer) stream.Spawn {
 		Inject: map[string]string{
 			"BEAM_DIR":          d.o.Paths.Dir,
 			"BEAM_SOCKET":       d.o.Paths.Socket,
-			"BEAM_PEER_ID":      d.fleet.Entry.PeerID,
+			"BEAM_PEER_ID":      e.self(),
 			"BEAM_CALLER_ID":    p.Entry.PeerID,
 			"BEAM_CALLER_LABEL": label,
 		},
@@ -169,4 +171,31 @@ func decodeKey(s string) ([32]byte, bool) {
 		return [32]byte{}, false
 	}
 	return [32]byte(b), true
+}
+
+// admit is transport's hello check: verify the entry. Once the dialer has
+// proven it holds the entry's key, pin the entry if new and dial back;
+// contact from a known peer resets the backoff.
+func (d *daemon) admit(e *enrolment, raw json.RawMessage) (string, [32]byte, func(), string) {
+	r, err := identity.ParseRecord(raw)
+	if err == nil && r.Kind != identity.Member {
+		err = identity.BadEntry
+	}
+	if err == nil {
+		err = e.cred.Verify(r, e.isRevoked)
+	}
+	if err != nil {
+		return "", [32]byte{}, nil, err.Error()
+	}
+	pub, _ := decodeKey(r.NodePublic)
+	return r.PeerID, pub, func() {
+		d.at("admitting", r.PeerID)
+		if d.pin(e, r) {
+			d.broadcast(r, nil)
+		} else {
+			d.mu.Lock()
+			d.startDialerLocked(e, r.PeerID) // inbound contact resets the backoff
+			d.mu.Unlock()
+		}
+	}, ""
 }

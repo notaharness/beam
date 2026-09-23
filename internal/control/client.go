@@ -19,6 +19,8 @@ const spawnWait = 5 * time.Second
 
 // Client is a control connection to a daemon.
 type Client struct {
+	OnEvent func(Event) // when set, gets the events a Call reads instead of Next
+
 	c      net.Conn
 	r      *bufio.Reader
 	id     int
@@ -36,9 +38,9 @@ type Event struct {
 // daemon's environment. A spawn that loses the lock race exits; the winner's
 // socket appears all the same.
 func Connect(p Paths, env []string) (*Client, error) {
-	c, err := net.Dial("unix", p.Socket)
+	c, err := Dial(p)
 	if err == nil {
-		return newClient(c), nil
+		return c, nil
 	}
 	if !errors.Is(err, syscall.ECONNREFUSED) && !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
@@ -51,11 +53,20 @@ func Connect(p Paths, env []string) (*Client, error) {
 	cmd.Env = env
 	spawnErr := cmd.Run() // losing a race to start still leaves a daemon to reach
 	for deadline := time.Now().Add(spawnWait); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
-		if c, err = net.Dial("unix", p.Socket); err == nil {
-			return newClient(c), nil
+		if c, err = Dial(p); err == nil {
+			return c, nil
 		}
 	}
 	return nil, errors.Join(spawnErr, err)
+}
+
+// Dial connects to the daemon at p if one listens.
+func Dial(p Paths) (*Client, error) {
+	c, err := net.Dial("unix", p.Socket)
+	if err != nil {
+		return nil, err
+	}
+	return newClient(c), nil
 }
 
 func newClient(c net.Conn) *Client {
@@ -66,7 +77,7 @@ func newClient(c net.Conn) *Client {
 func (c *Client) Close() error { return c.c.Close() }
 
 // Call sends op with params and decodes its result into out. Events arriving
-// meanwhile are kept for Next. A refusal is an *OpError.
+// meanwhile go to OnEvent, or are kept for Next. A refusal is an *OpError.
 func (c *Client) Call(op string, params map[string]any, out any) error {
 	c.id++
 	req := map[string]any{"id": c.id, "op": op}
@@ -91,7 +102,11 @@ func (c *Client) Call(op string, params map[string]any, out any) error {
 			Detail string          `json:"detail"`
 		}
 		if json.Unmarshal(line, &resp) != nil || resp.ID != c.id {
-			if resp.Name != "" {
+			switch {
+			case resp.Name == "":
+			case c.OnEvent != nil:
+				c.OnEvent(resp.Event)
+			default:
 				c.events = append(c.events, resp.Event)
 			}
 			continue

@@ -6,7 +6,6 @@ import (
 	"math/rand/v2"
 	"time"
 
-	"github.com/notaharness/beam/internal/identity"
 	"github.com/notaharness/beam/internal/transport"
 )
 
@@ -32,29 +31,30 @@ const (
 // peerState is this machine's dialed side of one peer.
 type peerState struct {
 	state   string
-	tunnel  *transport.Tunnel    // the dialed tunnel, from its dump on
-	deltas  chan identity.Record // records to push on its sync stream
-	kick    chan struct{}        // resets the backoff
-	wake    chan struct{}        // tells the flusher there is mail
-	changed chan struct{}        // closed and replaced on every state change
+	tunnel  *transport.Tunnel // the dialed tunnel, from its dump on
+	deltas  chan delta        // records to push on its sync stream
+	kick    chan struct{}     // resets the backoff
+	wake    chan struct{}     // tells the flusher there is mail
+	changed chan struct{}     // closed and replaced on every state change
 	cancel  context.CancelFunc
 }
 
-// startDialerLocked starts dialing a peer unless it is this machine or already
-// dialed, in which case it resets the backoff. d.mu must be held.
-func (d *daemon) startDialerLocked(peerID string) {
-	if peerID == d.fleet.Entry.PeerID {
+// startDialerLocked starts dialing a peer on e unless it is this machine,
+// already dialed (then it resets the backoff) or e is no longer the
+// enrolment. d.mu must be held.
+func (d *daemon) startDialerLocked(e *enrolment, peerID string) {
+	if e != d.en || peerID == e.self() {
 		return
 	}
 	if ps, ok := d.peers[peerID]; ok {
 		d.kickLocked(ps)
 		return
 	}
-	ctx, cancel := context.WithCancel(d.ctx)
+	ctx, cancel := context.WithCancel(e.ctx)
 	ps := &peerState{state: stateOffline, kick: make(chan struct{}, 1), wake: make(chan struct{}, 1),
 		changed: make(chan struct{}), cancel: cancel}
 	d.peers[peerID] = ps
-	go d.dialLoop(ctx, peerID, ps)
+	go d.dialLoop(ctx, e, peerID, ps)
 }
 
 func (d *daemon) kickLocked(ps *peerState) {
@@ -64,7 +64,7 @@ func (d *daemon) kickLocked(ps *peerState) {
 	}
 }
 
-func (d *daemon) setState(ps *peerState, state string, tun *transport.Tunnel, deltas chan identity.Record) {
+func (d *daemon) setState(ps *peerState, state string, tun *transport.Tunnel, deltas chan delta) {
 	d.mu.Lock()
 	if ps.state != stateRevoked {
 		ps.state, ps.tunnel, ps.deltas = state, tun, deltas
@@ -78,7 +78,7 @@ func (d *daemon) setState(ps *peerState, state string, tun *transport.Tunnel, de
 // every record reaches the peer in one or the other, and a queue that fills
 // meanwhile fails the tunnel. The attempt has no outcome yet: nothing waiting
 // on the peer's state wakes.
-func (d *daemon) capture(ps *peerState, tun *transport.Tunnel, deltas chan identity.Record) {
+func (d *daemon) capture(ps *peerState, tun *transport.Tunnel, deltas chan delta) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if ps.state != stateRevoked {
@@ -88,10 +88,10 @@ func (d *daemon) capture(ps *peerState, tun *transport.Tunnel, deltas chan ident
 
 // dialLoop keeps a tunnel to the peer up: dial, hello, sync; retry with
 // jittered exponential backoff forever, reset by a kick.
-func (d *daemon) dialLoop(ctx context.Context, peerID string, ps *peerState) {
+func (d *daemon) dialLoop(ctx context.Context, e *enrolment, peerID string, ps *peerState) {
 	backoff := minBackoff
 	for ctx.Err() == nil {
-		if d.tryPeer(ctx, peerID, ps) {
+		if d.tryPeer(ctx, e, peerID, ps) {
 			backoff = minBackoff
 		}
 		wait := backoff/2 + rand.N(backoff)
@@ -108,13 +108,13 @@ func (d *daemon) dialLoop(ctx context.Context, peerID string, ps *peerState) {
 
 // tryPeer dials once and, if hello succeeds, runs the tunnel until it dies. It
 // reports whether the tunnel came up.
-func (d *daemon) tryPeer(ctx context.Context, peerID string, ps *peerState) bool {
-	p, ok, err := d.store.Peer(peerID)
+func (d *daemon) tryPeer(ctx context.Context, e *enrolment, peerID string, ps *peerState) bool {
+	p, ok, err := e.store.Peer(peerID)
 	if err != nil || !ok || p.Revoked {
 		return false
 	}
 	dctx, cancel := context.WithTimeout(ctx, dialTimeout)
-	tun, err := d.node.Dial(dctx, p.Entry.Address)
+	tun, err := e.node.Dial(dctx, p.Entry.Address)
 	cancel()
 	var ref *transport.Refused
 	switch {
@@ -129,7 +129,7 @@ func (d *daemon) tryPeer(ctx context.Context, peerID string, ps *peerState) bool
 		return false
 	}
 	defer tun.Close()
-	d.runSync(ctx, peerID, ps, tun)
+	d.runSync(ctx, e, peerID, ps, tun)
 	return true
 }
 
@@ -181,7 +181,7 @@ func (d *daemon) stopPeerLocked(peerID string) {
 		if ps.tunnel != nil {
 			ps.tunnel.Close()
 		}
-		ps.state = stateRevoked
+		ps.state, ps.tunnel, ps.deltas = stateRevoked, nil, nil // no delta goes to it again
 		close(ps.changed)
 		ps.changed = make(chan struct{})
 	}

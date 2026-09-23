@@ -14,9 +14,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/notaharness/beam/internal/directory"
 	"github.com/notaharness/beam/internal/identity"
 	"github.com/notaharness/beam/internal/mailbox"
 	"github.com/notaharness/beam/internal/store"
+	"github.com/notaharness/beam/internal/stream"
 	"github.com/notaharness/beam/internal/transport"
 )
 
@@ -25,9 +27,11 @@ var ErrLocked = errors.New("another daemon holds $BEAM_DIR")
 
 // Options configure a daemon.
 type Options struct {
-	Paths   Paths
-	Version string
-	Logf    func(format string, args ...any)
+	Paths     Paths
+	Version   string
+	Logf      func(format string, args ...any)
+	DERPMap   string // the DERP map a new key is homed from; tailcat's when empty
+	Directory string // the directory worker; beam.n10.is when empty
 }
 
 // daemon is one running beam daemon. Unenrolled, it has no store or node and
@@ -38,15 +42,11 @@ type daemon struct {
 	stop    context.CancelFunc
 	started chan struct{} // closed once the start has enrolled, or found no fleet.json
 
-	// Set once by enroll.
-	key   *transport.Key
-	fleet *identity.Fleet
-	cred  identity.Credential
-	store *store.Store
-	node  *transport.Node
-	mail  *mailbox.Subscribers
+	flow    *flow         // the ceremony under way, if any
+	pending chan struct{} // says a directory write was queued
 
 	mu           sync.Mutex
+	en           *enrolment // nil while unenrolled
 	peers        map[string]*peerState
 	granted      map[string]map[*granted]bool // inbound pty, exec and msg streams, by peer
 	inbound      map[string]int               // open inbound sync streams, by peer
@@ -61,6 +61,12 @@ type daemon struct {
 // the lock before anything else and serves the socket before the transport
 // starts.
 func Run(ctx context.Context, o Options) error {
+	if o.DERPMap == "" {
+		o.DERPMap = transport.DefaultDERPMap
+	}
+	if o.Directory == "" {
+		o.Directory = directory.DefaultURL
+	}
 	for _, dir := range []string{filepath.Join(o.Paths.Dir, "run"), filepath.Dir(o.Paths.Socket)} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err
@@ -81,10 +87,10 @@ func Run(ctx context.Context, o Options) error {
 	d := &daemon{o: o, ctx: ctx, stop: stop, started: make(chan struct{}),
 		peers: map[string]*peerState{}, granted: map[string]map[*granted]bool{}, inbound: map[string]int{},
 		reservations: map[string]*reservation{}, active: map[string]context.CancelFunc{}, subscribers: map[*clientConn]bool{}, conns: map[net.Conn]bool{},
-		sends: map[string]map[int64]chan sendResult{}}
+		sends: map[string]map[int64]chan sendResult{}, pending: make(chan struct{}, 1)}
 	go d.serveSocket(ln)
 	d.at("starting", "")
-	if err := d.enroll(); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if _, err := d.enroll(); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	close(d.started)
@@ -119,61 +125,95 @@ func listen(path string) (net.Listener, error) {
 	return ln, os.Chmod(path, 0o600)
 }
 
-// enroll loads fleet.json, key.json and state.db and starts the transport. With
-// no fleet.json it returns fs.ErrNotExist and the daemon stays unenrolled.
-func (d *daemon) enroll() error {
+// enroll loads fleet.json, key.json and state.db, starts the transport and
+// dials every member, then reads the directory and retries queued writes
+// while enrolled. With no fleet.json it returns fs.ErrNotExist and the daemon
+// stays unenrolled.
+func (d *daemon) enroll() (*enrolment, error) {
 	f, err := d.o.Paths.loadFleet()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	k, err := d.o.Paths.loadKey()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	pk, err := base64.RawURLEncoding.DecodeString(f.CredentialPublicKey)
 	if err != nil {
-		return fmt.Errorf("fleet.json: %w", err)
+		return nil, fmt.Errorf("fleet.json: %w", err)
 	}
 	st, err := store.Open(d.o.Paths.file(stateFile))
 	if err != nil {
-		return err
+		return nil, err
 	}
+	ctx, cancel := context.WithCancel(d.ctx)
+	e := &enrolment{ctx: ctx, cancel: cancel, key: k, fleet: f, store: st, mail: mailbox.NewSubscribers(st),
+		cred: identity.Credential{ID: f.CredentialID, PublicKey: pk}}
 	entry, _ := json.Marshal(f.Entry)
+	e.node, err = transport.Start(transport.Config{Key: k, Entry: entry,
+		Admit:  func(raw json.RawMessage) (string, [32]byte, func(), string) { return d.admit(e, raw) },
+		Handle: func(id string, h stream.Header, c *stream.Conn) { d.handle(e, id, h, c) }})
+	if err != nil {
+		cancel()
+		st.Close()
+		return nil, err
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.key, d.fleet, d.store, d.mail = k, f, st, mailbox.NewSubscribers(st)
-	d.cred = identity.Credential{ID: f.CredentialID, PublicKey: pk}
-	d.node, err = transport.Start(transport.Config{Key: k, Entry: entry, Admit: d.admit, Handle: d.handle})
-	if err != nil {
-		return err
-	}
+	d.en = e
+	go d.readDirectory(e)
+	go d.retryPending(e)
 	peers, err := st.Peers()
 	for _, p := range peers {
 		if !p.Revoked {
-			d.startDialerLocked(p.Entry.PeerID)
+			d.startDialerLocked(e, p.Entry.PeerID)
 		}
 	}
-	return err
+	return e, err
 }
 
-func (d *daemon) enrolled() bool {
+// enrolment is the enrolment under way, or nil.
+func (d *daemon) enrolment() *enrolment {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.node != nil
+	return d.en
+}
+
+func (d *daemon) isEnrolled() bool { return d.enrolment() != nil }
+
+// unenroll ends the enrolment: dialers, tunnels, the directory loops, and
+// state.db. forget also empties it of the fleet and removes fleet.json (a
+// fleet reset); key.json and the daemon's socket stay.
+func (d *daemon) unenroll(forget bool) error {
+	d.mu.Lock()
+	e := d.en
+	for id, ps := range d.peers {
+		ps.cancel()
+		delete(d.peers, id)
+	}
+	d.en = nil
+	d.mu.Unlock()
+	if e == nil {
+		return nil
+	}
+	e.end()
+	var err error
+	if forget {
+		err = errors.Join(e.store.Reset(), os.Remove(d.o.Paths.file(fleetFile)))
+	}
+	return errors.Join(err, e.store.Close())
 }
 
 func (d *daemon) close() {
 	d.mu.Lock()
-	node, st := d.node, d.store
+	e := d.en
 	for c := range d.conns {
 		c.Close()
 	}
 	d.mu.Unlock()
-	if node != nil {
-		node.Close()
-	}
-	if st != nil {
-		st.Close()
+	if e != nil {
+		e.end()
+		e.store.Close()
 	}
 }
 

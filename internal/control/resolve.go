@@ -8,8 +8,8 @@ import (
 
 // resolve maps a peer argument to a peer id (docs/06, peer.resolve): a full id
 // or ≥ 8-character hex prefix first, then an alias or label.
-func (d *daemon) resolve(arg string) (string, error) {
-	ps, err := d.store.Peers()
+func (e *enrolment) resolve(arg string) (string, error) {
+	ps, err := e.store.Peers()
 	if err != nil {
 		return "", err
 	}
@@ -47,13 +47,4 @@ func matching(ps []store.Peer, arg string) []store.Peer {
 
 func isHex(s string) bool {
 	return strings.Trim(s, "0123456789abcdef") == ""
-}
-
-type resolveResult struct {
-	PeerID string `json:"peerId"`
-}
-
-func opResolve(d *daemon, _ *clientConn, r request) (any, error) {
-	id, err := d.resolve(r.Peer)
-	return resolveResult{id}, err
 }

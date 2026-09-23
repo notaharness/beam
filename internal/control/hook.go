@@ -10,8 +10,8 @@ var hook atomic.Pointer[func(self, point, peer string)]
 func (d *daemon) at(point, peer string) {
 	if f := hook.Load(); f != nil {
 		self := ""
-		if d.fleet != nil {
-			self = d.fleet.Entry.PeerID
+		if e := d.enrolment(); e != nil {
+			self = e.self()
 		}
 		(*f)(self, point, peer)
 	}

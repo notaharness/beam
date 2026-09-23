@@ -8,26 +8,29 @@ import (
 	"testing"
 	"time"
 
+	"github.com/notaharness/beam/internal/identity"
 	"github.com/notaharness/beam/internal/mailbox"
 	"github.com/notaharness/beam/internal/store"
 )
 
-func mailDaemon(t *testing.T) *daemon {
+// mailDaemon is a daemon enrolled on a bare store.
+func mailDaemon(t *testing.T) (*daemon, *enrolment) {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	return &daemon{o: Options{Logf: t.Logf}, store: st, mail: mailbox.NewSubscribers(st)}
+	e := &enrolment{fleet: &identity.Fleet{}, store: st, mail: mailbox.NewSubscribers(st)}
+	return &daemon{o: Options{Logf: t.Logf}, en: e}, e
 }
 
 // docs/05 Outcomes: a storage failure before anything is stored is msg.send's
 // rejected outcome, storage-failure.
 func TestSendStorageFailure(t *testing.T) {
-	d := mailDaemon(t)
-	d.store.Close() // every read fails
-	res, err := opMsgSend(d, nil, request{To: "beta", Payload: "x"})
+	d, e := mailDaemon(t)
+	e.store.Close() // every read fails
+	res, err := opMsgSend(d, e, nil, request{To: "beta", Payload: "x"})
 	if r, ok := res.(sendResult); err != nil || !ok || r.Outcome != rejected || r.Reason != mailbox.StorageFailure {
 		t.Fatalf("%+v, %v; want rejected storage-failure", res, err)
 	}
@@ -36,12 +39,12 @@ func TestSendStorageFailure(t *testing.T) {
 // docs/06 msg.subscribe: a subscribe that runs after its connection's cleanup
 // registers nothing, so nothing is held for a connection that is gone.
 func TestSubscribeAfterCleanup(t *testing.T) {
-	d := mailDaemon(t)
+	d, e := mailDaemon(t)
 	ours, theirs := net.Pipe()
 	defer theirs.Close()
 	cc := &clientConn{c: ours}
 	d.unsubscribeMail(cc)
-	if _, err := opMsgSubscribe(d, cc, request{}); err == nil || cc.sub != nil {
+	if _, err := opMsgSubscribe(d, e, cc, request{}); err == nil || cc.sub != nil {
 		t.Fatalf("subscribed a closed connection: %v", err)
 	}
 }
@@ -71,8 +74,8 @@ func TestStalledClientDisconnected(t *testing.T) {
 // docs/06 msg.defer: a reason is at most 1 KiB, so a refused envelope with
 // its reason fits a msg.queue page.
 func TestDeferReasonBounded(t *testing.T) {
-	d := mailDaemon(t)
-	_, err := opMsgDefer(d, &clientConn{}, request{EnvelopeID: "x", Reason: strings.Repeat("r", mailbox.MaxDeferReason+1)})
+	d, e := mailDaemon(t)
+	_, err := opMsgDefer(d, e, &clientConn{}, request{EnvelopeID: "x", Reason: strings.Repeat("r", mailbox.MaxDeferReason+1)})
 	var oe *OpError
 	if !errors.As(err, &oe) || oe.Code != "params" || !strings.Contains(oe.Detail, "reason") {
 		t.Fatalf("%v, want params for the reason", err)

@@ -33,7 +33,7 @@ func TestSyncPeerStopsReading(t *testing.T) {
 			defer theirs.Close()
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			deltas := make(chan identity.Record, 1)
+			deltas := make(chan delta, 1)
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
@@ -41,7 +41,7 @@ func TestSyncPeerStopsReading(t *testing.T) {
 			}()
 			if tc.readDump {
 				readDump(t, stream.NewConn(theirs))
-				deltas <- dump[0]
+				deltas <- delta{r: dump[0]}
 			}
 			time.Sleep(200 * time.Millisecond) // the write is blocked by now
 			if tc.cancel {
