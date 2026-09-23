@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -28,13 +29,19 @@ type Config struct {
 
 // Node is a machine's transport: its Server and the Clients it dialed.
 type Node struct {
-	cfg Config
-	srv *tailcat.Server
-	adm *admission
+	cfg    Config
+	srv    *tailcat.Server
+	adm    *admission
+	ctx    context.Context // ends at Close, cancelling dials in flight
+	cancel context.CancelFunc
 
 	mu      sync.Mutex
+	closed  bool
 	tunnels map[*Tunnel]bool
 }
+
+// ErrClosed is Dial's error once the node is closed.
+var ErrClosed = errors.New("transport: node closed")
 
 // Start starts the Server on the machine's node key and accepts streams.
 func Start(cfg Config) (*Node, error) {
@@ -49,7 +56,9 @@ func Start(cfg Config) (*Node, error) {
 		srv.Close()
 		return nil, err
 	}
-	n := &Node{cfg: cfg, srv: srv, adm: newAdmission(cfg.Key, cfg.Admit, cfg.Handle), tunnels: map[*Tunnel]bool{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	n := &Node{cfg: cfg, srv: srv, adm: newAdmission(cfg.Key, cfg.Admit, cfg.Handle),
+		ctx: ctx, cancel: cancel, tunnels: map[*Tunnel]bool{}}
 	go n.accept(ln)
 	return n, nil
 }
@@ -81,6 +90,8 @@ func (n *Node) serve(conn net.Conn) {
 // Close closes every tunnel this machine dialed and its Server.
 func (n *Node) Close() error {
 	n.mu.Lock()
+	n.closed = true
+	n.cancel()
 	for t := range n.tunnels {
 		t.client.Close()
 	}
@@ -107,22 +118,34 @@ func (r *Refused) Error() string {
 	return "refused: " + r.Reason
 }
 
-// Dial brings up a tunnel to address and completes hello on it.
+// Dial brings up a tunnel to address and completes hello on it, within 20 s,
+// ctx, and the node's life.
 func (n *Node) Dial(ctx context.Context, address string) (*Tunnel, error) {
 	ci, err := tailcat.ParseAddr(tailcat.Addr(address))
 	if err != nil {
 		return nil, err
 	}
+	r := raw(ci.ServerPublic.NodePublic)
 	ctx, cancel := context.WithTimeout(ctx, dialTimeout)
 	defer cancel()
+	defer context.AfterFunc(n.ctx, cancel)()
 	t := &Tunnel{node: n, client: &tailcat.Client{Server: tailcat.Addr(address), Logf: n.cfg.Logf}}
-	if err := t.hello(ctx, raw(ci.ServerPublic.NodePublic)); err != nil {
+	err = t.hello(ctx, r)
+	n.mu.Lock()
+	if err == nil && n.closed {
+		err = ErrClosed
+	}
+	if err == nil {
+		n.tunnels[t] = true
+	}
+	n.mu.Unlock()
+	if err != nil {
 		t.client.Close()
+		if n.ctx.Err() != nil {
+			err = ErrClosed
+		}
 		return nil, err
 	}
-	n.mu.Lock()
-	n.tunnels[t] = true
-	n.mu.Unlock()
 	return t, nil
 }
 
@@ -133,49 +156,57 @@ func (t *Tunnel) hello(ctx context.Context, r [32]byte) error {
 	}
 	defer sc.Close()
 	b, _ := json.Marshal(newHello(t.node.cfg.Key, raw(t.client.PublicKey()), r, t.node.cfg.Entry))
-	if err := sc.WriteFrame(stream.Data, b); err != nil {
-		return err
-	}
-	_, p, err := sc.ReadFrame()
-	if err != nil {
-		return err
-	}
 	var res stream.Response
-	if err := json.Unmarshal(p, &res); err != nil {
-		return err
+	err = whileLive(ctx, sc, func() error {
+		if err := sc.WriteFrame(stream.Data, b); err != nil {
+			return err
+		}
+		_, p, err := sc.ReadFrame()
+		if err != nil {
+			return err
+		}
+		return json.Unmarshal(p, &res)
+	})
+	if err == nil && !res.OK {
+		err = &Refused{res.Reason, res.Detail}
 	}
-	if !res.OK {
-		return &Refused{res.Reason, res.Detail}
-	}
-	return nil
+	return err
 }
 
 // Open opens a stream: it sends h and returns the connection once the far side
-// accepts it.
+// accepts it, within ctx.
 func (t *Tunnel) Open(ctx context.Context, h stream.Header) (*stream.Conn, error) {
 	conn, err := t.client.DialTCPPort(ctx, Port)
 	if err != nil {
 		return nil, err
 	}
-	if d, ok := ctx.Deadline(); ok {
-		conn.SetDeadline(d)
-	}
 	sc := stream.NewConn(conn)
 	var res stream.Response
-	if err := sc.WriteLine(h); err != nil {
+	err = whileLive(ctx, conn, func() error {
+		if err := sc.WriteLine(h); err != nil {
+			return err
+		}
+		return sc.ReadLine(&res)
+	})
+	if err == nil && !res.OK {
+		err = &Refused{res.Reason, res.Detail}
+	}
+	if err != nil {
 		conn.Close()
 		return nil, err
 	}
-	if err := sc.ReadLine(&res); err != nil {
-		conn.Close()
-		return nil, err
-	}
-	if !res.OK {
-		conn.Close()
-		return nil, &Refused{res.Reason, res.Detail}
-	}
-	conn.SetDeadline(time.Time{})
 	return sc, nil
+}
+
+// whileLive runs f, closing conn if ctx ends first, in which case ctx's error
+// is the result.
+func whileLive(ctx context.Context, conn net.Conn, f func() error) error {
+	stop := context.AfterFunc(ctx, func() { conn.Close() })
+	err := f()
+	if !stop() {
+		return ctx.Err()
+	}
+	return err
 }
 
 // Close closes the tunnel's Client.
