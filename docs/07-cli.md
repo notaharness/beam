@@ -12,7 +12,7 @@ beam join   [--label NAME]
 beam revoke <peer>
 beam fleet reset
 
-beam daemon [--detach] [--derp-map URL]
+beam daemon [--detach | --exit-with-parent] [--derp-map URL]
 beam status [--json]
 beam peers  [--json]
 beam peer alias <peer> <alias|->
@@ -81,6 +81,29 @@ triples, makes it larger. The URL below it is the fallback: it is printed on eve
 output, a terminal's or a pipe's. The page on the phone checks nothing against the
 terminal: the owner compares the action, machine and fingerprint it shows with what they
 ran ([01](01-model.md), The relayed result).
+
+## The daemon
+
+`beam daemon` runs in the foreground until `daemon.shutdown`, SIGTERM or SIGINT.
+`--detach` starts it in its own session instead, output appended to
+`$BEAM_DIR/daemon.log`, and returns ([06](06-control-socket.md)).
+
+`--exit-with-parent` ties the daemon to the process that started it, through its stdin:
+
+- stdin must be a pipe or a socket. A terminal, a file or `/dev/null` is refused before
+  the daemon starts: usage error, exit 2. So is `--detach` with it.
+- The daemon reads stdin and discards what it reads. At end of file, or a read error,
+  it shuts down as it does on SIGTERM: streams end, the lock and socket are released,
+  exit 0.
+- The parent holds the write end and never writes to it. When the parent exits, however
+  it exits (quits, crashes, is killed), the kernel closes its descriptors, and the
+  daemon sees end of file. This is the same on Linux and macOS; nothing polls the
+  parent's pid or relies on a parent-death signal.
+- The write end must stay in the parent alone: a process that inherits it keeps the
+  daemon alive. Node's and Electron's `spawn` pipes are close-on-exec, so their other
+  children do not inherit it.
+
+`daemon.shutdown` and SIGTERM stop such a daemon as they stop any other.
 
 ## Streams
 

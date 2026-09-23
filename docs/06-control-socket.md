@@ -23,7 +23,9 @@ Linux, 103 on macOS) is refused before anything else, naming `BEAM_SOCKET`.
   `--detach` starts the daemon in a new session, its output appended to
   `$BEAM_DIR/daemon.log`, and returns.
 - **Shutdown.** Only an explicit `daemon.shutdown` or SIGTERM stops the daemon, whoever
-  started it. Clients treat a closed socket after `daemon.shutdown` as deliberate and do
+  started it, and, for a daemon started with `--exit-with-parent`, the end of its stdin:
+  the process that started it has exited ([07](07-cli.md)). The desktop starts its own
+  daemon that way ([08](08-desktop.md)). Clients treat a closed socket after `daemon.shutdown` as deliberate and do
   not respawn until asked; any other disconnect is unexpected. The desktop's port of the
   helper reconnects with backoff (500 ms → 30 s, [08](08-desktop.md)); the CLI is one
   call per process and reconnects never.
