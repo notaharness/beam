@@ -14,10 +14,14 @@ try {
   console.error(err.message);
   process.exit(1);
 }
-const child = spawn(bin, process.argv.slice(2), { stdio: "inherit" });
+// The handlers go in before the binary starts: a signal that came while spawn
+// ran would otherwise end this process and leave the binary running. Node runs
+// them from its event loop, after child is set.
+let child;
 for (const signal of ["SIGINT", "SIGTERM", "SIGWINCH"]) {
   process.on(signal, () => child.kill(signal));
 }
+child = spawn(bin, process.argv.slice(2), { stdio: "inherit" });
 child.on("error", (err) => {
   console.error(`beam: ${err.message}`);
   process.exit(1);
