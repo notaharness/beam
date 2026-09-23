@@ -3,7 +3,8 @@
 Everything but the real browser and real authenticator runs offline: an in-process DERP
 that also serves its DERP map, a test authenticator behind a build tag, an in-process fake
 worker, and daemons that take `$BEAM_DIR`, the DERP map and the directory URL as
-`control.Options` (the binary's `--derp-map` sets the map).
+`control.Options` (the binary's `--derp-map` sets the map, and in a beamtest build
+`--directory` the directory).
 
 ## Unit
 
@@ -104,7 +105,7 @@ bare member node (transport only) stands in for a daemon:
 | mailbox | stored/delivered/rejected; crash between store and ack → duplicate suppressed; subscriber defer/ack; `send` while connected flushes immediately |
 | junk in the log | valid assertion, unrelated blob → ignored |
 | daemon lock | second daemon exits 1; connect-or-spawn loser connects to winner |
-| shutdown ends sessions | an enrolled daemon in a process of its own (`beam daemon --directory`, a beamtest-only flag naming the fake worker) serves a pty and an exec whose processes ignore SIGHUP and SIGTERM; after SIGTERM, both are dead when the daemon has exited |
+| shutdown ends sessions | an enrolled daemon in a process of its own (`beam daemon --directory`, a beamtest-only flag naming the fake worker) serves a pty and an exec whose processes ignore SIGHUP; after SIGTERM, both are dead when the daemon has exited |
 | exit with parent | a parent process spawns `beam daemon --exit-with-parent` with a stdin pipe and is killed with SIGKILL: the daemon exits; a terminal, `/dev/null` or `--detach` with the flag is a usage error |
 | reset | tunnels closed, fleet state gone, key kept, re-join works |
 

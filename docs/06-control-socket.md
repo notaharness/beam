@@ -24,12 +24,14 @@ Linux, 103 on macOS) is refused before anything else, naming `BEAM_SOCKET`.
   `$BEAM_DIR/daemon.log`, and returns.
 - **Shutdown.** `daemon.shutdown`, SIGTERM or SIGINT stop the daemon, whoever started
   it; so does the end of its stdin for one started with `--exit-with-parent`
-  ([07](07-cli.md)). Stopping, the daemon ends every stream it serves and waits, up to
-  10 s, for each to tear down: a pty session's SIGHUP, its SIGKILL 5 s later and the
-  reap ([04](04-streams.md)), so no process a peer started outlives the daemon. A fleet
-  reset and a re-join end the streams the same way. Clients treat a closed socket after `daemon.shutdown` as deliberate
-  and do not respawn until asked; any other disconnect is unexpected. n10 recovers from
-  one as [08](08-desktop.md) says; the CLI is one call per process and reconnects never.
+  ([07](07-cli.md)). Stopping, the daemon closes its socket first, lets a fleet reset or
+  re-join under way finish, then refuses new streams, ends every stream it serves and
+  waits up to 10 s for each to tear down ([04](04-streams.md)), so a session's teardown
+  completes before the daemon exits. An open `pty` session holds that for its 5 s grace.
+  A fleet reset and a re-join end the streams the same way. Clients treat a closed
+  socket after `daemon.shutdown` as deliberate and do not respawn until asked; any other
+  disconnect is unexpected. n10 recovers from one as [08](08-desktop.md) says; the CLI
+  is one call per process and reconnects never.
 
 ## Two kinds of connection
 
