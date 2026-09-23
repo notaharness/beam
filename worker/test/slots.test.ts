@@ -165,5 +165,5 @@ describe("docs/09 slots", () => {
     expect(writes.slice(0, 119).every((code) => code === 201)).toBe(true);
     expect(writes[120]).toBe(429);
     expect((await client().write((await slot()).id, b64(random(10)))).status).toBe(201);
-  });
+  }, 30_000); // 243 requests, which a slow runner takes over the default 5 s for
 });
