@@ -18,8 +18,11 @@ const (
 )
 
 // AdmitFunc verifies a dialer's signed entry, including that its peer is not
-// revoked. It returns the entry's peer id and node key, or a refusal reason.
-type AdmitFunc func(entry json.RawMessage) (peerID string, nodePublic [32]byte, reason string)
+// revoked, and acts on nothing: the dialer has yet to prove it holds the
+// entry's key. It returns the entry's peer id and node key, and admitted,
+// which runs once that proof passes and the tunnel is bound, before the
+// dialer hears so; or a refusal reason.
+type AdmitFunc func(entry json.RawMessage) (peerID string, nodePublic [32]byte, admitted func(), reason string)
 
 // HandleFunc serves one stream from an admitted peer. The header is read and
 // its version checked; the handler writes the response and owns c.
@@ -107,23 +110,24 @@ func (a *admission) classify(c [32]byte, conn *stream.Conn) (peer string, class 
 }
 
 // finish settles c's hello once verification, done outside the lock, has a
-// verdict. Only a record still pending takes it: a pass leaves the budget
-// and binds in one step, superseding the peer's older tunnel so exactly one
-// tunnel carries its opens; a refusal fails c.
-func (a *admission) finish(c [32]byte, peer, reason string) {
+// verdict, and reports whether it bound c. Only a record still pending takes
+// it: a pass leaves the budget and binds in one step, superseding the peer's
+// older tunnel so exactly one tunnel carries its opens; a refusal fails c.
+func (a *admission) finish(c [32]byte, peer, reason string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	t := a.tunnels[c]
 	if t.state != pending {
-		return // evicted while it verified
+		return false // evicted while it verified
 	}
 	a.dequeue(c)
 	if reason != "" {
 		*t = tunnel{state: dead}
-		return
+		return false
 	}
 	a.killPeer(peer)
 	*t = tunnel{state: bound, peer: peer, streams: map[*stream.Conn]bool{}}
+	return true
 }
 
 // drop fails the tunnels bound to peer, a revoked member.
@@ -242,11 +246,13 @@ func (a *admission) hello(sc *stream.Conn, c [32]byte) {
 	if err != nil {
 		return
 	}
-	peer, reason := a.verify(typ, p, c)
+	peer, admitted, reason := a.verify(typ, p, c)
 	if a.hook != nil {
 		a.hook("admitted", c)
 	}
-	a.finish(c, peer, reason)
+	if a.finish(c, peer, reason) {
+		admitted()
+	}
 	if a.hook != nil {
 		a.hook("finished", c)
 	}
@@ -266,20 +272,20 @@ func firstStreamRefusal(h stream.Header) string {
 
 // verify checks membership, then possession of the key the entry names, with
 // the client key taken from the tunnel rather than the frame.
-func (a *admission) verify(typ stream.Type, p []byte, c [32]byte) (peer, reason string) {
+func (a *admission) verify(typ stream.Type, p []byte, c [32]byte) (peer string, admitted func(), reason string) {
 	var f helloFrame
 	if typ != stream.Data || json.Unmarshal(p, &f) != nil {
-		return "", "bad-entry"
+		return "", nil, "bad-entry"
 	}
-	peer, s, reason := a.admit(f.Entry)
+	peer, s, admitted, reason := a.admit(f.Entry)
 	if reason != "" {
-		return "", reason
+		return "", nil, reason
 	}
 	mac, err := possessionMAC(a.key.pk.Private.Raw32(), s, c, s, a.key.NodePublic(), f.Nonce)
 	if err != nil || len(f.Nonce) != 32 || !hmac.Equal(mac, f.MAC) {
-		return "", "possession"
+		return "", nil, "possession"
 	}
-	return peer, ""
+	return peer, admitted, ""
 }
 
 func writeResult(sc *stream.Conn, reason string) {

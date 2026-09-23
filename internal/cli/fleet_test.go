@@ -58,7 +58,7 @@ func rawTunnel(t *testing.T, m *machine) (*transport.Tunnel, *machine) {
 	raw := newMachine(t, "raw")
 	entry, _ := json.Marshal(raw.entry)
 	n, err := transport.Start(transport.Config{Key: raw.key, Entry: entry,
-		Admit:  func(json.RawMessage) (string, [32]byte, string) { return "", [32]byte{}, "bad-entry" },
+		Admit:  func(json.RawMessage) (string, [32]byte, func(), string) { return "", [32]byte{}, nil, "bad-entry" },
 		Handle: func(_ string, _ stream.Header, c *stream.Conn) { c.Close() }})
 	if err != nil {
 		t.Fatal(err)
@@ -285,6 +285,67 @@ func watchExec(t *testing.T) (bin string, started func() bool) {
 		n, _ := unix.Read(fd, make([]byte, 4096))
 		return n > 0
 	}
+}
+
+// docs/03: a hello that fails possession changes nothing. A signed entry
+// forwarded by a node that does not hold its key is neither pinned, nor
+// dialed, nor pushed on.
+func TestPossessionBeforeSideEffects(t *testing.T) {
+	b := fleet(t, "beta")[0]
+	victim, thief := newMachine(t, "victim"), newMachine(t, "thief")
+	entry, _ := json.Marshal(victim.entry)
+	n, err := transport.Start(transport.Config{Key: thief.key, Entry: entry,
+		Admit:  func(json.RawMessage) (string, [32]byte, func(), string) { return "", [32]byte{}, nil, "bad-entry" },
+		Handle: func(_ string, _ stream.Header, c *stream.Conn) { c.Close() }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer n.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, err = n.Dial(ctx, b.entry.Address)
+	var ref *transport.Refused
+	if !errors.As(err, &ref) || ref.Reason != "possession" {
+		t.Fatalf("hello with another machine's entry: %v, want possession", err)
+	}
+	if _, ok := b.peers(t)[victim.id()]; ok {
+		t.Error("the refused entry was pinned")
+	}
+}
+
+// docs/03: a dialer hears its hello passed only once its entry is pinned, so
+// a first contact's opens find it at once.
+func TestPinnedBeforeOK(t *testing.T) {
+	b := fleet(t, "beta")[0]
+	raw := newMachine(t, "raw")
+	entry, _ := json.Marshal(raw.entry)
+	n, err := transport.Start(transport.Config{Key: raw.key, Entry: entry,
+		Admit:  func(json.RawMessage) (string, [32]byte, func(), string) { return "", [32]byte{}, nil, "bad-entry" },
+		Handle: func(_ string, _ stream.Header, c *stream.Conn) { c.Close() }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer n.Close()
+	reached, release := pauseAt(t, b, "admitting", raw)
+	dialed := make(chan *transport.Tunnel, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		tun, _ := n.Dial(ctx, b.entry.Address)
+		dialed <- tun
+	}()
+	await(t, reached, "the hello")
+	select {
+	case <-dialed:
+		t.Fatal("the dialer heard ok before its entry was pinned")
+	case <-time.After(time.Second):
+	}
+	release()
+	tun := <-dialed
+	if tun == nil {
+		t.Fatal("the hello failed")
+	}
+	rawOpen(t, tun, stream.Header{V: 1, Kind: stream.KindExec, Argv: []string{"true"}}).Close()
 }
 
 // docs/10 "junk in the log": a record that does not verify is ignored.

@@ -64,7 +64,7 @@ the dialer opens a `hello` stream ([04](04-streams.md)) and the acceptor checks:
    already received on this or other tunnels have been applied.
 
 Pass: bind `C → E.peerId` for this tunnel, pin `E` if new (and schedule a dial back),
-answer `ok`. A new binding for a peer retires its older tunnel: that tunnel's open
+then answer `ok`; nothing before the pass acts on `E`. A new binding for a peer retires its older tunnel: that tunnel's open
 streams close and it is treated as failed from then on, so exactly one tunnel carries a
 peer's opens. Fail: answer `refused` with a reason, close, and remember `C` as failed.
 Any other first stream from an unbound `C` is answered `unauthenticated` and closed, and

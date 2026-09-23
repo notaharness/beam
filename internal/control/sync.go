@@ -246,9 +246,10 @@ func (d *daemon) broadcast(r identity.Record) {
 	}
 }
 
-// admit is transport's hello check: verify the entry, pin it if new, and dial
-// back; contact from a known peer resets the backoff.
-func (d *daemon) admit(raw json.RawMessage) (string, [32]byte, string) {
+// admit is transport's hello check: verify the entry. Once the dialer has
+// proven it holds the entry's key, pin the entry if new and dial back;
+// contact from a known peer resets the backoff.
+func (d *daemon) admit(raw json.RawMessage) (string, [32]byte, func(), string) {
 	r, err := identity.ParseRecord(raw)
 	if err == nil && r.Kind != identity.Member {
 		err = identity.BadEntry
@@ -257,15 +258,17 @@ func (d *daemon) admit(raw json.RawMessage) (string, [32]byte, string) {
 		err = d.cred.Verify(r, d.isRevoked)
 	}
 	if err != nil {
-		return "", [32]byte{}, err.Error()
-	}
-	if d.pin(r) {
-		d.broadcast(r)
-	} else {
-		d.mu.Lock()
-		d.startDialerLocked(r.PeerID) // inbound contact resets the backoff
-		d.mu.Unlock()
+		return "", [32]byte{}, nil, err.Error()
 	}
 	pub, _ := decodeKey(r.NodePublic)
-	return r.PeerID, pub, ""
+	return r.PeerID, pub, func() {
+		d.at("admitting", r.PeerID)
+		if d.pin(r) {
+			d.broadcast(r)
+		} else {
+			d.mu.Lock()
+			d.startDialerLocked(r.PeerID) // inbound contact resets the backoff
+			d.mu.Unlock()
+		}
+	}, ""
 }

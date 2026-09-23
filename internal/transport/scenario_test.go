@@ -45,16 +45,16 @@ type fakeEntry struct {
 	NodePublic string `json:"nodePublic"`
 }
 
-func admitFake(entry json.RawMessage) (string, [32]byte, string) {
+func admitFake(entry json.RawMessage) (string, [32]byte, func(), string) {
 	var e fakeEntry
 	if err := json.Unmarshal(entry, &e); err != nil {
-		return "", [32]byte{}, "bad-entry"
+		return "", [32]byte{}, nil, "bad-entry"
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(e.NodePublic)
 	if err != nil || len(raw) != 32 {
-		return "", [32]byte{}, "bad-entry"
+		return "", [32]byte{}, nil, "bad-entry"
 	}
-	return e.PeerID, [32]byte(raw), ""
+	return e.PeerID, [32]byte(raw), func() {}, ""
 }
 
 func entryFor(k *Key) (string, json.RawMessage) {
@@ -393,7 +393,7 @@ func TestHelloBudget(t *testing.T) {
 func blockingAdmit(t *testing.T) (AdmitFunc, chan struct{}) {
 	entered, release := make(chan struct{}, 8), make(chan struct{})
 	t.Cleanup(func() { close(release) })
-	return func(e json.RawMessage) (string, [32]byte, string) {
+	return func(e json.RawMessage) (string, [32]byte, func(), string) {
 		entered <- struct{}{}
 		<-release
 		return admitFake(e)
