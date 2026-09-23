@@ -68,7 +68,7 @@ waiting for your passkey (sign)
 ⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
 ⣿⡏⠉⠉⠉⢹… (the QR code, 28 × 14 for a typical URL)
 https://beam.n10.is/#c=…&f=b7f39a210c4e55d1&k=…&l=buildbox&o=a&s=…
-scan with your phone or open the link; continue only on a page that shows this machine
+scan with your phone or open the link; approve only a page that shows what you ran
 ```
 
 The QR code encodes the URL byte for byte at error correction level L. Each character

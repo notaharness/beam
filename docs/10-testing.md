@@ -53,16 +53,19 @@ fixture, not proof of any real authenticator's behaviour.
 A Playwright test drives real Chromium against the daemon's ceremony URL with the page
 served from `worker/public/` under its `_headers` and a CDP virtual authenticator with
 PRF enabled: a `create`, then a `get` with the credential it made. The page's slot write
-goes to the fake worker, and the test checks that the page reports `201` and the daemon
-opens, verifies and completes. That is also the HPKE interoperability test: the page's
+goes to the fake worker, or in CI's contract step to the real one under `wrangler dev`,
+and the test checks that the page reports `201` and the ceremony opens, verifies and
+completes, and that the page answering the `get` a second time is told it was already
+answered. That is also the HPKE interoperability test: the page's
 Web Crypto sealing against Go's `crypto/hpke`, which carries RFC 9180's vectors. This is
 the one boundary the test authenticator cannot exercise.
 
 ## Fake worker
 
 `internal/fakeworker` implements the routes, bearer check, assertion verification and
-slots in memory. A contract test runs the Go directory and slot clients against the real
-worker under `wrangler dev` in CI so the fake cannot drift.
+slots in memory. The `directory` and `ceremony` packages' tests run against it, and in CI
+again against the real worker under `wrangler dev` (`BEAM_WORKER_URL`), so the fake
+cannot drift.
 
 ## Worker
 
@@ -88,9 +91,9 @@ bare member node (transport only) stands in for a daemon:
 | third joins while second is offline; second returns | second admits third directly and also learns it via sync; one row |
 | second joins while worker withholds first's revocation of third | second admits third until the tombstone arrives by sync, then terminates; documents eventual revocation |
 | revoke while all tunnels are up | peers refuse within the sync delta, no reconnect needed |
-| revoke with worker refusing appends | local effect immediate; `published: "pending"`; append lands after worker takes appends again |
+| revoke with worker down after the tap | local effect immediate; `published: "pending"`; append lands after worker returns |
 | worker down during a ceremony | the ceremony waits on its slot and ends `ceremony-timeout`; nothing is committed |
-| onlooker answers first | a second authenticator seals its own result to the slot before the owner: on an enrolled machine `revoke` ends `bad-assertion` and commits nothing, and the owner's write is `409` |
+| onlooker answers first | a second authenticator seals its own result to the slot before the owner: on an enrolled machine `revoke` ends `wrong-passkey` and commits nothing, and the owner's write is `409` |
 | junk in a slot | a ciphertext that does not open under the ceremony's key ends it `ceremony-state` |
 | leaked address, no entry | handshake completes, hello absent, closed within 5 s; 16-slot budget enforced |
 | possession | valid entry, wrong MAC → `possession`; replay of hello from another tunnel refused |

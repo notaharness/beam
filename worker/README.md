@@ -8,16 +8,16 @@ The directory API and the ceremony page at `https://beam.n10.is` ([docs/09](../d
 ```sh
 npm ci
 npm test                              # tsc, then vitest in workerd
-npx playwright install chromium       # for internal/ceremony's TestBrowserCallback
+npx playwright install chromium       # for internal/ceremony's TestBrowserCeremony
 ```
 
-The Go directory client's contract tests (`internal/directory`) run against the worker
-under `wrangler dev`:
+The Go directory client's and ceremony slot reader's tests (`internal/directory`,
+`internal/ceremony`) also run against the worker under `wrangler dev`:
 
 ```sh
 npx wrangler d1 execute beam --local --file schema.sql
 npx wrangler dev --local --port 8799 &
-BEAM_WORKER_URL=http://127.0.0.1:8799 go test -tags "$(cat ../build-tags.txt),beamtest" ../internal/directory
+BEAM_WORKER_URL=http://127.0.0.1:8799 go test -tags "$(cat ../build-tags.txt),beamtest" ../internal/directory ../internal/ceremony
 ```
 
 ## Deploy
@@ -31,6 +31,12 @@ npx wrangler d1 execute beam --remote --file schema.sql
 npx wrangler deploy                   # attaches the beam.n10.is custom domain
 ```
 
-Later deploys are `npx wrangler deploy`. The D1 database `beam`
-(`7e0d3382-8f3d-45a9-bf67-b341360650da`, WEUR) and the worker `beam` with its
-`beam.n10.is` custom domain were created this way on 2026-09-23.
+Later deploys are `npx wrangler deploy`. When `schema.sql` has gained a table, apply it
+first; every statement in it is `IF NOT EXISTS`:
+
+```sh
+npx wrangler d1 execute beam --remote --file schema.sql
+```
+
+The D1 database `beam` (`7e0d3382-8f3d-45a9-bf67-b341360650da`, WEUR) and the worker
+`beam` with its `beam.n10.is` custom domain were created this way on 2026-09-23.

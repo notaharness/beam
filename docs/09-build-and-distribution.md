@@ -173,8 +173,9 @@ complexity 4 or below.
 Push (`.github/workflows/ci.yml`): job `ci`, required on `main`: the worker's vitest in
 workerd (the CSP hashes included), `make lint`, `make crap` (`go test -race` with
 coverage, the Playwright ceremony test among them, then the CRAP gate), `make dist`
-(cross-compile four targets), and the Go directory and slot clients' contract tests against
-the worker under `wrangler dev`. Job `darwin`: `make test` on macOS, where the process
+(cross-compile four targets), and the `directory` and `ceremony` packages' tests again
+against the worker under `wrangler dev`, the Go directory client and the slot reader
+held to the real routes. Job `darwin`: `make test` on macOS, where the process
 lifetimes (kqueue, not waitid) and the in-process daemons run for real. The `ci` job also
 runs the npm packages' node tests.
 
