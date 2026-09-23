@@ -168,10 +168,10 @@ func (e *env) show(ceremonyURL, kind string) {
 }
 
 // browser is the command that opens a URL here, or "" on a machine without
-// a display.
+// a display or whose ceremonies the test authenticator answers.
 func (e *env) browser() string {
 	switch {
-	case e.getenv("SSH_CONNECTION") != "":
+	case e.getenv("SSH_CONNECTION") != "" || answersItself(e.getenv):
 		return ""
 	case runtime.GOOS == "darwin":
 		return "open"
