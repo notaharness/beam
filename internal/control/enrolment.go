@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/notaharness/beam/internal/ceremony"
 	"github.com/notaharness/beam/internal/identity"
@@ -28,6 +29,8 @@ type enrolment struct {
 	store  *store.Store
 	node   *transport.Node
 	mail   *mailbox.Subscribers
+
+	writing sync.Mutex // one directory write at a time: a publish, or a pass over the queue
 }
 
 // end stops what runs on e; its store stays open for the caller to close.
@@ -58,18 +61,15 @@ func (d *daemon) signed(cred identity.Credential, entry *identity.Record, got ce
 		KDir: enc(kDir), TRead: enc(tRead), Entry: *entry}, nil
 }
 
-// enrollAs writes fleet.json and enrolls with it, first ending the
-// enrolment a re-join replaces. d.enrolling must be held.
+// enrollAs enrolls with f, its entry queued for the directory, first ending
+// the enrolment a re-join replaces. d.enrolling must be held.
 func (d *daemon) enrollAs(f *identity.Fleet, rejoin bool) (*enrolment, error) {
 	if rejoin {
 		if err := d.unenroll(false); err != nil {
 			return nil, err
 		}
 	}
-	if err := d.o.Paths.save(fleetFile, f); err != nil {
-		return nil, err
-	}
-	return d.enroll()
+	return d.enroll(f, &f.Entry)
 }
 
 func (e *enrolment) sameKDir(kDir []byte) bool {

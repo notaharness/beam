@@ -164,7 +164,7 @@ func opRevokeStart(d *daemon, e *enrolment, _ *clientConn, r request) (any, erro
 			return nil, refusal(err)
 		}
 		err = d.commit(gen, func() error {
-			if _, err := e.store.Revoke(rec, now()); err != nil {
+			if err := e.store.RevokeQueued(rec, now()); err != nil {
 				return err
 			}
 			d.applyRevocation(e, id)

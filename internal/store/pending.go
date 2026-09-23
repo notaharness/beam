@@ -7,13 +7,34 @@ import (
 	"github.com/notaharness/beam/internal/identity"
 )
 
-// AddPending queues a record whose directory append has not landed, to be
-// retried while the daemon runs (docs/02).
+// AddPending queues a record for the directory until an append of it lands
+// (docs/02).
 func (s *Store) AddPending(r identity.Record, now int64) error {
+	return addPending(s.db, r, now)
+}
+
+func addPending(db execer, r identity.Record, now int64) error {
 	b, _ := json.Marshal(r)
-	_, err := s.db.Exec(`INSERT INTO pending (statement_hash, record, created_at) VALUES (?, ?, ?)
+	_, err := db.Exec(`INSERT INTO pending (statement_hash, record, created_at) VALUES (?, ?, ?)
 		ON CONFLICT (statement_hash) DO NOTHING`, pendingKey(r), b, now)
 	return err
+}
+
+// RevokeQueued stores a revocation this machine signed and queues it for the
+// directory in one transaction.
+func (s *Store) RevokeQueued(r identity.Record, now int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }() // a no-op once committed
+	if _, err := revoke(tx, r, now); err != nil {
+		return err
+	}
+	if err := addPending(tx, r, now); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Pending lists the queued records, oldest first.

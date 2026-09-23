@@ -12,19 +12,21 @@ import (
 	"github.com/notaharness/beam/internal/identity"
 )
 
-// publish appends r to the directory now, or queues it to be retried while
-// the daemon runs, for the flow cc waits on. It reports the outcome as the
+// publish appends r, queued with the state it commits, to the directory now
+// for the flow cc waits on, and dequeues it once the worker has it; or leaves
+// it to be retried while the daemon runs. It reports the outcome as the
 // socket does: true, or "pending" (docs/06).
 func (d *daemon) publish(ctx context.Context, e *enrolment, cc *clientConn, r identity.Record) (any, error) {
 	stage(cc, "publishing")
+	e.writing.Lock()
+	defer e.writing.Unlock()
+	d.at("publishing", r.PeerID)
 	err := d.appendRecord(ctx, e, r)
 	if err == nil {
-		return true, nil
+		d.at("published", r.PeerID)
+		return true, e.store.DonePending(r)
 	}
 	d.o.Logf("directory: %s %s: %v; will retry", r.Kind, short(r.PeerID), err)
-	if err := e.store.AddPending(r, now()); err != nil {
-		return nil, err
-	}
 	select {
 	case d.pending <- struct{}{}:
 	default:
@@ -53,32 +55,13 @@ func (d *daemon) appendRecord(ctx context.Context, e *enrolment, r identity.Reco
 func (d *daemon) directory() directory.Client { return directory.Client{URL: d.o.Directory} }
 
 // retryPending appends queued records, with backoff while the directory is
-// unavailable, until ctx ends. A record the directory refuses outright is
-// dropped: retrying cannot change the answer.
+// unavailable, until e ends. It first waits a backoff, or for a publish that
+// failed, so that a publish's own first attempt usually finds its record
+// still queued and nothing to share it with.
 func (d *daemon) retryPending(e *enrolment) {
 	backoff := minBackoff
+	wait := backoff/2 + rand.N(backoff/2)
 	for {
-		rs, err := e.store.Pending()
-		failed := err != nil
-		for _, r := range rs {
-			switch err := d.appendRecord(e.ctx, e, r); {
-			case err == nil:
-				_ = e.store.DonePending(r) // appends are idempotent: a leftover lands again
-				d.emit("directory.published", map[string]string{"kind": r.Kind, "peerId": r.PeerID})
-			case errors.Is(err, directory.ErrUnavailable):
-				failed = true
-			default:
-				d.o.Logf("directory: dropping %s %s: %v", r.Kind, short(r.PeerID), err)
-				_ = e.store.DonePending(r) // a refusal stands
-			}
-		}
-		wait := time.Duration(1<<62 - 1)
-		if failed {
-			wait = backoff/2 + rand.N(backoff/2)
-			backoff = min(backoff*2, maxBackoff)
-		} else {
-			backoff = minBackoff
-		}
 		select {
 		case <-e.ctx.Done():
 			return
@@ -86,7 +69,36 @@ func (d *daemon) retryPending(e *enrolment) {
 			backoff = minBackoff
 		case <-time.After(wait):
 		}
+		if d.flushPending(e) {
+			wait = backoff/2 + rand.N(backoff/2)
+			backoff = min(backoff*2, maxBackoff)
+		} else {
+			wait, backoff = 1<<62-1, minBackoff
+		}
 	}
+}
+
+// flushPending appends every queued record once and reports whether the
+// directory was unavailable. A record the directory refuses outright is
+// dropped: retrying cannot change the answer.
+func (d *daemon) flushPending(e *enrolment) (unavailable bool) {
+	e.writing.Lock()
+	defer e.writing.Unlock()
+	rs, err := e.store.Pending()
+	unavailable = err != nil
+	for _, r := range rs {
+		switch err := d.appendRecord(e.ctx, e, r); {
+		case err == nil:
+			_ = e.store.DonePending(r) // appends are idempotent: a leftover lands again
+			d.emit("directory.published", map[string]string{"kind": r.Kind, "peerId": r.PeerID})
+		case errors.Is(err, directory.ErrUnavailable):
+			unavailable = true
+		default:
+			d.o.Logf("directory: dropping %s %s: %v", r.Kind, short(r.PeerID), err)
+			_ = e.store.DonePending(r) // a refusal stands
+		}
+	}
+	return unavailable
 }
 
 // readDirectory learns every record in the directory, once, at start
