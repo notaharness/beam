@@ -41,6 +41,9 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == "daemon" {
 		os.Exit(cli.Main(os.Args[1:], os.Environ(), os.Stdin, os.Stdout, os.Stderr))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "parent" {
+		parent(os.Args[2:])
+	}
 	devderp.Isolate()
 	devderp.ForceRelay()
 	var err error

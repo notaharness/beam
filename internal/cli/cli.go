@@ -77,7 +77,7 @@ const usage = `usage:
   beam join   [--label NAME]
   beam revoke <peer>
   beam fleet reset
-  beam daemon [--detach] [--derp-map URL]
+  beam daemon [--detach | --exit-with-parent] [--derp-map URL]
   beam status [--json]
   beam peers  [--json]
   beam peer alias <peer> <alias|->
