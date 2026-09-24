@@ -82,7 +82,7 @@ func opJoinStart(d *daemon, _ *clientConn, r request) (any, error) {
 func (d *daemon) join(ctx context.Context, cc *clientConn, gen uint64, entry identity.Record, got ceremony.Result) (any, error) {
 	kDir, tRead, err := got.DirectoryKeys()
 	if err != nil {
-		return nil, fail("prf-unsupported", "")
+		return nil, fail("prf-unsupported", ceremony.Missing(ceremony.Add))
 	}
 	cur := d.enrolment()
 	rejoin := cur != nil
@@ -173,6 +173,7 @@ func opRevokeStart(d *daemon, e *enrolment, _ *clientConn, r request) (any, erro
 		if err != nil {
 			return nil, err
 		}
+		stage(cc, "notifying peers")
 		by := d.pushAcked(e, rec)
 		pub, err := d.publish(ctx, e, cc, rec)
 		return map[string]any{"local": true, "published": pub, "acknowledgedBy": by}, err

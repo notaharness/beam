@@ -76,7 +76,7 @@ func (e *enrolment) self() string { return e.fleet.Entry.PeerID }
 func (d *daemon) signed(cred identity.Credential, entry *identity.Record, got ceremony.Result, revoked func(string) bool) (*identity.Fleet, error) {
 	kDir, tRead, err := got.DirectoryKeys()
 	if err != nil {
-		return nil, fail("prf-unsupported", "")
+		return nil, fail("prf-unsupported", ceremony.Missing(ceremony.Add))
 	}
 	entry.Assertion = got.Assertion()
 	if revoked == nil {

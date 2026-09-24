@@ -98,6 +98,16 @@ func (r Result) Assertion() *identity.Assertion {
 	}
 }
 
+// Missing is what the result of a ceremony of kind lacked when it is
+// prf-unsupported (docs/02): the page checks create's prf.enabled and get's
+// prf.results.first.
+func Missing(kind string) string {
+	if kind == Create {
+		return "no prf.enabled from the passkey's create"
+	}
+	return "no 32-byte prf.results.first from the passkey's get"
+}
+
 // DirectoryKeys derives K_dir and T_read from a get result's PRF output.
 func (r Result) DirectoryKeys() (kDir, tRead []byte, err error) {
 	if len(r.PRF) != 32 {
