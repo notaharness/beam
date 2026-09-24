@@ -5,44 +5,64 @@ package ceremony
 import (
 	"bytes"
 	"context"
+	"crypto/ecdh"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
-	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
-	"strconv"
+	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/notaharness/beam/internal/fakeworker"
 	"github.com/notaharness/beam/internal/identity"
 )
 
-func post(t *testing.T, c *Ceremony, host string, f url.Values) *http.Response {
+// worker is the slots under test: the real worker under wrangler dev when
+// BEAM_WORKER_URL names it (CI), else the fake, which this holds to the same
+// contract.
+func worker(t *testing.T) string {
+	if u := os.Getenv("BEAM_WORKER_URL"); u != "" {
+		return u
+	}
+	s := httptest.NewServer(fakeworker.New())
+	t.Cleanup(s.Close)
+	return s.URL
+}
+
+var challenge = []byte("0123456789abcdef0123456789abcdef")
+
+const peerID = "b7f39a210c4e55d1b7f39a210c4e55d1"
+
+// sealed is plain sealed to c's key for c's slot, as the page seals it.
+func sealed(c *Ceremony, plain string) []byte {
+	return seal(b64(c.key.PublicKey().Bytes()), c.slot, []byte(plain))
+}
+
+// start is a get ceremony on w that no test authenticator answers.
+func start(t *testing.T, w string) *Ceremony {
 	t.Helper()
-	req, _ := http.NewRequest("POST", "http://127.0.0.1:"+strconv.Itoa(c.Port)+"/cb/result", strings.NewReader(f.Encode()))
-	req.Host = host
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := http.DefaultClient.Do(req)
+	t.Setenv("BEAM_TEST_AUTHENTICATOR", "")
+	c, err := Start(Request{Kind: Add, Label: "laptop", PeerID: peerID, Challenge: challenge}, w)
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
-	return resp
+	t.Cleanup(c.Close)
+	return c
 }
 
-func local(c *Ceremony) string { return "127.0.0.1:" + strconv.Itoa(c.Port) }
-
-// docs/10 Test authenticator: create then get answer themselves through
-// /cb/result, and what they carry verifies as a browser's would.
+// docs/10 Test authenticator: create then get answer themselves through the
+// ceremony's slot, and what they carry verifies as a browser's would.
 func TestTestAuthenticator(t *testing.T) {
+	w := worker(t)
 	a := identity.NewAuthenticator()
 	j, _ := json.Marshal(a)
 	t.Setenv("BEAM_TEST_AUTHENTICATOR", string(j))
-	challenge := []byte("0123456789abcdef0123456789abcdef")
-	c, err := Start(Request{Op: Create, Action: "Create your fleet", Label: "laptop", Challenge: challenge, FleetName: "home"})
+	c, err := Start(Request{Kind: Create, Label: "laptop", PeerID: peerID, Challenge: challenge, FleetName: "home"}, w)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +77,7 @@ func TestTestAuthenticator(t *testing.T) {
 	if _, err := r.Credential([]byte("another challenge")); err == nil {
 		t.Error("a create over another challenge verified")
 	}
-	c, _ = Start(Request{Op: Get, Challenge: challenge})
+	c, _ = Start(Request{Kind: Remove, Label: "laptop", PeerID: peerID, Challenge: challenge}, w)
 	r, err = c.Wait(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -76,7 +96,6 @@ func TestTestAuthenticator(t *testing.T) {
 // breaks one check of an otherwise valid create.
 func TestCredentialChecks(t *testing.T) {
 	a := identity.NewAuthenticator()
-	challenge := []byte("0123456789abcdef0123456789abcdef")
 	create := func(typ, origin, rpID string, flags byte) Result {
 		return Result{CredentialID: a.CredentialID, ClientDataJSON: identity.ClientDataJSON(typ, challenge, origin),
 			AttestationObject: a.AttestationObject(rpID, flags)}
@@ -97,65 +116,63 @@ func TestCredentialChecks(t *testing.T) {
 	}
 }
 
-// docs/02 Ceremonies: the URL's fragment carries what the page needs, and
-// fleetName only for a create.
+// docs/02 Ceremonies: the fragment is the table's, n only for a create; the
+// slot is the hash of a read key the URL does not carry, and k a key that
+// the daemon holds the private half of.
 func TestURL(t *testing.T) {
-	for _, op := range []string{Create, Get} {
-		c, err := Start(Request{Op: op, Action: "Add laptop", Label: "laptop", Fingerprint: "b7f3 9a21 0c4e 55d1", Challenge: []byte{1, 2}, FleetName: "home"})
+	for _, kind := range []string{Create, Add, Remove} {
+		c, err := Start(Request{Kind: kind, Label: "lap top", PeerID: peerID, Challenge: []byte{1, 2}, FleetName: "home"}, "http://127.0.0.1:1")
 		if err != nil {
 			t.Fatal(err)
 		}
 		c.Close()
 		u, _ := url.Parse(c.URL)
-		f, _ := url.ParseQuery(u.Fragment)
-		want := url.Values{"op": {op}, "state": {c.state}, "port": {strconv.Itoa(c.Port)}, "action": {"Add laptop"},
-			"label": {"laptop"}, "fingerprint": {"b7f3 9a21 0c4e 55d1"}, "challenge": {"AQI"}}
-		if op == Create {
-			want.Set("fleetName", "home")
+		h := sha256.Sum256(c.readKey)
+		want := url.Values{"o": {kind}, "s": {b64(h[:16])}, "k": {b64(c.key.PublicKey().Bytes())}, "c": {"AQI"}, "l": {"lap top"},
+			"f": {"b7f39a210c4e55d1"}}
+		if kind == Create {
+			want.Set("n", "home")
 		}
-		if u.Scheme+"://"+u.Host+u.Path != Page || f.Encode() != want.Encode() {
-			t.Errorf("%s: %s", op, c.URL)
+		if u.Scheme+"://"+u.Host+u.Path != Page || u.Fragment != want.Encode() {
+			t.Errorf("%s: %s", kind, c.URL)
+		}
+		if strings.Contains(c.URL, b64(c.readKey)) {
+			t.Errorf("%s: the read key is in the URL", kind)
 		}
 	}
 }
 
-// docs/02 Ceremonies: a callback with another state ends the ceremony
-// ceremony-state; the page's own outcomes map to their errors; a request
-// naming another host is refused.
-func TestCallbacks(t *testing.T) {
+// docs/02 Ceremonies: the page's outcomes map to their errors; what does not
+// open under the ceremony's key and for its slot, or is not a result, ends it
+// ceremony-state.
+func TestSlotResults(t *testing.T) {
+	w := worker(t)
+	other, _ := ecdh.X25519().GenerateKey(nil)
 	for _, tc := range []struct {
-		name string
-		host string
-		form url.Values
-		code int
-		err  error
+		name   string
+		sealed func(c *Ceremony) []byte
+		err    error
 	}{
-		{"wrong state", "", url.Values{"state": {"nope"}, "result": {"ok"}}, 400, ErrState},
-		{"cancelled", "", url.Values{"result": {"cancelled"}}, 200, ErrCancelled},
-		{"prf unsupported", "", url.Values{"result": {"prf-unsupported"}}, 200, ErrPRFUnsupported},
-		{"failed", "", url.Values{"result": {"failed"}}, 200, ErrFailed},
-		{"ok without a credential", "", url.Values{"result": {"ok"}}, 200, ErrBadResult},
-		{"another host", "localhost", url.Values{"result": {"ok"}}, 400, ErrCancelled},
+		{"cancelled", func(c *Ceremony) []byte { return sealed(c, "result=cancelled") }, ErrCancelled},
+		{"prf unsupported", func(c *Ceremony) []byte { return sealed(c, "result=prf-unsupported") }, ErrPRFUnsupported},
+		{"failed", func(c *Ceremony) []byte { return sealed(c, "result=failed") }, ErrFailed},
+		{"ok without a credential", func(c *Ceremony) []byte { return sealed(c, "result=ok") }, ErrBadResult},
+		{"not a form", func(c *Ceremony) []byte { return sealed(c, "result=%zz") }, ErrState},
+		{"no result", func(c *Ceremony) []byte { return sealed(c, "x=1") }, ErrState},
+		{"an unknown result", func(c *Ceremony) []byte { return sealed(c, "result=maybe") }, ErrState},
+		{"another key", func(c *Ceremony) []byte {
+			return seal(b64(other.PublicKey().Bytes()), c.slot, []byte("result=cancelled"))
+		}, ErrState},
+		{"another slot", func(c *Ceremony) []byte {
+			return seal(b64(c.key.PublicKey().Bytes()), b64(make([]byte, 16)), []byte("result=cancelled"))
+		}, ErrState},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			c, err := Start(Request{Op: Get})
-			if err != nil {
-				t.Fatal(err)
+			c := start(t, w)
+			if code, err := Write(c.URL, w, tc.sealed(c)); err != nil || code != http.StatusCreated {
+				t.Fatalf("write: %d, %v", code, err)
 			}
-			if tc.form.Get("state") == "" {
-				tc.form.Set("state", c.state)
-			}
-			host := local(c)
-			if tc.host != "" {
-				host = tc.host + ":" + strconv.Itoa(c.Port)
-			}
-			if resp := post(t, c, host, tc.form); resp.StatusCode != tc.code {
-				t.Errorf("status %d, want %d", resp.StatusCode, tc.code)
-			}
-			ctx, cancel := context.WithCancel(context.Background())
-			if tc.host != "" {
-				cancel() // nothing arrived: the ceremony waits on
-			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 			if _, err := c.Wait(ctx); !errors.Is(err, tc.err) {
 				t.Errorf("%v, want %v", err, tc.err)
@@ -164,36 +181,65 @@ func TestCallbacks(t *testing.T) {
 	}
 }
 
-// docs/02 Ceremonies: the page gets its answer from /cb/result although the
-// result ends the wait, and the wait closes the listener, at once.
-func TestResultAnswered(t *testing.T) {
-	for range 100 {
-		c, err := Start(Request{Op: Get})
-		if err != nil {
-			t.Fatal(err)
-		}
-		go c.Wait(context.Background())
-		f := url.Values{"state": {c.state}, "result": {"failed"}}
-		resp, err := http.PostForm("http://"+local(c)+"/cb/result", f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		body, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil || string(body) != "done, close this tab" {
-			t.Fatalf("the page got %q, %v", body, err)
-		}
+// A worker that fails to answer the slot read is asked again until the
+// result comes.
+func TestSlotReadRetries(t *testing.T) {
+	defer func(d time.Duration) { retry = d }(retry)
+	retry = 50 * time.Millisecond
+	fake := fakeworker.New()
+	s := httptest.NewServer(fake)
+	defer s.Close()
+	fake.SetDown(true)
+	c := start(t, s.URL)
+	time.Sleep(200 * time.Millisecond) // reads refused meanwhile
+	fake.SetDown(false)
+	if code, err := Write(c.URL, s.URL, sealed(c, "result=prf-unsupported")); err != nil || code != http.StatusCreated {
+		t.Fatalf("write: %d, %v", code, err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := c.Wait(ctx); !errors.Is(err, ErrPRFUnsupported) {
+		t.Errorf("%v, want %v", err, ErrPRFUnsupported)
+	}
+}
+
+// A slot already read, whose result the daemon never got, ends the ceremony
+// ceremony-state at once rather than at its timeout.
+func TestSlotReadAlready(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusGone) }))
+	defer s.Close()
+	c := start(t, s.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := c.Wait(ctx); !errors.Is(err, ErrState) {
+		t.Errorf("%v, want %v", err, ErrState)
+	}
+}
+
+// A worker that ends each read at once with nothing is asked again at most
+// once a second, not in a busy loop.
+func TestSlotReadPaced(t *testing.T) {
+	var reads atomic.Int32
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reads.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer s.Close()
+	start(t, s.URL)
+	time.Sleep(1500 * time.Millisecond)
+	if n := reads.Load(); n < 1 || n > 2 {
+		t.Errorf("%d reads in 1.5 s", n)
 	}
 }
 
 // docs/02 Ceremonies: a result nobody waits for expires at the ceremony's
 // deadline; a wait after it hears ceremony-timeout, not the stale result.
 func TestAnsweredExpires(t *testing.T) {
-	defer SetTimeout(200 * time.Millisecond)()
+	defer SetTimeout(500 * time.Millisecond)()
 	a := identity.NewAuthenticator()
 	j, _ := json.Marshal(a)
 	t.Setenv("BEAM_TEST_AUTHENTICATOR", string(j))
-	c, err := Start(Request{Op: Get, Challenge: []byte("0123456789abcdef0123456789abcdef")})
+	c, err := Start(Request{Kind: Add, PeerID: peerID, Challenge: challenge}, worker(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,48 +253,16 @@ func TestAnsweredExpires(t *testing.T) {
 	}
 }
 
-// A request that stalls holds Close for a second at most, then is cut off.
-func TestCloseStalled(t *testing.T) {
-	c, err := Start(Request{Op: Get})
-	if err != nil {
-		t.Fatal(err)
-	}
-	conn, err := net.Dial("tcp", local(c))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	fmt.Fprint(conn, "POST /cb/result HTTP/1.1\r\n")
-	time.Sleep(100 * time.Millisecond) // the server has read it
-	start := time.Now()
+// Close ends the wait on the slot: a write after it is left unread.
+func TestCloseStopsReading(t *testing.T) {
+	w := worker(t)
+	c := start(t, w)
+	time.Sleep(100 * time.Millisecond) // the read is under way
 	c.Close()
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-	if _, err := conn.Read(make([]byte, 1)); err != io.EOF || time.Since(start) > 2*time.Second {
-		t.Errorf("after %v: %v, want the connection closed", time.Since(start), err)
-	}
-}
-
-// docs/02 Ceremonies: /cb is not cached and runs only its own script, which
-// may post back to its own origin.
-func TestLanding(t *testing.T) {
-	c, err := Start(Request{Op: Get})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Close()
-	resp, err := http.Get("http://" + local(c) + "/cb")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	csp := resp.Header.Get("Content-Security-Policy")
-	for _, want := range []string{"default-src 'none'", "script-src '" + cspHash(landingScript) + "'", "connect-src 'self'"} {
-		if !strings.Contains(csp, want) {
-			t.Errorf("CSP %q lacks %q", csp, want)
-		}
-	}
-	if resp.Header.Get("Cache-Control") != "no-store" || !strings.Contains(string(body), "<script>"+landingScript+"</script>") {
-		t.Errorf("headers %v, body %s", resp.Header, body)
+	Write(c.URL, w, sealed(c, "result=cancelled"))
+	select {
+	case o := <-c.done:
+		t.Errorf("a closed ceremony read %+v", o)
+	case <-time.After(300 * time.Millisecond):
 	}
 }

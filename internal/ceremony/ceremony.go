@@ -1,21 +1,16 @@
-// Package ceremony runs one passkey ceremony (docs/02, Ceremonies): a
-// one-shot loopback listener, the URL of the page at beam.n10.is that makes
-// the WebAuthn call, the /cb landing page that hands the page's fragment to
-// the daemon, and the result it carries.
+// Package ceremony runs one passkey ceremony (docs/02, Ceremonies): the URL
+// of the page at beam.n10.is that makes the WebAuthn call, carrying a key
+// made for this ceremony and the slot on the worker the page answers
+// through; the wait on that slot; and the result, opened with the key.
 package ceremony
 
 import (
 	"context"
+	"crypto/ecdh"
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
-	"encoding/base64"
 	"errors"
-	"fmt"
-	"net"
-	"net/http"
 	"net/url"
-	"strconv"
 	"sync"
 	"time"
 )
@@ -26,10 +21,11 @@ const Page = "https://beam.n10.is/"
 // Timeout bounds a ceremony; only tests change it.
 var Timeout = 5 * time.Minute
 
-// Ops.
+// What a tap approves: the fragment's o (docs/02, Ceremonies).
 const (
-	Create = "create"
-	Get    = "get"
+	Create = "c" // the fleet's passkey
+	Add    = "a" // a get over a machine's member statement
+	Remove = "r" // a get over a machine's revocation
 )
 
 // Why a ceremony ended without a result; their text is the socket's error.
@@ -43,22 +39,22 @@ var (
 
 // Request is what the page shows and asks the authenticator for.
 type Request struct {
-	Op          string // Create or Get
-	Action      string // what the tap approves, shown as the heading
-	Label       string
-	Fingerprint string
-	Challenge   []byte
-	FleetName   string // Create only
+	Kind      string // Create, Add or Remove
+	Label     string // the machine the tap is for
+	PeerID    string // its peerId, whose fingerprint the page shows
+	Challenge []byte
+	FleetName string // Create only
 }
 
-// Ceremony is one running ceremony, waiting for the page's callback.
+// Ceremony is one running ceremony, waiting on its slot.
 type Ceremony struct {
-	URL  string
-	Port int
+	URL string
 
-	req      Request
-	state    string
-	srv      *http.Server
+	worker   string // the directory worker holding the slot
+	key      *ecdh.PrivateKey
+	readKey  []byte
+	slot     string
+	stop     context.CancelFunc // ends the wait on the slot
 	done     chan outcome
 	once     sync.Once
 	timer    *time.Timer   // the ceremony's one clock, from Start
@@ -76,40 +72,50 @@ type outcome struct {
 // browser when a test authenticator is configured.
 var answer func(*Ceremony)
 
-// Start listens on a random loopback port and returns the ceremony, whose
-// URL the client opens or prints.
-func Start(req Request) (*Ceremony, error) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+// Start makes the ceremony's key and slot, starts waiting on the slot at
+// worker, and returns the ceremony, whose URL the client opens, prints or
+// draws.
+func Start(req Request, worker string) (*Ceremony, error) {
+	key, err := ecdh.X25519().GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, err
 	}
-	state := make([]byte, 16)
-	rand.Read(state)
-	c := &Ceremony{req: req, state: b64(state), Port: ln.Addr().(*net.TCPAddr).Port, done: make(chan outcome, 1),
-		timedOut: make(chan struct{})}
-	c.timer = time.AfterFunc(Timeout, c.expire)
-	frag := url.Values{"op": {req.Op}, "state": {c.state}, "port": {strconv.Itoa(c.Port)}, "action": {req.Action},
-		"label": {req.Label}, "fingerprint": {req.Fingerprint}, "challenge": {b64(req.Challenge)}}
-	if req.Op == Create {
-		frag.Set("fleetName", req.FleetName)
+	readKey := make([]byte, 32)
+	rand.Read(readKey)
+	h := sha256.Sum256(readKey)
+	ctx, stop := context.WithCancel(context.Background())
+	c := &Ceremony{worker: worker, key: key, readKey: readKey, slot: b64(h[:16]), stop: stop,
+		done: make(chan outcome, 1), timedOut: make(chan struct{})}
+	frag := url.Values{"o": {req.Kind}, "s": {c.slot}, "k": {b64(key.PublicKey().Bytes())}, "c": {b64(req.Challenge)},
+		"l": {req.Label}, "f": {req.PeerID[:min(16, len(req.PeerID))]}} // the table in docs/02
+	if req.Kind == Create {
+		frag.Set("n", req.FleetName)
 	}
 	c.URL = Page + "#" + frag.Encode()
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /cb", c.landing)
-	mux.HandleFunc("POST /cb/result", c.result)
-	c.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-	go func() { _ = c.srv.Serve(ln) }() // ends at Close
+	c.timer = time.AfterFunc(Timeout, c.expire)
+	go c.await(ctx)
 	if answer != nil {
 		go answer(c)
 	}
 	return c, nil
 }
 
+// await ends the ceremony with what its slot brings, unless it ends first.
+func (c *Ceremony) await(ctx context.Context) {
+	sealed, err := readSlot(ctx, c.worker, c.slot, c.readKey)
+	switch {
+	case err == nil:
+		c.finish(c.open(sealed))
+	case errors.Is(err, errRead):
+		c.finish(Result{}, ErrState)
+	}
+}
+
 // Wait returns the page's result once it arrives, or why the ceremony ended
 // without one: its timeout, Timeout after Start, which also takes a result
-// that arrived and was not waited for by then; a callback with the wrong
-// state; the page's own failure; or ctx's end (cancelled), unless one of the
-// others came with it. The listener is closed either way.
+// that arrived and was not waited for by then; a slot answered with what
+// does not open; the page's own failure; or ctx's end (cancelled), unless
+// one of the others came with it. The wait on the slot ends either way.
 func (c *Ceremony) Wait(ctx context.Context) (Result, error) {
 	defer c.Close()
 	select {
@@ -143,6 +149,7 @@ func (c *Ceremony) take(o outcome) (Result, error) {
 // outcome, so a result nobody waits for expires too.
 func (c *Ceremony) expire() {
 	c.finish(Result{}, ErrTimeout)
+	c.stop()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.taken {
@@ -153,80 +160,13 @@ func (c *Ceremony) expire() {
 // TimedOut is closed if the clock ran out before a wait took the outcome.
 func (c *Ceremony) TimedOut() <-chan struct{} { return c.timedOut }
 
-// Close ends the ceremony's listener and its clock. A request under way, the
-// result that ended the wait among them, is answered first, for at most a
-// second.
+// Close ends the wait on the slot and the ceremony's clock.
 func (c *Ceremony) Close() {
 	c.timer.Stop()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	_ = c.srv.Shutdown(ctx)
-	_ = c.srv.Close() // what the second did not end
+	c.stop()
 }
 
 // finish ends the ceremony with r or err, unless it has ended already.
 func (c *Ceremony) finish(r Result, err error) {
 	c.once.Do(func() { c.done <- outcome{r, err} })
 }
-
-// landing is /cb: its script reads the fragment the page navigated with,
-// clears it, and posts it back to this origin.
-func (c *Ceremony) landing(w http.ResponseWriter, r *http.Request) {
-	if !c.local(r) {
-		http.NotFound(w, r)
-		return
-	}
-	w.Header().Set("Content-Security-Policy", landingCSP)
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Referrer-Policy", "no-referrer")
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprint(w, landingPage)
-}
-
-// result is /cb/result: the fragment, checked against the ceremony's state.
-func (c *Ceremony) result(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
-	if !c.local(r) || r.ParseForm() != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
-		return
-	}
-	if subtle.ConstantTimeCompare([]byte(r.PostForm.Get("state")), []byte(c.state)) != 1 {
-		http.Error(w, "this is not the ceremony beam is waiting for", http.StatusBadRequest)
-		c.finish(Result{}, ErrState)
-		return
-	}
-	res, err := parse(r.PostForm)
-	fmt.Fprint(w, "done, close this tab")
-	c.finish(res, err)
-}
-
-// local reports whether a request names this listener as its host, so a page
-// that rebinds a name to loopback cannot reach it.
-func (c *Ceremony) local(r *http.Request) bool {
-	return r.Host == "127.0.0.1:"+strconv.Itoa(c.Port)
-}
-
-const landingScript = `
-const out = document.getElementById("out");
-const fragment = location.hash.slice(1);
-history.replaceState(null, "", "/cb");
-fetch("/cb/result", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: fragment })
-  .then((r) => r.text())
-  .then((t) => { out.textContent = t; }, () => { out.textContent = "beam did not answer; run the command again"; });
-`
-
-const landingStyle = `body { font: 16px/1.5 system-ui, sans-serif; max-width: 34rem; margin: 4rem auto; padding: 0 1rem; }`
-
-var (
-	landingPage = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>beam</title><style>` + landingStyle +
-		`</style></head><body><p id="out">finishing…</p><script>` + landingScript + `</script></body></html>`
-	landingCSP = "default-src 'none'; script-src '" + cspHash(landingScript) + "'; style-src '" + cspHash(landingStyle) +
-		"'; connect-src 'self'"
-)
-
-func cspHash(s string) string {
-	h := sha256.Sum256([]byte(s))
-	return "sha256-" + base64.StdEncoding.EncodeToString(h[:])
-}
-
-func b64(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }

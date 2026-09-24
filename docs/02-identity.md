@@ -15,6 +15,8 @@ full. Validated as exactly 32 lowercase hex characters wherever it arrives from 
 
 A `label` is a human name chosen at join, defaulting to the short host name: 1–64
 Unicode scalar values, none of `/ \ { }` or C0/C1 controls. Rejected, never rewritten.
+A fleet name (`beam init --fleet-name`, shown by the passkey provider) is held to the
+same bound.
 Labels may collide; disambiguation is by id.
 
 ## The passkey and what it yields
@@ -144,40 +146,89 @@ waits on it.
 
 ## Ceremonies
 
-One static page at `https://beam.n10.is/` (source `worker/public/index.html`). The
-daemon opens a one-shot loopback listener on `127.0.0.1:<random port>`, builds a URL
-whose fragment carries `op`, `state`, `port`, `action`, `label`, `fingerprint`,
-`challenge` and, for `create`, `fleetName`, and opens the browser or prints the URL.
+One static page at `https://beam.n10.is/` (source `worker/public/index.html`) runs every
+ceremony, in whatever browser opens its URL: one on the machine, or a phone that scanned
+the QR code the CLI draws ([07](07-cli.md)). The result returns through a **slot** on the
+worker ([09](09-build-and-distribution.md)), sealed to a key only the daemon holds. One
+path for every ceremony and every machine; nothing listens on loopback.
+
+Per ceremony the daemon makes:
+
+```
+sk, pk   = a fresh X25519 key pair                          sk never leaves the daemon
+readKey  = 32 random bytes                                  never leaves the daemon
+slot     = unpadded base64url of SHA-256(readKey)[0:16]     22 characters, 128 bits
+```
+
+and builds a URL whose fragment is kept short, since it is drawn as a QR code
+([07](07-cli.md)):
+
+| Key | Value |
+|---|---|
+| `o` | what the tap approves: `c` creates the fleet's passkey (`create`); `a` adds the machine `l` (`get` over its member statement); `r` removes the machine `l` (`get` over its revocation) |
+| `s` | `slot` |
+| `k` | `pk`, unpadded base64url |
+| `c` | the challenge, unpadded base64url |
+| `l` | the label of the machine the tap is for |
+| `f` | its fingerprint, the first 16 hex characters of its `peerId`, without spaces |
+| `n` | the fleet name, for `o=c` only |
+
+The daemon writes `url.Values` order (keys sorted), spaces as `+`. Fragments are not
+sent in HTTP requests, so the worker never sees `pk` or the challenge. The daemon
+then waits on the slot, reading with `readKey` as its bearer token; since the slot is a
+hash of `readKey`, whoever sees the URL can write to the slot but cannot read it.
 
 The page:
 
-1. Renders `action`, `label` and `fingerprint` as text and a button.
+1. Renders a heading it composes from `o` and `l` ("Create your beam fleet", "Add
+   buildbox to your fleet", "Remove oldlaptop from your fleet"), the label, the
+   fingerprint in groups of four as `beam status` prints it, "Continue only if you
+   started this just now", and a button. A fragment without a known `o`, `s`, `k` and
+   `c` gets "This link is incomplete" and no button. It imports `k` first; a browser
+   whose Web Crypto has no X25519 is told so and gets no button.
 2. On click, calls `navigator.credentials.create({ publicKey: { rp: { id: "beam.n10.is", name: "beam" }, user: { id, name: fleetName, displayName: fleetName }, challenge, pubKeyCredParams: [ES256, Ed25519], authenticatorSelection: { residentKey: "required", userVerification: "required" }, extensions: { prf: {} } } })` or
    `navigator.credentials.get({ publicKey: { rpId: "beam.n10.is", challenge, userVerification: "required", extensions: { prf: { eval: { first: salt } } } } })`.
    After `create` it checks `getClientExtensionResults().prf?.enabled === true` and
    fails with `prf-unsupported` otherwise.
-3. Navigates to `http://127.0.0.1:<port>/cb#state=…&result=…` followed, for `ok`, by the
-   call's output: `credentialId`, `clientDataJSON` and, for `create`, `attestationObject`;
-   for `get`, `authenticatorData`, `signature` and `prf` (`prf.results.first`), each
-   unpadded base64url.
+3. Builds the result, `result=…` followed, for `ok`, by the call's output:
+   `credentialId`, `clientDataJSON` and, for `create`, `attestationObject`; for `get`,
+   `authenticatorData`, `signature` and `prf` (`prf.results.first`), each unpadded
+   base64url, the whole form-encoded. It seals that and `POST`s only the ciphertext to
+   `/v1/slots/<slot>` on its own origin:
 
-Fragments are not sent in HTTP requests, so the daemon serves a landing page at `/cb`
-(`Cache-Control: no-store`) whose inline script reads `location.hash`, clears it, and
-`POST`s the payload to `/cb/result` on the same loopback origin. The daemon answers only
-requests that name `127.0.0.1:<port>` as their host, validates `state` (another ends the
-ceremony `ceremony-state`), handles the result, answers "done, close this tab", and closes
-the listener. It verifies a `create` itself: `webauthn.create` over its challenge for
-`beam.n10.is` with user verification. Timeout five minutes. Result codes: `ok`,
-`prf-unsupported`, `cancelled`, `failed`.
+```
+sealed = HPKE base mode, single shot (RFC 9180):
+           KEM  DHKEM(X25519, HKDF-SHA256)   0x0020
+           KDF  HKDF-SHA256                  0x0001
+           AEAD AES-128-GCM                  0x0001
+           pkR  = pk,  info = "beam-ceremony:v1" ‖ slot,  aad = empty
+         = enc (32 bytes) ‖ ciphertext
+```
 
-Page CSP: `default-src 'none'; script-src 'sha256-…'; style-src 'sha256-…'`. It makes no
-requests. The daemon's `/cb` page has the same policy plus `connect-src 'self'`.
+4. Says what the slot answered: `201`, "done; the machine finishes on its own"; `409`,
+   the slot was answered first, from another device or by an earlier try on this one
+   ([01](01-model.md), The relayed result), with what to do if it was not the owner's.
+   The page writes every result, `cancelled` and `failed` included, so the daemon ends
+   the ceremony as soon as the owner does.
 
-**Headless.** A ceremony needs a browser that can reach `127.0.0.1:<port>` *on the
-machine running the daemon*. On a headless box that means forwarding the port from a
-machine with a browser: `ssh -L <port>:127.0.0.1:<port> box`, then open the printed URL
-there. A phone can act as the authenticator for that browser via WebAuthn's QR hybrid
-flow, but cannot replace the browser. This is stated as a prerequisite, not hidden.
+The daemon opens the sealed result with `sk` and the same `info`. A ciphertext that
+does not open ends the ceremony `ceremony-state`, as does a plaintext that is not a
+form with one of the four result codes, and a slot read already (`410`: its result went
+to a read whose answer never arrived). It then handles the result exactly as it arrived: `ok` results are verified, and
+nothing is trusted because the page sent it. It verifies a `create` itself:
+`webauthn.create` over its challenge for `beam.n10.is` with user verification. The key
+pair and `readKey` are dropped when the ceremony ends, however it ends. Timeout five
+minutes. Result codes: `ok`, `prf-unsupported`, `cancelled`, `failed`.
+
+The page seals with Web Crypto alone (X25519, HMAC-SHA-256 for HPKE's labelled HKDF,
+AES-GCM), so it runs where Web Crypto has X25519: Safari 17 and later on macOS, iOS and
+iPadOS; Chrome and Edge 133 and later, desktop and Android; Firefox 130 and later;
+Samsung Internet 29 and later. On iOS the PRF extension already needs iOS 18, so X25519
+narrows nothing there; on Android it is Chrome 133 (February 2025). The daemon opens
+with Go's `crypto/hpke`.
+
+Page CSP: `default-src 'none'; script-src 'sha256-…'; style-src 'sha256-…'; connect-src
+https://beam.n10.is/v1/slots/`. The one request it makes is the slot write.
 
 ## Flows
 

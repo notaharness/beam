@@ -3,6 +3,7 @@ module github.com/notaharness/beam
 go 1.27.1
 
 require (
+	github.com/boombuler/barcode v1.1.0
 	github.com/creack/pty v1.1.24
 	github.com/go-webauthn/webauthn v0.18.2
 	github.com/tailscale/tailcat v0.7.0

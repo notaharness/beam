@@ -6,10 +6,28 @@ identity code lives in n10.
 
 ## Process model
 
-Both shells use the shared connect-or-spawn helper (a small TypeScript port of the same
-rules in [06](06-control-socket.md)). The daemon outlives the app. "Quit and stop beam"
-sends `daemon.shutdown`; plain quit does not. An unexpected socket loss reconnects with
-backoff and shows "beam restarting…" in the machines panel.
+The desktop passes `BEAM_CONFIG_DIR` explicitly, as an absolute path, to the daemon it
+spawns and every process it starts, so that they all reach the same daemon.
+
+The desktop owns the lifetime of a daemon it started, and of no other:
+
+- On start it connects to the socket. A daemon that answers was started by someone else
+  (the CLI, a service, another app); the desktop uses it and leaves it running when it
+  quits.
+- Otherwise it spawns `beam daemon --exit-with-parent` as its own child, with stdin a
+  pipe it holds for as long as it runs ([07](07-cli.md)), stdout and stderr appended to
+  the app's log, and connects once the socket answers. Node's `spawn` pipes are close-on-exec, so no other child of the app
+  inherits the pipe. On quit it closes its end and waits for the child to exit; if the
+  app crashes or is killed, the kernel closes it, with the same effect.
+- A spawn that loses the lock race to another daemon exits 1; the desktop connects to
+  the winner and treats it as someone else's.
+
+On an unexpected socket loss the desktop shows "beam restarting…" in the machines panel
+and starts over as on start, retrying with backoff (500 ms → 30 s): connect, else spawn
+its own.
+
+The TUI uses the shared connect-or-spawn helper (a TypeScript port of the rules in
+[06](06-control-socket.md)); a daemon it starts is detached and outlives it.
 
 ## Machines panel
 
@@ -20,7 +38,8 @@ queue counts. Clicking a queue count opens `msg.queue`.
 
 First run (`status.enrolled == false`): one card, **Create a fleet** or **Join my
 fleet**, with a fleet name field for create. Each opens the ceremony URL with
-`shell.openExternal`, shows the stage names from [07](07-cli.md), handles the second
+`shell.openExternal` and draws it as a QR code beside the stages, so a phone can answer
+instead; it shows the stage names from [07](07-cli.md), handles the second
 `ceremony` event for init, and ends on the `*.wait` result. `prf-unsupported` shows
 "this passkey provider doesn't support what beam needs; try another".
 

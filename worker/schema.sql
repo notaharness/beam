@@ -15,3 +15,9 @@ CREATE TABLE IF NOT EXISTS entries (
   PRIMARY KEY (fleet_id, seq),
   UNIQUE (fleet_id, statement_hash)
 );
+CREATE TABLE IF NOT EXISTS slots (
+  slot_id        TEXT PRIMARY KEY,
+  sealed         BLOB,
+  created_at     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS slots_created ON slots (created_at);

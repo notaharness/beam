@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -592,33 +591,38 @@ func TestStatusAndPeers(t *testing.T) {
 	}
 }
 
-// docs/07: beam daemon --detach returns at once and leaves a daemon running,
-// logging to daemon.log.
+// docs/06: beam daemon --detach, however spelled, returns at once and leaves
+// one daemon running with the options it was given, logging to daemon.log:
+// it reads the fake worker's directory, not beam.n10.is.
 func TestDaemonDetach(t *testing.T) {
-	m := newMachine(t, "alpha")
-	if r := m.beam("", "daemon", "--detach"); r.code != 0 {
-		t.Fatalf("detach: %+v", r)
-	}
-	waitFor(t, 5*time.Second, "the daemon's socket", func() bool {
-		c, err := net.Dial("unix", m.paths().Socket) // not Connect, which would spawn one
-		if err == nil {
-			c.Close()
-		}
-		return err == nil
-	})
-	c, err := control.Connect(m.paths(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Close()
-	if err := c.Call("status", nil, nil); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.Call("daemon.shutdown", nil, nil); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(m.dir, "daemon.log")); err != nil {
-		t.Errorf("no daemon.log: %v", err)
+	for _, detach := range []string{"--detach", "--detach=true"} {
+		t.Run(detach, func(t *testing.T) {
+			initFleet(t, "alpha")
+			reads := worker.Reads(owner.Credential().FleetID())
+			m := newMachine(t, "beta")
+			if r := m.beam("", "daemon", detach, "--derp-map", relay.MapURL, "--directory", dirURL); r.code != 0 {
+				t.Fatalf("detach: %+v", r)
+			}
+			t.Cleanup(func() {
+				if c, err := control.Dial(m.paths()); err == nil {
+					c.Call("daemon.shutdown", nil, nil)
+					c.Close()
+				}
+			})
+			waitFor(t, 5*time.Second, "the daemon's socket", func() bool { return answering(m) })
+			waitFor(t, 10*time.Second, "the daemon to read the fake worker", func() bool {
+				return worker.Reads(owner.Credential().FleetID()) > reads
+			})
+			var st struct {
+				Enrolled bool `json:"enrolled"`
+			}
+			if r := m.beam("", "status", "--json"); r.code != 0 || json.Unmarshal([]byte(r.out), &st) != nil || !st.Enrolled {
+				t.Fatalf("status: %+v", r)
+			}
+			if _, err := os.Stat(filepath.Join(m.dir, "daemon.log")); err != nil {
+				t.Errorf("no daemon.log: %v", err)
+			}
+		})
 	}
 }
 

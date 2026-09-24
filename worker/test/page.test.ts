@@ -14,11 +14,12 @@ function only(tag: string): string {
 }
 
 // docs/09 Ceremony page headers: the policy allows exactly the page's one
-// inline script and one inline style, and nothing else.
+// inline script and one inline style, and a connection to the slot route
+// alone.
 describe("the ceremony page", () => {
   it("is served under a policy hashing its script and style", async () => {
     const csp = headers.match(/Content-Security-Policy: (.*)/)?.[1];
-    expect(csp).toBe(`default-src 'none'; script-src '${await hash(only("script"))}'; style-src '${await hash(only("style"))}'`);
+    expect(csp).toBe(`default-src 'none'; script-src '${await hash(only("script"))}'; style-src '${await hash(only("style"))}'; connect-src https://beam.n10.is/v1/slots/`);
     expect(headers).toMatch(/^\/\*\n/);
     for (const h of ["Referrer-Policy: no-referrer", "X-Frame-Options: DENY", "Cache-Control: public, max-age=300"]) {
       expect(headers).toContain(h);

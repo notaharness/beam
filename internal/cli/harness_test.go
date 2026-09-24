@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -39,7 +40,12 @@ var (
 func TestMain(m *testing.M) {
 	// Connect-or-spawn runs this binary as `beam daemon --detach`.
 	if len(os.Args) > 1 && os.Args[1] == "daemon" {
+		devderp.Isolate()
+		devderp.ForceRelay()
 		os.Exit(cli.Main(os.Args[1:], os.Environ(), os.Stdin, os.Stdout, os.Stderr))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "parent" {
+		parent(os.Args[2:])
 	}
 	devderp.Isolate()
 	devderp.ForceRelay()
@@ -181,13 +187,33 @@ func (m *machine) start(t *testing.T) {
 	var once sync.Once
 	m.stop = func() { once.Do(func() { cancel(); <-done }) }
 	t.Cleanup(func() { m.stop() })
-	waitFor(t, 5*time.Second, "socket", func() bool {
-		c, err := net.Dial("unix", m.paths().Socket)
-		if err == nil {
-			c.Close()
-		}
-		return err == nil
-	})
+	waitFor(t, 5*time.Second, "socket", func() bool { return answering(m) })
+}
+
+// answering reports whether m's daemon answers on its socket; unlike
+// control.Connect, it never spawns one.
+// process runs m's daemon in a process of its own, on the dev relay and the
+// fake worker, with extra as its descriptors from 3 on; exited closes once it
+// has exited, and the test's end kills it.
+func (m *machine) process(t *testing.T, extra ...*os.File) (d *exec.Cmd, exited <-chan struct{}) {
+	t.Helper()
+	d = exec.Command(os.Args[0], "daemon", "--derp-map", relay.MapURL, "--directory", dirURL)
+	d.Env, d.Stderr, d.ExtraFiles = append(os.Environ(), "BEAM_CONFIG_DIR="+m.dir), os.Stderr, extra
+	if err := d.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { d.Wait(); close(done) }()
+	t.Cleanup(func() { d.Process.Kill(); <-done })
+	return d, done
+}
+
+func answering(m *machine) bool {
+	c, err := net.Dial("unix", m.paths().Socket)
+	if err == nil {
+		c.Close()
+	}
+	return err == nil
 }
 
 // fleet makes machines that all know each other and starts them.

@@ -10,7 +10,7 @@ import (
 	"github.com/notaharness/beam/internal/identity"
 )
 
-// Result is what the page sent back for an ok ceremony. Create fills
+// Result is what the page sealed to the slot for an ok ceremony. Create fills
 // AttestationObject; Get fills AuthenticatorData, Signature and PRF, the
 // extension's output for identity.PRFSalt.
 type Result struct {
@@ -25,7 +25,7 @@ type Result struct {
 // ErrBadResult is an ok result that is not one.
 var ErrBadResult = errors.New("the page's result is malformed")
 
-// parse reads the callback's fields (docs/02, Ceremonies; binary fields are
+// parse reads a result's fields (docs/02, Ceremonies; binary fields are
 // unpadded base64url).
 func parse(f url.Values) (Result, error) {
 	switch f.Get("result") {
@@ -34,8 +34,10 @@ func parse(f url.Values) (Result, error) {
 		return Result{}, ErrPRFUnsupported
 	case "cancelled":
 		return Result{}, ErrCancelled
-	default:
+	case "failed":
 		return Result{}, ErrFailed
+	default:
+		return Result{}, ErrState // not a result
 	}
 	r := Result{CredentialID: f.Get("credentialId")}
 	for _, field := range []struct {

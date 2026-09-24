@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 )
 
 // Exec channel bytes (docs/04).
@@ -48,7 +49,16 @@ func Exec(c *Conn, h Header, sp Spawn) {
 		}
 		close(openerDone)
 	}()
-	drained.Wait()
+	outputDone := make(chan struct{})
+	go func() { drained.Wait(); close(outputDone) }()
+	select {
+	case <-outputDone:
+	case <-tornDown: // a process that left the group may hold the output open
+		select {
+		case <-outputDone:
+		case <-time.After(time.Second):
+		}
+	}
 	<-g.exited
 	w.finish(ended(g.status, &overrun), openerDone)
 	<-tornDown // the group, which may outlive its leader, before the reap

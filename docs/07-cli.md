@@ -12,7 +12,7 @@ beam join   [--label NAME]
 beam revoke <peer>
 beam fleet reset
 
-beam daemon [--detach] [--derp-map URL]
+beam daemon [--detach | --exit-with-parent] [--derp-map URL]
 beam status [--json]
 beam peers  [--json]
 beam peer alias <peer> <alias|->
@@ -29,9 +29,12 @@ beam version
 
 ## Enrolment
 
-Each ceremony prints its URL and opens the browser when one is available. Output shows
-stages: `starting daemon`, `preparing network`, `waiting for your passkey (create)`,
-`waiting for your passkey (sign)`, `reading directory`, `publishing`.
+Each ceremony draws its URL as a QR code when stdout is a terminal, prints the URL under
+it whether or not, and opens the browser when the machine has one (a display, and not an
+SSH session). The owner finishes in whichever they like: the browser that opened, or a
+phone that scanned the code. Nothing else differs between a desktop and a headless
+machine. Output shows stages: `starting daemon`, `preparing network`, `waiting for your
+passkey (create)`, `waiting for your passkey (sign)`, `reading directory`, `publishing`.
 
 `beam init` ends:
 
@@ -58,8 +61,50 @@ acknowledged by 2 of 3 peers      (offline peers learn when they connect)
 
 `beam fleet reset` asks `type "reset" to confirm`.
 
-On a headless machine a ceremony prints the URL and:
-`forward the port first: ssh -L 7xxx:127.0.0.1:7xxx <this machine>`.
+A ceremony shows:
+
+```
+waiting for your passkey (sign)
+⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿
+⣿⡏⠉⠉⠉⢹… (the QR code, 28 × 14 for a typical URL)
+https://beam.n10.is/#c=…&f=b7f39a210c4e55d1&k=…&l=buildbox&o=a&s=…
+scan with your phone or open the link; approve only a page that shows what you ran
+```
+
+The QR code encodes the URL byte for byte at error correction level L. Each character
+cell is a braille pattern (U+2800–U+28FF) holding 2 × 4 modules, a light module a raised
+dot, drawn white on black by SGR whatever the terminal's theme, with a three-module
+quiet zone. A typical URL is version 8, 55 modules with the quiet zone, 28 columns by 14
+rows; a 64-character ASCII label is version 9 (30 × 15), and `init` with a 64-character
+label and fleet name version 11 (34 × 17). A non-ASCII label, which percent-encoding
+triples, makes it larger. The URL below it is the fallback: it is printed on every
+output, a terminal's or a pipe's. The page on the phone checks nothing against the
+terminal: the owner compares the action, machine and fingerprint it shows with what they
+ran ([01](01-model.md), The relayed result).
+
+## The daemon
+
+`beam daemon` runs in the foreground until `daemon.shutdown`, SIGTERM or SIGINT;
+`--detach` is connect-or-spawn's ([06](06-control-socket.md)). It first marks every
+descriptor it inherited above stderr close-on-exec, so no process it starts, for a peer
+or as the detached daemon, inherits one from whatever started beam.
+
+`--exit-with-parent` ties the daemon to the process that started it, through its stdin:
+
+- stdin must be a pipe or a socket. A terminal, a file or `/dev/null` is refused before
+  the daemon starts: usage error, exit 2. So is `--detach` with it.
+- The daemon reads stdin and discards what it reads. At end of file, or a read error,
+  it shuts down as it does on SIGTERM: streams end, the lock and socket are released;
+  then it logs `stopped: stdin ended: the parent has exited` and exits 0. SIGTERM and
+  SIGINT during that shutdown are handled as ever, not fatal.
+- The daemon logs to stderr. A parent that gives it pipes for stdout or stderr drains
+  them while it runs; once the parent is gone, a write to them fails and is dropped
+  (the daemon ignores SIGPIPE), so the shutdown still completes.
+- The parent holds the write end and never writes to it. When the parent exits, however
+  it exits (quits, crashes, is killed), the kernel closes its descriptors, and the
+  daemon sees end of file, on Linux and macOS alike (D53).
+- The write end must stay in the parent alone: a process that inherits it keeps the
+  daemon alive.
 
 ## Streams
 

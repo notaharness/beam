@@ -33,7 +33,7 @@ jobs:
           npx wrangler d1 execute beam --local --file schema.sql
           npx wrangler dev --local --port 8799 &
           for i in $(seq 60); do curl -s -o /dev/null http://127.0.0.1:8799/ && break; sleep 1; done
-          BEAM_WORKER_URL=http://127.0.0.1:8799 go test -tags "$(cat ../build-tags.txt),beamtest" ../internal/directory
+          BEAM_WORKER_URL=http://127.0.0.1:8799 go test -tags "$(cat ../build-tags.txt),beamtest" ../internal/directory ../internal/ceremony
 
   darwin:
     runs-on: macos-latest

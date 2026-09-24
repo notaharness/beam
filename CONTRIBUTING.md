@@ -47,8 +47,9 @@ the work, and docs/09 describes it.
    `gh run watch`. The whole workflow runs without a GitHub release and with
    `npm publish --dry-run`, and its log says whose npm token would publish, if any.
 3. `git tag vX.Y.Z main && git push origin vX.Y.Z`. Job `release` checks the tag is
-   canonical semver, builds the four binaries, packs the five npm packages, checks npm
-   would publish each at the binary's version, and creates the GitHub release. Job
+   canonical semver, builds the four binaries and the four of the test kit, packs the five
+   npm packages, checks npm would publish each at the binary's version, and creates the
+   GitHub release with all eight and `SHA256SUMS`. Job
    `publish` publishes the four platform packages, then `@notaharness/beam`, with
    provenance.
 4. Check: `gh release view vX.Y.Z`; `npm view @notaharness/beam version`; and on a

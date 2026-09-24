@@ -1,7 +1,8 @@
 // The beam directory (docs/02, docs/09): an append-only log of sealed records
 // per fleet. Appends carry a passkey assertion over the record's statement
 // hash, verified here; reads carry the fleet's read token. The ceremony page
-// is a static asset.
+// is a static asset, and returns its sealed result to the daemon through a
+// slot here.
 import { verifyAuthenticationResponse } from "@simplewebauthn/server";
 import { isoBase64URL } from "@simplewebauthn/server/helpers";
 
@@ -16,6 +17,9 @@ const MAX_BODY = 16384;
 const MAX_BLOB = 8192;
 const MAX_ENTRIES = 5000;
 const PAGE = 500;
+const SLOT_TTL = 5 * 60_000; // the ceremony's timeout
+const SLOT_WAIT = 25_000;
+const SLOT_POLL = 500;
 
 class Refusal extends Error {
   constructor(
@@ -50,7 +54,10 @@ export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
     const append = url.pathname.match(/^\/v1\/fleets\/([0-9a-f]{64})\/entries$/);
+    const slot = url.pathname.match(/^\/v1\/slots\/([A-Za-z0-9_-]{22})$/);
     try {
+      if (req.method === "POST" && slot) return await writeSlot(env, req, slot[1]);
+      if (req.method === "GET" && slot) return await readSlot(env, req, slot[1]);
       if (req.method === "POST" && url.pathname === "/v1/fleets") return await register(env, await body(req));
       if (req.method === "GET" && url.pathname === "/v1/entries") return await read(env, req, url);
       if (req.method === "POST" && append) return await appendEntry(env, append[1], await body(req));
@@ -139,6 +146,55 @@ async function appendEntry(env: Env, fleetId: string, req: any): Promise<Respons
   return json(200, { seq });
 }
 
+// POST /v1/slots/:slot: a ceremony's sealed result, from whoever has the
+// ceremony's URL. One write per slot: the id stays taken for five minutes
+// from it, read or not, so a late second writer learns it lost.
+async function writeSlot(env: Env, req: Request, slot: string): Promise<Response> {
+  await limit(env, client(req, "write"));
+  const { sealed } = await body(req);
+  const b = bytes(sealed);
+  if (typeof sealed !== "string" || b.length === 0) throw new Refusal(400, "params");
+  if (b.length > MAX_BLOB) throw new Refusal(413, "sealed-too-large");
+  const now = Date.now();
+  const [, put] = await env.DB.batch([
+    env.DB.prepare("DELETE FROM slots WHERE created_at <= ?").bind(now - SLOT_TTL),
+    env.DB.prepare("INSERT INTO slots (slot_id, sealed, created_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING").bind(slot, b, now),
+  ]);
+  if (put.meta.changes === 0) throw new Refusal(409, "answered");
+  return json(201, {});
+}
+
+// GET /v1/slots/:slot: the daemon's read, by the key the slot is the hash
+// of. It waits up to SLOT_WAIT for the write, only reading meanwhile; the
+// ciphertext goes with the one read that takes it.
+async function readSlot(env: Env, req: Request, slot: string): Promise<Response> {
+  await limit(env, client(req, "read"));
+  const key = bytes((req.headers.get("Authorization") ?? "").replace(/^Bearer /, ""));
+  if (key.length !== 32 || b64((await sha256(key)).slice(0, 16)) !== slot) throw new Refusal(401, "unauthorized");
+  const peek = () => env.DB.prepare("SELECT sealed IS NOT NULL AS full FROM slots WHERE slot_id = ? AND created_at > ?")
+    .bind(slot, Date.now() - SLOT_TTL).first<{ full: number }>();
+  let row = await peek();
+  for (const deadline = Date.now() + SLOT_WAIT; !row && Date.now() < deadline; row = await peek()) {
+    await new Promise((ok) => setTimeout(ok, SLOT_POLL));
+  }
+  if (!row) return new Response(null, { status: 204 });
+  if (!row.full) throw new Refusal(410, "read");
+  const live = Date.now() - SLOT_TTL;
+  const [got] = await env.DB.batch<{ sealed: ArrayBuffer | null }>([
+    env.DB.prepare("SELECT sealed FROM slots WHERE slot_id = ? AND created_at > ?").bind(slot, live),
+    env.DB.prepare("UPDATE slots SET sealed = NULL WHERE slot_id = ? AND created_at > ?").bind(slot, live),
+  ]);
+  const sealed = got.results[0]?.sealed;
+  if (!sealed) throw new Refusal(410, "read"); // another read took it, or it expired, since the peek
+  return json(200, { sealed: b64(sealed) });
+}
+
+// client is the rate key of a request's address, for slot reads or writes:
+// counted apart, so reads cannot spend the one write a phone makes.
+function client(req: Request, route: "read" | "write"): string {
+  return `slot-${route}:` + (req.headers.get("CF-Connecting-IP") ?? "");
+}
+
 // verified checks an entry's shape and its assertion: by credentialId, under
 // pk, over SHA-256("beam-<kind>:v1" ‖ statementHash), with user verification.
 async function verified(credentialId: string, pk: Uint8Array<ArrayBuffer>, e: Entry) {
@@ -193,11 +249,14 @@ async function body(req: Request): Promise<any> {
     }
     text += decoder.decode(r.value, { stream: true });
   }
+  let v: unknown;
   try {
-    return JSON.parse(text + decoder.decode());
+    v = JSON.parse(text + decoder.decode());
   } catch {
     throw new Refusal(400, "params");
   }
+  if (typeof v !== "object" || v === null || Array.isArray(v)) throw new Refusal(400, "params");
+  return v;
 }
 
 function json(status: number, v: unknown): Response {

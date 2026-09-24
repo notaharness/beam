@@ -11,18 +11,20 @@ import (
 	"time"
 )
 
-// docs/10: the one boundary the test authenticator cannot exercise. The real
-// page, in Chromium with a virtual authenticator that does PRF
-// (worker/test/callback.mjs), creates a passkey and then signs with it; each
-// time /cb lands the fragment and the ceremony completes with a result that
+// docs/10 Browser ceremony: the one boundary the test authenticator cannot
+// exercise. The real page, in Chromium with a virtual authenticator that does
+// PRF (worker/test/ceremony.mjs), creates a passkey and then signs with it;
+// each time it seals its result with Web Crypto and writes it to the slot,
+// and the ceremony opens it with crypto/hpke and completes with a result that
 // verifies. It needs `npm ci` and `npx playwright install chromium` in
 // worker/, and skips without Playwright there.
-func TestBrowserCallback(t *testing.T) {
+func TestBrowserCeremony(t *testing.T) {
 	if _, err := os.Stat("../../worker/node_modules/playwright"); err != nil {
 		t.Skip("no Playwright in worker/node_modules")
 	}
 	t.Setenv("BEAM_TEST_AUTHENTICATOR", "") // the browser answers
-	browser := exec.Command("node", "test/callback.mjs")
+	w := worker(t)
+	browser := exec.Command("node", "test/ceremony.mjs", w)
 	browser.Dir, browser.Stderr = "../../worker", os.Stderr
 	urls, _ := browser.StdinPipe()
 	out, _ := browser.StdoutPipe()
@@ -36,17 +38,17 @@ func TestBrowserCallback(t *testing.T) {
 	finished := bufio.NewScanner(out)
 	run := func(req Request) Result {
 		t.Helper()
-		c, err := Start(req)
+		c, err := Start(req, w)
 		if err != nil {
 			t.Fatal(err)
 		}
 		fmt.Fprintln(urls, c.URL)
 		r, err := c.Wait(ctx)
 		if err != nil {
-			t.Fatalf("%s: %v", req.Op, err)
+			t.Fatalf("%s: %v", req.Kind, err)
 		}
 		if !finished.Scan() || finished.Text() != "done" {
-			t.Fatalf("%s: the page did not finish", req.Op)
+			t.Fatalf("%s: the page did not finish", req.Kind)
 		}
 		return r
 	}
@@ -56,12 +58,11 @@ func TestBrowserCallback(t *testing.T) {
 		return b
 	}
 	c1, c2 := challenge(), challenge()
-	cred, err := run(Request{Op: Create, Action: "Create your beam fleet", Label: "laptop", Fingerprint: "b7f3 9a21 0c4e 55d1",
-		Challenge: c1, FleetName: "beam"}).Credential(c1)
+	cred, err := run(Request{Kind: Create, Label: "laptop", PeerID: peerID, Challenge: c1, FleetName: "beam"}).Credential(c1)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	got := run(Request{Op: Get, Action: "Add laptop to your fleet", Label: "laptop", Fingerprint: "b7f3 9a21 0c4e 55d1", Challenge: c2})
+	got := run(Request{Kind: Add, Label: "laptop", PeerID: peerID, Challenge: c2})
 	if err := cred.VerifyAssertion(got.Assertion(), c2); err != nil {
 		t.Errorf("get: %v", err)
 	}

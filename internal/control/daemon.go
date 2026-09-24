@@ -107,6 +107,7 @@ func Run(ctx context.Context, o Options) error {
 	}
 	close(d.started)
 	<-ctx.Done()
+	ln.Close() // no client starts anything on a daemon that is stopping
 	d.close()
 	return nil
 }
@@ -249,7 +250,11 @@ func (d *daemon) unenroll(forget bool) error {
 	return errors.Join(err, e.store.Close())
 }
 
+// close ends the client connections and the enrolment, after any change of
+// enrolment under way, whose own teardown it waits for.
 func (d *daemon) close() {
+	d.enrolling.Lock()
+	defer d.enrolling.Unlock()
 	d.mu.Lock()
 	e := d.en
 	for c := range d.conns {

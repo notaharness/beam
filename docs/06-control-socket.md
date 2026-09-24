@@ -1,11 +1,11 @@
 # 06 · The control socket
 
 The daemon's one local interface: `$BEAM_DIR/run/beam.sock`, mode `0600`. (The tunnel
-port and the transient ceremony loopback listener are the other two things it listens
-on.) Override with `BEAM_SOCKET`, which is also what the daemon injects into remote
-processes; `BEAM_CONFIG_DIR` selects the directory and therefore the default path. A
-path longer than a Unix socket address holds (107 bytes on Linux, 103 on macOS) is
-refused before anything else, naming `BEAM_SOCKET`.
+port is the only other thing it listens on; a ceremony's result comes back through the
+worker, [02](02-identity.md).) Override with `BEAM_SOCKET`, which is also what the
+daemon injects into remote processes; `BEAM_CONFIG_DIR` selects the directory and
+therefore the default path. A path longer than a Unix socket address holds (107 bytes on
+Linux, 103 on macOS) is refused before anything else, naming `BEAM_SOCKET`.
 
 ## Lifecycle
 
@@ -17,16 +17,22 @@ refused before anything else, naming `BEAM_SOCKET`.
   everything else is `not-enrolled`.
   The socket is ready before transport starts; `status.ready` reports transport state.
   `status` answers at once; every other op waits until the daemon has started.
-- **Connect-or-spawn**, one shared helper used by the CLI and the desktop: connect; on
+- **Connect-or-spawn**, one shared helper used by the CLI and n10's TUI: connect; on
   `ECONNREFUSED`/`ENOENT` run `beam daemon --detach`, wait ≤ 5 s for the socket, connect.
-  A spawn that loses the lock race exits 1 and the helper simply connects to the winner.
-  `--detach` starts the daemon in a new session, its output appended to
-  `$BEAM_DIR/daemon.log`, and returns.
-- **Shutdown.** Only an explicit `daemon.shutdown` or SIGTERM stops the daemon, whoever
-  started it. Clients treat a closed socket after `daemon.shutdown` as deliberate and do
-  not respawn until asked; any other disconnect is unexpected. The desktop's port of the
-  helper reconnects with backoff (500 ms → 30 s, [08](08-desktop.md)); the CLI is one
-  call per process and reconnects never.
+  `--detach` starts `beam daemon` with the same options but `--detach` in a new session,
+  its output appended to `$BEAM_DIR/daemon.log`, and returns 0 without waiting for it. A
+  daemon that loses the lock race logs `another daemon holds $BEAM_DIR` there and exits
+  1; the helper connects to the winner either way.
+- **Shutdown.** `daemon.shutdown`, SIGTERM or SIGINT stop the daemon, whoever started
+  it; so does the end of its stdin for one started with `--exit-with-parent`
+  ([07](07-cli.md)). Stopping, the daemon closes its socket first, lets a fleet reset or
+  re-join under way finish, then refuses new streams, ends every stream it serves and
+  waits up to 10 s for each to tear down ([04](04-streams.md)), so a session's teardown
+  completes before the daemon exits. An open `pty` session holds that for its 5 s grace.
+  A fleet reset and a re-join end the streams the same way. Clients treat a closed
+  socket after `daemon.shutdown` as deliberate and do not respawn until asked; any other
+  disconnect is unexpected. n10 recovers from one as [08](08-desktop.md) says; the CLI
+  is one call per process and reconnects never.
 
 ## Two kinds of connection
 
@@ -68,8 +74,10 @@ pinnedAt, queue: { outbound, inbound, refused } }` (counts, not lists).
 
 ### Ceremonies
 
-Every ceremony op returns a `ceremonyUrl` the client opens or prints; the matching
-`*.wait` blocks. One ceremony at a time (`busy`).
+Every ceremony op returns a `ceremonyUrl`, the whole URL the owner's browser opens,
+fragment included: a client opens it, prints it, draws it as a QR code for a phone to
+scan, or all three ([07](07-cli.md), [08](08-desktop.md)). The matching `*.wait` blocks
+while the daemon waits on the ceremony's slot. One ceremony at a time (`busy`).
 
 | op | request | result |
 |---|---|---|
@@ -82,12 +90,14 @@ Every ceremony op returns a `ceremonyUrl` the client opens or prints; the matchi
 | `ceremony.cancel` | | `{}` |
 | `fleet.reset` | `{ confirm: "reset" }` | `{}` |
 
-While a `*.wait` runs, its client also gets `stage { stage }` events as the daemon reaches
-`reading directory` and `publishing` ([07](07-cli.md)). A `*.wait` without its `*.start`
-under way is `ceremony-state`. `published: "pending"` means the directory append is queued
-in `state.db` and retried (a write the worker refuses outright is dropped from the queue
-and logged); event `directory.published { kind, peerId }` fires when it lands. `join`
-fails outright with `directory-unavailable` because it cannot proceed without the read.
+While a `*.wait` runs, its client also gets `stage { stage }` events as the daemon
+reaches `reading directory` and `publishing` ([07](07-cli.md)). A `*.wait` without its
+`*.start` under way is `ceremony-state`, and so is a slot answered with a result that
+does not open under the ceremony's key ([02](02-identity.md)). `published: "pending"`
+means the directory append is queued in `state.db` and retried (a write the worker
+refuses outright is dropped from the queue and logged); event `directory.published {
+kind, peerId }` fires when it lands. `join` fails outright with `directory-unavailable`
+because it cannot proceed without the read.
 
 ### Messages
 

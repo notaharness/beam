@@ -54,8 +54,12 @@ jobs:
         with:
           name: binaries
           path: dist/beam-*
+      - name: the test kit's binaries join the release, with every binary's checksum
+        run: |
+          sleep 2 | dist/beamtest-linux-amd64 testkit --exit-with-parent | jq -e '.derpMap and .directory'
+          cd dist && sha256sum beam-* beamtest-* > SHA256SUMS
       - if: github.event_name == 'push'
-        run: gh release create "$GITHUB_REF_NAME" dist/beam-* --verify-tag --generate-notes --prerelease="$PRERELEASE"
+        run: gh release create "$GITHUB_REF_NAME" dist/beam-* dist/beamtest-* dist/SHA256SUMS --verify-tag --generate-notes --prerelease="$PRERELEASE"
         env:
           GH_TOKEN: ${{ github.token }}
           PRERELEASE: ${{ steps.tag.outputs.prerelease }}

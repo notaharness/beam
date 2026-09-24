@@ -55,8 +55,12 @@ After joining, compare the `fleet xxxx xxxx xxxx xxxx` fingerprint in the output
 `beam status` on the first machine. They must match. If they differ, run
 `beam fleet reset` on the joining machine.
 
-The commands open a browser or print a ceremony URL. On a headless machine, follow the
-printed SSH port-forward instruction before opening the URL on your local machine.
+The commands open a browser when the machine has one, and print the ceremony URL, with a
+QR code above it on a terminal. On a headless machine, scan the code with your phone and
+approve there; the result comes back through `beam.n10.is`, sealed to a key only the
+daemon holds. Anyone who scans the code can answer it too, so show it only where you
+alone can see it, and approve only a page that names the machine you are enrolling.
+
 The daemon starts when needed; `beam peers` shows whether the machines have connected.
 
 From the laptop:
