@@ -80,8 +80,7 @@ scan with your phone or open the link; approve only a page that shows what you r
 
 Action, Machine and Machine fingerprint are read from the URL's fragment and are what
 the page shows for it, the Action in the page's words ([02](02-identity.md),
-Ceremonies): `Create fleet passkey for “{n}”`, `Add “{l}” to fleet`, `Remove “{l}” from
-fleet`.
+Ceremonies).
 
 The QR code encodes the URL byte for byte at error correction level L. Each character
 cell is a braille pattern (U+2800–U+28FF) holding 2 × 4 modules, a light module a raised
@@ -100,8 +99,9 @@ ran ([01](01-model.md), The relayed result).
 and any detail on the first line of stderr (`prf-unsupported: …`), then what it means.
 The daemon's detail for `prf-unsupported` names the field the passkey's result lacked:
 `prf.enabled` from a `create`, a 32-byte `prf.results.first` from a `get`. A token not
-in the table reads as `internal`. An error that is no token, the connection to the
-daemon lost during the wait, reads as the last row.
+in the table reads as `internal`. The connection to the daemon lost during the wait
+reads as the last row; so does a daemon that stops meanwhile, which answers no op that
+fails while it stops ([06](06-control-socket.md)).
 
 | Token | Explanation |
 |---|---|
@@ -124,19 +124,21 @@ daemon lost during the wait, reads as the last row.
 | `internal` | beam could not complete this request. Check the details and this machine’s fleet status before retrying. |
 | connection lost | The connection to beam was interrupted. Check beam status before retrying; the request may have completed. |
 
-`prf-unsupported` goes on, for `join` and `revoke`, `Use the same fleet passkey; a new
-passkey creates a different fleet.`, and then for every command lists what the page and
-the passkey need, from what vendors document ([02](02-identity.md)), not a tested
-matrix:
+`prf-unsupported` goes on with the line the page shows: for `init`, `A passkey may have
+been saved, but fleet creation is not complete.`; for `join` and `revoke`, `Use the same
+fleet passkey; a new passkey creates a different fleet.` Then it lists what the page and
+the passkey need, as vendors document it, not a tested matrix:
 
 ```
-beam needs WebAuthn PRF from the browser, the operating system and the passkey provider together, and X25519 in Web Crypto to seal the page's answer:
-  Safari 18.4+ (iOS and iPadOS 18.4+): both; Safari 18.0 to 18.3 has PRF without X25519
-  Chrome 133+: X25519; PRF depends on the provider (Google Password Manager: unverified)
-  Firefox 139+ on desktop: both; Firefox 130 to 138 has X25519 alone (Android, iOS: unverified)
-  1Password for iOS 8.10.74+ returns PRF on iOS 18
-  security keys: WebAuthn PRF, not hmac-secret alone (firmware minimums: unverified)
-  unverified: Windows Hello, Bitwarden, Proton Pass, Edge, Samsung Internet
+beam needs WebAuthn PRF from the browser, the operating system and the passkey provider together, and X25519 in Web Crypto to seal the page’s answer. What vendors document, not tested end to end:
+  Safari 18.4+: PRF and X25519; Safari 18.0 to 18.3 has PRF without X25519
+  Apple Passwords: iOS and iPadOS 18.4+ with Safari 18.4+; macOS Safari 18.4+ also needs a compatible provider (unverified: the oldest macOS and provider pairing)
+  Chrome 133+: X25519; PRF depends on the provider (unverified: Chrome’s first PRF release, Google Password Manager)
+  Firefox 139+ on desktop: PRF and X25519; Firefox 130 alone does not promise PRF (unverified: Android, iOS)
+  1Password for iOS 8.10.74+: provider PRF on iOS 18; the page also needs iOS 18.4+ for X25519
+  1Password browser extension and Android: PRF since betas 2.26.1 and 8.10.38 (unverified: stable versions)
+  security keys: WebAuthn PRF, not hmac-secret alone (unverified: firmware and OS minimums)
+  unverified: Windows Hello, Bitwarden, Proton Pass, other providers, Edge, Samsung Internet
 ```
 
 ## The daemon

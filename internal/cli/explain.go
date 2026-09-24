@@ -30,38 +30,48 @@ var explanations = map[string]string{
 }
 
 const (
-	lost = "The connection to beam was interrupted. Check beam status before retrying; the request may have completed."
-	same = "Use the same fleet passkey; a new passkey creates a different fleet."
+	lost  = "The connection to beam was interrupted. Check beam status before retrying; the request may have completed."
+	same  = "Use the same fleet passkey; a new passkey creates a different fleet."
+	saved = "A passkey may have been saved, but fleet creation is not complete."
 	// needs is what the page and the passkey need, as vendors document it.
-	needs = `beam needs WebAuthn PRF from the browser, the operating system and the passkey provider together, and X25519 in Web Crypto to seal the page's answer:
-  Safari 18.4+ (iOS and iPadOS 18.4+): both; Safari 18.0 to 18.3 has PRF without X25519
-  Chrome 133+: X25519; PRF depends on the provider (Google Password Manager: unverified)
-  Firefox 139+ on desktop: both; Firefox 130 to 138 has X25519 alone (Android, iOS: unverified)
-  1Password for iOS 8.10.74+ returns PRF on iOS 18
-  security keys: WebAuthn PRF, not hmac-secret alone (firmware minimums: unverified)
-  unverified: Windows Hello, Bitwarden, Proton Pass, Edge, Samsung Internet`
+	needs = `beam needs WebAuthn PRF from the browser, the operating system and the passkey provider together, and X25519 in Web Crypto to seal the page’s answer. What vendors document, not tested end to end:
+  Safari 18.4+: PRF and X25519; Safari 18.0 to 18.3 has PRF without X25519
+  Apple Passwords: iOS and iPadOS 18.4+ with Safari 18.4+; macOS Safari 18.4+ also needs a compatible provider (unverified: the oldest macOS and provider pairing)
+  Chrome 133+: X25519; PRF depends on the provider (unverified: Chrome’s first PRF release, Google Password Manager)
+  Firefox 139+ on desktop: PRF and X25519; Firefox 130 alone does not promise PRF (unverified: Android, iOS)
+  1Password for iOS 8.10.74+: provider PRF on iOS 18; the page also needs iOS 18.4+ for X25519
+  1Password browser extension and Android: PRF since betas 2.26.1 and 8.10.38 (unverified: stable versions)
+  security keys: WebAuthn PRF, not hmac-secret alone (unverified: firmware and OS minimums)
+  unverified: Windows Hello, Bitwarden, Proton Pass, other providers, Edge, Samsung Internet`
 )
 
-// interrupted is a ceremony's wait that ended without the daemon's answer.
+// interrupted is a ceremony's wait that lost its connection to the daemon.
 type interrupted struct{ error }
+
+func (i interrupted) Unwrap() error { return i.error }
 
 // explain is err, which ceremony command op returned, in words, or "" for an
 // error that is neither a token nor the connection lost.
 func explain(op string, err error) string {
 	var oe *control.OpError
-	switch {
-	case errors.As(err, &oe) && oe.Code == "prf-unsupported" && op != "init":
-		return explanations[oe.Code] + "\n" + same + "\n" + needs
-	case errors.As(err, &oe) && oe.Code == "prf-unsupported":
-		return explanations[oe.Code] + "\n" + needs
-	case errors.As(err, &oe) && explanations[oe.Code] != "":
-		return explanations[oe.Code]
-	case errors.As(err, &oe):
-		return explanations["internal"]
-	case errors.As(err, new(interrupted)):
-		return lost
+	if !errors.As(err, &oe) {
+		if errors.As(err, new(interrupted)) {
+			return lost
+		}
+		return ""
 	}
-	return ""
+	s, ok := explanations[oe.Code]
+	if !ok {
+		s = explanations["internal"]
+	}
+	if oe.Code == "prf-unsupported" {
+		next := same
+		if op == "init" {
+			next = saved
+		}
+		s += "\n" + next + "\n" + needs
+	}
+	return s
 }
 
 // failCeremony is fail for ceremony command op: the token first, then what

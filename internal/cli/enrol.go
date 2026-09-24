@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -148,7 +150,7 @@ func (e *env) ceremony(op string, params map[string]any, first string, out any) 
 		}
 	}
 	err = c.Call(op+".wait", nil, out)
-	if err != nil && !errors.As(err, new(*control.OpError)) {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.As(err, new(net.Error)) {
 		return interrupted{err}
 	}
 	return err

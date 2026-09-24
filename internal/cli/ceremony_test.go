@@ -17,12 +17,10 @@ import (
 	"github.com/notaharness/beam/internal/identity"
 )
 
-// answered runs beam args on m, with no test authenticator, and calls answer
-// with each ceremony URL it shows.
-func answered(t *testing.T, m *machine, answer func(url string), args ...string) (r result) {
+// stdoutLines runs beam args on m, calling each with every line it writes to
+// stdout, and returns what it wrote.
+func stdoutLines(t *testing.T, m *machine, each func(line string), args ...string) (r result) {
 	t.Helper()
-	os.Unsetenv("BEAM_TEST_AUTHENTICATOR")
-	defer authenticate(owner)
 	pr, pw := io.Pipe()
 	var out strings.Builder
 	done := make(chan struct{})
@@ -31,9 +29,7 @@ func answered(t *testing.T, m *machine, answer func(url string), args ...string)
 		sc := bufio.NewScanner(pr)
 		for sc.Scan() {
 			out.WriteString(sc.Text() + "\n")
-			if strings.HasPrefix(sc.Text(), ceremony.Page+"#") {
-				answer(sc.Text())
-			}
+			each(sc.Text())
 		}
 	}()
 	var errb bytes.Buffer
@@ -44,15 +40,28 @@ func answered(t *testing.T, m *machine, answer func(url string), args ...string)
 	return r
 }
 
-// page answers ceremonies in turn as the page would, with results: ok (the
-// owner's passkey) for "", else that result.
+// answered runs beam args on m, with no test authenticator, and calls answer
+// with each ceremony URL it shows.
+func answered(t *testing.T, m *machine, answer func(url string), args ...string) result {
+	t.Helper()
+	os.Unsetenv("BEAM_TEST_AUTHENTICATOR")
+	defer authenticate(owner)
+	return stdoutLines(t, m, func(line string) {
+		if strings.HasPrefix(line, ceremony.Page+"#") {
+			answer(line)
+		}
+	}, args...)
+}
+
+// page answers ceremonies in turn as the page would, with results: ok with
+// the owner's passkey, or another result.
 func page(t *testing.T, results ...string) func(string) {
 	return func(url string) {
 		if len(results) == 0 {
 			return
 		}
 		var err error
-		if results[0] == "" {
+		if results[0] == "ok" {
 			_, err = ceremony.Answer(url, dirURL, owner)
 		} else {
 			_, err = ceremony.Refuse(url, dirURL, results[0])
@@ -70,7 +79,8 @@ func page(t *testing.T, results ...string) func(string) {
 // the page and the passkey need.
 func TestCeremonyErrorsExplained(t *testing.T) {
 	initFleet(t, "alpha")
-	same := "Use the same fleet passkey; a new passkey creates a different fleet.\n"
+	needs := "beam needs WebAuthn PRF from the browser"
+	saved := "A passkey may have been saved, but fleet creation is not complete.\n" + needs
 	for _, c := range []struct {
 		what    string
 		results []string
@@ -78,12 +88,12 @@ func TestCeremonyErrorsExplained(t *testing.T) {
 		want    string
 	}{
 		{"init's create without PRF", []string{"prf-unsupported"}, []string{"init"},
-			"prf-unsupported: no prf.enabled from the passkey's create\nThe selected passkey did not provide WebAuthn PRF."},
-		{"init's get without PRF", []string{"", "prf-unsupported"}, []string{"init"},
-			"prf-unsupported: no 32-byte prf.results.first from the passkey's get\nThe selected passkey did not provide WebAuthn PRF."},
+			"prf-unsupported: no prf.enabled from the passkey's create\nThe selected passkey did not provide WebAuthn PRF. beam needs this extension to derive the encrypted fleet directory key. Browser, operating system and passkey provider must all support it.\n" + saved},
+		{"init's get without PRF", []string{"ok", "prf-unsupported"}, []string{"init"},
+			"prf-unsupported: no 32-byte prf.results.first from the passkey's get\nThe selected passkey did not provide WebAuthn PRF. beam needs this extension to derive the encrypted fleet directory key. Browser, operating system and passkey provider must all support it.\n" + saved},
 		{"join without PRF", []string{"prf-unsupported"}, []string{"join"},
 			"prf-unsupported: no 32-byte prf.results.first from the passkey's get\nThe selected passkey did not provide WebAuthn PRF. beam needs this extension to derive the encrypted fleet directory key. Browser, operating system and passkey provider must all support it.\n" +
-				same + "beam needs WebAuthn PRF from the browser, the operating system and the passkey provider together, and X25519 in Web Crypto to seal the page's answer:\n"},
+				"Use the same fleet passkey; a new passkey creates a different fleet.\n" + needs},
 		{"join cancelled", []string{"cancelled"}, []string{"join"},
 			"ceremony-cancelled\nPasskey request cancelled. No further approval is pending for this request.\n"},
 		{"join failed", []string{"failed"}, []string{"join"},
@@ -95,9 +105,6 @@ func TestCeremonyErrorsExplained(t *testing.T) {
 			r := answered(t, m, page(t, c.results...), c.args...)
 			if r.code != 1 || !strings.HasPrefix(r.err, c.want) {
 				t.Errorf("%+v\nwant stderr from %q", r, c.want)
-			}
-			if strings.Contains(r.err, same) != (c.args[0] == "join" && c.results[len(c.results)-1] == "prf-unsupported") {
-				t.Errorf("same-passkey line: %q", r.err)
 			}
 		})
 	}
@@ -163,7 +170,7 @@ func TestCeremonyShowsAction(t *testing.T) {
 	t.Cleanup(func() { owner = prev; authenticate(prev) })
 	m := blank(t, "alpha")
 	m.start(t)
-	r := answered(t, m, page(t, "", ""), "init", "--label", "alpha", "--fleet-name", "homelab")
+	r := answered(t, m, page(t, "ok", "ok"), "init", "--label", "alpha", "--fleet-name", "homelab")
 	fp := m.enrolled(t).entry.PeerID[:4] + " " + m.entry.PeerID[4:8] + " " + m.entry.PeerID[8:12] + " " + m.entry.PeerID[12:16]
 	for _, want := range []string{
 		"waiting for your passkey (create)\nAction               Create fleet passkey for “homelab”\nMachine              alpha\nMachine fingerprint  " + fp + "\nhttps://",
@@ -174,7 +181,7 @@ func TestCeremonyShowsAction(t *testing.T) {
 		}
 	}
 	connectedAll(t, m, join(t, "beta"))
-	r = answered(t, m, page(t, ""), "revoke", "beta")
+	r = answered(t, m, page(t, "ok"), "revoke", "beta")
 	if want := "Action               Remove “beta” from fleet\nMachine              beta\n"; r.code != 0 || !strings.Contains(r.out, want) {
 		t.Errorf("revoke: %+v\nwant %q", r, want)
 	}
@@ -188,22 +195,17 @@ func TestRevokeNotifiesPeers(t *testing.T) {
 	c := join(t, "gamma")
 	connectedAll(t, a, b, c)
 	reached, release := pauseAt(t, b, "storing", c.id()) // beta holds the revocation, unacknowledged
-	pr, pw := io.Pipe()
-	lines := make(chan string, 64)
-	go func() {
-		sc := bufio.NewScanner(pr)
-		for sc.Scan() {
-			lines <- sc.Text()
-		}
-		close(lines)
-	}()
+	out := make(chan string, 64)
 	code := make(chan int, 1)
-	go func() { code <- a.run(strings.NewReader(""), pw, io.Discard, "revoke", "gamma"); pw.Close() }()
+	go func() {
+		code <- stdoutLines(t, a, func(line string) { out <- line }, "revoke", "gamma").code
+		close(out)
+	}()
 	await(t, reached, "beta's receipt of the revocation")
 	deadline := time.After(3 * time.Second) // well within the 5 s alpha waits for beta
 	for waiting := true; waiting; {
 		select {
-		case line := <-lines:
+		case line := <-out:
 			if line == "publishing" {
 				t.Fatal("publishing before notifying peers")
 			}
@@ -213,7 +215,7 @@ func TestRevokeNotifiesPeers(t *testing.T) {
 		}
 	}
 	release()
-	for range lines {
+	for range out {
 	}
 	if n := <-code; n != 0 {
 		t.Errorf("revoke: %d", n)

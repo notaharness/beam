@@ -25,7 +25,9 @@ Linux, 103 on macOS) is refused before anything else, naming `BEAM_SOCKET`.
   1; the helper connects to the winner either way.
 - **Shutdown.** `daemon.shutdown`, SIGTERM or SIGINT stop the daemon, whoever started
   it; so does the end of its stdin for one started with `--exit-with-parent`
-  ([07](07-cli.md)). Stopping, the daemon closes its socket first, lets a fleet reset or
+  ([07](07-cli.md)). Stopping, the daemon closes its socket first (an op that fails
+  meanwhile gets no reply, its connection closing instead, since the stop may be why:
+  a ceremony's `*.wait` among them), lets a fleet reset or
   re-join under way finish, then refuses new streams, ends every stream it serves and
   waits up to 10 s for each to tear down ([04](04-streams.md)), so a session's teardown
   completes before the daemon exits. An open `pty` session holds that for its 5 s grace.
@@ -91,9 +93,7 @@ while the daemon waits on the ceremony's slot. One ceremony at a time (`busy`).
 | `fleet.reset` | `{ confirm: "reset" }` | `{}` |
 
 While a `*.wait` runs, its client also gets `stage { stage }` events as the daemon
-reaches `reading directory` (join), `notifying peers` (revoke: the revocation verified
-and applied here, the daemon waiting on peers' acknowledgements) and `publishing`
-([07](07-cli.md)). A `*.wait` without its
+reaches `reading directory`, `notifying peers` and `publishing` ([07](07-cli.md)). A `*.wait` without its
 `*.start` under way is `ceremony-state`, and so is a slot answered with a result that
 does not open under the ceremony's key ([02](02-identity.md)). `published: "pending"`
 means the directory append is queued in `state.db` and retried (a write the worker

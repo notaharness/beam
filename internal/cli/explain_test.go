@@ -32,7 +32,7 @@ func TestExplainAsSpecified(t *testing.T) {
 		}
 		want := row[2]
 		if row[1] == "`prf-unsupported`" {
-			want += "\n" + needs
+			want += "\nA passkey may have been saved, but fleet creation is not complete.\n" + needs
 		}
 		if got := explain("init", err); got != want {
 			t.Errorf("%s:\n got %q\nwant %q", row[1], got, want)
