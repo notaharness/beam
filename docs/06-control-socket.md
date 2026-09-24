@@ -91,7 +91,9 @@ while the daemon waits on the ceremony's slot. One ceremony at a time (`busy`).
 | `fleet.reset` | `{ confirm: "reset" }` | `{}` |
 
 While a `*.wait` runs, its client also gets `stage { stage }` events as the daemon
-reaches `reading directory` and `publishing` ([07](07-cli.md)). A `*.wait` without its
+reaches `reading directory` (join), `notifying peers` (revoke: the revocation verified
+and applied here, the daemon waiting on peers' acknowledgements) and `publishing`
+([07](07-cli.md)). A `*.wait` without its
 `*.start` under way is `ceremony-state`, and so is a slot answered with a result that
 does not open under the ceremony's key ([02](02-identity.md)). `published: "pending"`
 means the directory append is queued in `state.db` and retried (a write the worker
