@@ -180,17 +180,55 @@ hash of `readKey`, whoever sees the URL can write to the slot but cannot read it
 
 The page:
 
-1. Renders a heading it composes from `o` and `l` ("Create your beam fleet", "Add
-   buildbox to your fleet", "Remove oldlaptop from your fleet"), the label, the
-   fingerprint in groups of four as `beam status` prints it, "Continue only if you
-   started this just now", and a button. A fragment without a known `o`, `s`, `k` and
-   `c` gets "This link is incomplete" and no button. It imports `k` first; a browser
-   whose Web Crypto has no X25519 is told so and gets no button.
-2. On click, calls `navigator.credentials.create({ publicKey: { rp: { id: "beam.n10.is", name: "beam" }, user: { id, name: fleetName, displayName: fleetName }, challenge, pubKeyCredParams: [ES256, Ed25519], authenticatorSelection: { residentKey: "required", userVerification: "required" }, extensions: { prf: {} } } })` or
-   `navigator.credentials.get({ publicKey: { rpId: "beam.n10.is", challenge, userVerification: "required", extensions: { prf: { eval: { first: salt } } } } })`.
-   After `create` it checks `getClientExtensionResults().prf?.enabled === true` and
-   fails with `prf-unsupported` otherwise.
-3. Builds the result, `result=…` followed, for `ok`, by the call's output:
+1. Reads the fragment. A request has a known `o` and exactly one each of `o`, `s`, `k`,
+   `c`, `l` and `f`, with `s` 16 bytes and `k` and `c` 32 bytes, each canonical unpadded
+   base64url, `f` 16 lowercase hex characters, and `l` a label (1–64 scalar values
+   without `/ \ { }` or a control character). For `o=c`, `n` is a label too, at most once,
+   and `beam` when absent. Other keys are ignored. With no fragment the page says to
+   start in n10 Desktop, `beam init` or `beam join`; any other fragment that is not a
+   request gets "This link is incomplete or invalid." Neither has a button or writes
+   the slot. A request shows its heading and explanation, then **Action**, **Machine**
+   (`l`) and **Machine fingerprint** (`f` in groups of four, as `beam status` prints a
+   peerId; never the fleet's), "Continue only if you started this request just now.
+   Compare the action, machine name and machine fingerprint with n10 Desktop or your
+   terminal." and that requests expire after five minutes. Names are rendered as text.
+
+   | `o` | Heading | Action | Button |
+   |---|---|---|---|
+   | `c` | Step 1 of 2 · Create your fleet passkey | Create fleet passkey for “{n}” | Create passkey |
+   | `a` | Authorize {l} | Add “{l}” to fleet | Authorize machine |
+   | `r` | Remove {l} from your fleet | Remove “{l}” from fleet | Authorize removal, marked destructive |
+
+   `o=a` is init's second ceremony, a join and a re-join alike; the page cannot tell them
+   apart and does not guess. The **Action** values are the ones n10 Desktop and `beam`
+   ([07](07-cli.md)) show beside the link, so the owner compares like with like.
+2. Checks the browser before any prompt. None of the checks writes the slot:
+   - WebAuthn: a secure context, `PublicKeyCredential`, `navigator.credentials.create`
+     and `get`. Without them there is no button.
+   - Sealing: it imports `k` and seals a disposable plaintext to it (step 4), which
+     exercises X25519 generation, export and derivation, HMAC and AES-GCM; an import
+     alone proves too little. Without X25519 in Web Crypto the page says so, names the
+     browsers that have it, and offers no button and no cancel: it could write nothing.
+   - PRF: `PublicKeyCredential.getClientCapabilities()`, waited on for three seconds,
+     its `extension:prf` read exactly. `true`, or unknown (no method, no key, not a
+     boolean, a throw, no answer in time), enables the button. `false` holds it back
+     behind an explicit **Try anyway**: it describes the browser, not the passkey
+     provider, and an extension or a provider can bring PRF the browser does not report.
+     `isUserVerifyingPlatformAuthenticatorAvailable()` is no PRF test and is not asked.
+
+   Wherever it can seal the page offers **Cancel request**, which writes `cancelled`;
+   it always offers **Copy link**.
+3. On a click (the button then disables, so there is one call) calls
+   `navigator.credentials.create({ publicKey: { rp: { id: "beam.n10.is", name: "beam" }, user: { id, name: fleetName, displayName: fleetName }, challenge, pubKeyCredParams: [ES256, Ed25519], authenticatorSelection: { residentKey: "required", userVerification: "required" }, extensions: { prf: {} } } })` or
+   `navigator.credentials.get({ publicKey: { rpId: "beam.n10.is", challenge, userVerification: "required", extensions: { prf: { eval: { first: salt } } } } })`,
+   with an `AbortController`'s signal that **Cancel request** aborts. After `create` it
+   checks `getClientExtensionResults().prf?.enabled === true`, after `get` that
+   `prf.results.first` is exactly 32 bytes, and fails with `prf-unsupported` otherwise;
+   no PRF output from `create` is used. `NotAllowedError` and a cancel are `cancelled`
+   (the browser does not tell the owner's cancel from a timeout or no eligible
+   passkey); any other exception, a null credential's among them, is `failed`. One
+   result is written however a cancel and the call race.
+4. Builds the result, `result=…` followed, for `ok`, by the call's output:
    `credentialId`, `clientDataJSON` and, for `create`, `attestationObject`; for `get`,
    `authenticatorData`, `signature` and `prf` (`prf.results.first`), each unpadded
    base64url, the whole form-encoded. It seals that and `POST`s only the ciphertext to
@@ -205,11 +243,27 @@ sealed = HPKE base mode, single shot (RFC 9180):
          = enc (32 bytes) ‖ ciphertext
 ```
 
-4. Says what the slot answered: `201`, "done; the machine finishes on its own"; `409`,
-   the slot was answered first, from another device or by an earlier try on this one
-   ([01](01-model.md), The relayed result), with what to do if it was not the owner's.
+5. Says what happened, and offers no retry on the slot: the originating machine makes the
+   next request. The technical details, collapsed, give the result code (with the
+   missing PRF field, or the exception's name) and the delivery's HTTP status apart.
    The page writes every result, `cancelled` and `failed` included, so the daemon ends
-   the ceremony as soon as the owner does.
+   the ceremony as soon as the owner does. It shows nothing it cannot know: whether the
+   daemon verified the answer, enrolled, or timed out is for the originating machine to
+   say.
+
+   | Outcome | Heading |
+   |---|---|
+   | `201`, `ok`, `o=c` | Passkey created. One more step. (the second prompt comes from the originating machine, as a new link) |
+   | `201`, `ok`, `o=a` | Approval sent. |
+   | `201`, `ok`, `o=r` | Revocation approval sent. |
+   | `201`, `prf-unsupported` | This passkey did not provide WebAuthn PRF. (with the compatibility table open) |
+   | `201`, `cancelled` | Passkey request cancelled or not allowed. |
+   | `201`, `failed` | The passkey request failed. |
+   | `409` | This request was already answered. ([01](01-model.md), The relayed result) |
+   | `429` | Too many requests. |
+   | no response | Could not confirm delivery. (the answer may have arrived; nothing is sent again) |
+   | any other status | beam.n10.is did not accept the answer (HTTP {status}). |
+   | sealing failed after the call | Could not encrypt the answer. (nothing was sent) |
 
 The daemon opens the sealed result with `sk` and the same `info`. A ciphertext that
 does not open ends the ceremony `ceremony-state`, as does a plaintext that is not a
@@ -221,11 +275,16 @@ pair and `readKey` are dropped when the ceremony ends, however it ends. Timeout 
 minutes. Result codes: `ok`, `prf-unsupported`, `cancelled`, `failed`.
 
 The page seals with Web Crypto alone (X25519, HMAC-SHA-256 for HPKE's labelled HKDF,
-AES-GCM), so it runs where Web Crypto has X25519: Safari 17 and later on macOS, iOS and
-iPadOS; Chrome and Edge 133 and later, desktop and Android; Firefox 130 and later;
-Samsung Internet 29 and later. On iOS the PRF extension already needs iOS 18, so X25519
-narrows nothing there; on Android it is Chrome 133 (February 2025). The daemon opens
-with Go's `crypto/hpke`.
+AES-GCM), so it runs where Web Crypto has X25519: Safari 18.4 and later (iOS and iPadOS
+18.4), Chrome 133, Firefox 130. The daemon opens with Go's `crypto/hpke`. PRF is a
+separate requirement, of the browser, the operating system and the passkey provider
+together: Safari has had it since 18.0, which without X25519 is not enough for this page,
+and Firefox on desktop since 139; a provider must return it for beam's credential too,
+as 1Password for iOS does from 8.10.74 on iOS 18. The page's **Passkey compatibility**
+section lists what vendors document and marks the rest (Windows Hello, Google Password
+Manager, Bitwarden, Proton Pass, Edge, Samsung Internet, security-key firmware)
+unverified. It is documentation, not a tested matrix; the page's checks and the
+passkey's result decide.
 
 Page CSP: `default-src 'none'; script-src 'sha256-…'; style-src 'sha256-…'; connect-src
 https://beam.n10.is/v1/slots/`. The one request it makes is the slot write.

@@ -63,6 +63,21 @@ answered. That is also the HPKE interoperability test: the page's
 Web Crypto sealing against Go's `crypto/hpke`, which carries RFC 9180's vectors. This is
 the one boundary the test authenticator cannot exercise.
 
+## Ceremony page
+
+`worker/test/flows.test.mjs` (`node --test`, part of the worker's `npm test`) drives the
+page in Chromium under its `_headers`, with a CDP virtual authenticator, the slot route
+answered by the test and every write opened with the ceremony's key, so each test sees
+the result code the page sealed. Browser capabilities the authenticator cannot vary
+(no WebAuthn, no X25519, each `getClientCapabilities` answer, a call that throws, hangs
+or returns nothing, PRF output of the wrong size) are replaced before the page loads.
+It covers the tables of [02](02-identity.md), Ceremonies: every refused fragment, each
+`o`'s heading, Action and button, every check before the prompt, each result code
+against `201`, `409`, `429`, other statuses and no response, and that no prompt comes
+before a click, one call and one write come of any number of clicks and cancels, and no
+policy violation occurs. A mocked authenticator is no evidence of what a real device or
+provider supports; that stays in the manual checks below.
+
 ## Fake worker
 
 `internal/fakeworker` implements the routes, bearer check, assertion verification and
@@ -144,6 +159,6 @@ Real ceremonies on macOS Safari and Chrome on Linux through the opened browser, 
 iOS Safari and Android Chrome by scanning the terminal's QR code from a headless machine
 (an SSH session), each with `init` on a fresh dir and `join` on a second, and one
 `revoke`; a scan of the code from a second phone after the first answered shows the
-page's "answered from another device"; check that the derived directory key matches
+page's "This request was already answered."; check that the derived directory key matches
 across create/get and local/hybrid. Real NAT traversal between two networks; `beam
 peers` shows `direct` or `relay`.
