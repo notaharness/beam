@@ -59,6 +59,13 @@ func Answer(ceremonyURL, worker string, a *identity.Authenticator) (int, error) 
 	return Write(ceremonyURL, worker, seal(frag.Get("k"), frag.Get("s"), []byte(f.Encode())))
 }
 
+// Refuse answers the ceremony at ceremonyURL as the page does with result,
+// one of its results other than ok, and returns the worker's status.
+func Refuse(ceremonyURL, worker, result string) (int, error) {
+	frag := fragment(ceremonyURL)
+	return Write(ceremonyURL, worker, seal(frag.Get("k"), frag.Get("s"), []byte(url.Values{"result": {result}}.Encode())))
+}
+
 // seal seals plaintext as the page does, to key (unpadded base64url) and for
 // slot.
 func seal(key, slot string, plaintext []byte) []byte {
