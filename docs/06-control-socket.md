@@ -26,9 +26,9 @@ Linux, 103 on macOS) is refused before anything else, naming `BEAM_SOCKET`.
 - **Shutdown.** `daemon.shutdown`, SIGTERM or SIGINT stop the daemon, whoever started
   it; so does the end of its stdin for one started with `--exit-with-parent`
   ([07](07-cli.md)). Stopping, the daemon closes its socket first (an op that fails
-  meanwhile gets no reply, its connection closing instead, since the stop may be why:
-  a ceremony's `*.wait` among them), lets a fleet reset or
-  re-join under way finish, then refuses new streams, ends every stream it serves and
+  meanwhile gets no reply, since the stop may be why, a ceremony's `*.wait` among them;
+  its connection closes when the daemon closes its clients' connections), lets a fleet
+  reset or re-join under way finish, then refuses new streams, ends every stream it serves and
   waits up to 10 s for each to tear down ([04](04-streams.md)), so a session's teardown
   completes before the daemon exits. An open `pty` session holds that for its 5 s grace.
   A fleet reset and a re-join end the streams the same way. Clients treat a closed
