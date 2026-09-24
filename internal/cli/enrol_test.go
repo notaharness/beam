@@ -38,7 +38,7 @@ func initFleet(t *testing.T, label string) *machine {
 	m := blank(t, label)
 	m.start(t)
 	r := m.beam("", "init", "--label", label)
-	if r.code != 0 || !strings.Contains(r.out, "publishing\ncreated fleet ") || !strings.Contains(r.out, "published to directory") {
+	if r.code != 0 || !strings.Contains(r.out, "publishing\ncreated fleet ") || !strings.Contains(r.out, "Published to directory") {
 		t.Fatalf("init: %+v", r)
 	}
 	return m.enrolled(t)
@@ -142,7 +142,7 @@ func TestJoinShowsFleet(t *testing.T) {
 	fleet := "fleet " + identity.Fingerprint(owner.Credential().FleetID())
 	m := blank(t, "beta")
 	m.start(t)
-	if r := m.beam("", "join", "--label", "beta"); r.code != 0 || !strings.Contains(r.out, "joined "+fleet+";") {
+	if r := m.beam("", "join", "--label", "beta"); r.code != 0 || !strings.Contains(r.out, "joined "+fleet+";") || !strings.HasSuffix(r.out, "connecting…\nPublished to directory\n") {
 		t.Errorf("join: %+v, want %q", r, fleet)
 	}
 	if r := a.beam("", "status"); !strings.Contains(r.out, " · "+fleet+" · ") {
@@ -194,7 +194,7 @@ func TestRevokeLive(t *testing.T) {
 	connectedAll(t, a, b, c)
 	start := time.Now()
 	r := a.beam("", "revoke", "gamma")
-	want := "publishing\nrevoked \"gamma\" on this machine\npublished to directory\nacknowledged by 1 of 1 peers"
+	want := "notifying peers\npublishing\nrevoked \"gamma\" on this machine\nPublished to directory\nacknowledged by 1 of 1 peers"
 	if r.code != 0 || !strings.Contains(r.out, want) {
 		t.Fatalf("revoke: %+v", r)
 	}
@@ -232,7 +232,7 @@ func TestRevokeWorkerDown(t *testing.T) {
 	await(t, reached, "the revocation's publishing")
 	worker.SetDown(true)
 	release()
-	if r := <-revoked; r.code != 0 || !strings.Contains(r.out, "publication pending; will retry") {
+	if r := <-revoked; r.code != 0 || !strings.Contains(r.out, "Saved on this machine. Directory publication is pending; beam will retry while it runs.") {
 		t.Fatalf("revoke: %+v", r)
 	}
 	waitState(t, a, c, "revoked")
@@ -685,7 +685,7 @@ func TestRevocationReadAtStart(t *testing.T) {
 	c := join(t, "gamma")
 	connectedAll(t, a, b, c)
 	b.stop()
-	if r := a.beam("", "revoke", "gamma"); r.code != 0 || !strings.Contains(r.out, "published to directory") {
+	if r := a.beam("", "revoke", "gamma"); r.code != 0 || !strings.Contains(r.out, "Published to directory") {
 		t.Fatalf("revoke: %+v", r)
 	}
 	a.stop()

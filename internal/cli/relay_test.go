@@ -122,7 +122,9 @@ func TestCeremonyDrawsQR(t *testing.T) {
 	tty.Close()
 	<-read
 	out := strings.ReplaceAll(screen.String(), "\r\n", "\n")
-	_, shown, ok := strings.Cut(out, "waiting for your passkey (sign)\n")
+	_, shown, ok := strings.Cut(out, "waiting for your passkey (sign)\nAction ")
+	_, shown, _ = strings.Cut(shown, "\nMachine fingerprint ")
+	_, shown, _ = strings.Cut(shown, "\n")
 	qr, rest, _ := strings.Cut(shown, "\n"+ceremony.Page+"#")
 	if !ok || !strings.HasPrefix(qr, "\x1b[97;40m⣿") || strings.Count(qr, "\n") < 13 || !strings.Contains(rest, "o=a") {
 		t.Errorf("terminal output:\n%s", out)
