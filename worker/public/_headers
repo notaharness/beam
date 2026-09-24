@@ -1,5 +1,5 @@
 /*
-  Content-Security-Policy: default-src 'none'; script-src 'sha256-9NzGsjlMLEsNSReJ0bP8oIqphTINjLL83qFQmxAUqbc='; style-src 'sha256-4lJqe9kUjauYWz/pZr7thZCfFEo83Lg6UXpjiDq4LHI='; connect-src https://beam.n10.is/v1/slots/
+  Content-Security-Policy: default-src 'none'; script-src 'sha256-9NzGsjlMLEsNSReJ0bP8oIqphTINjLL83qFQmxAUqbc='; style-src 'sha256-sFO7KkDxL2fEZZJFsMxZvPz6CuahC9hwmEMDn8b9IeM='; connect-src https://beam.n10.is/v1/slots/
   Referrer-Policy: no-referrer
   X-Frame-Options: DENY
   Cache-Control: public, max-age=300
