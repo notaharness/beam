@@ -5,23 +5,40 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>beam</title>
 <style>
-:root { --fg: #1b1b1b; --bg: #fff; --muted: #6b6b6b; --rule: #e2e2e2; --btn-bg: #1b1b1b; --btn-fg: #fff; }
+:root { --fg: #1b1b1b; --bg: #fff; --muted: #5f5f5f; --rule: #e2e2e2; --btn-bg: #1b1b1b; --btn-fg: #fff; --danger: #b3261e; --danger-fg: #fff; --alert: #8c1d18; }
 @media (prefers-color-scheme: dark) {
-  :root { --fg: #e8e8e8; --bg: #141414; --muted: #9a9a9a; --rule: #2c2c2c; --btn-bg: #e8e8e8; --btn-fg: #141414; }
+  :root { --fg: #e8e8e8; --bg: #141414; --muted: #a3a3a3; --rule: #2c2c2c; --btn-bg: #e8e8e8; --btn-fg: #141414; --danger: #f2b8b5; --danger-fg: #601410; --alert: #f2b8b5; }
 }
-body { font: 16px/1.5 system-ui, sans-serif; max-width: 34rem; min-height: 100vh; margin: 0 auto; padding: 0 1rem; color: var(--fg); background: var(--bg); display: flex; flex-direction: column; box-sizing: border-box; }
+body { font: 16px/1.5 system-ui, sans-serif; max-width: 36rem; min-height: 100vh; margin: 0 auto; padding: 0 1rem; color: var(--fg); background: var(--bg); display: flex; flex-direction: column; box-sizing: border-box; overflow-wrap: anywhere; }
 header { display: flex; align-items: center; gap: 0.75rem; padding: 2rem 0 1.5rem; border-bottom: 1px solid var(--rule); }
 header svg { width: 3rem; height: 3rem; flex: none; margin: -0.25rem; }
 header span { font-size: 1.25rem; font-weight: 600; letter-spacing: 0.02em; }
 main { flex: 1; padding: 1.5rem 0; }
-h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 1rem; }
-dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0 0 1.5rem; }
+h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 0.75rem; }
+h2 { font-size: 1.125rem; font-weight: 600; margin: 0 0 0.5rem; }
+h1:focus, h2:focus { outline: none; }
+p { margin: 0 0 1rem; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0 0 1rem; }
 dt { color: var(--muted); }
-dd { margin: 0; overflow-wrap: anywhere; }
-code { font-size: 0.95rem; }
-button { font: inherit; padding: 0.5rem 1.25rem; border-radius: 6px; border: 1px solid var(--btn-bg); background: var(--btn-bg); color: var(--btn-fg); cursor: pointer; }
+dd { margin: 0; min-width: 0; }
+#fingerprint { white-space: nowrap; }
+@media (max-width: 28rem) { dl { grid-template-columns: 1fr; gap: 0; } dd { margin-bottom: 0.5rem; } }
+code, pre { font: 0.95rem ui-monospace, SFMono-Regular, Menlo, monospace; user-select: text; }
+pre { white-space: pre-wrap; margin: 0.5rem 0 0; }
+.note { color: var(--muted); }
+[role=alert] { color: var(--alert); }
+[role=alert] p:last-child { margin-bottom: 0; }
+#problem, #result { margin: 0 0 1rem; }
+.buttons { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0 0 1rem; }
+button { font: inherit; min-height: 44px; padding: 0.5rem 1.25rem; border-radius: 6px; border: 1px solid var(--btn-bg); background: var(--btn-bg); color: var(--btn-fg); cursor: pointer; }
+button.secondary { background: transparent; color: var(--fg); border-color: var(--rule); }
+button.danger { background: var(--danger); border-color: var(--danger); color: var(--danger-fg); }
 button:disabled { opacity: 0.5; cursor: default; }
-#status { color: var(--muted); min-height: 1.5rem; }
+details { margin: 0 0 1rem; }
+summary { padding: 0.625rem 0; cursor: pointer; }
+table { border-collapse: collapse; width: 100%; font-size: 0.875rem; margin: 0.5rem 0; }
+th, td { text-align: left; vertical-align: top; padding: 0.375rem 0.5rem 0.375rem 0; border-top: 1px solid var(--rule); }
+th { font-weight: 600; width: 34%; }
 footer { padding: 1.5rem 0 2rem; border-top: 1px solid var(--rule); font-size: 0.875rem; color: var(--muted); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; }
 footer a { color: inherit; }
 </style>
@@ -44,13 +61,55 @@ footer a { color: inherit; }
 <span>beam</span>
 </header>
 <main>
-<h1 id="action">beam</h1>
-<dl>
-  <dt>Machine</dt><dd><strong id="label"></strong></dd>
-  <dt>Fingerprint</dt><dd><code id="fingerprint"></code></dd>
+<div id="intro">
+<h1 id="heading" tabindex="-1">Connect your machines with beam</h1>
+<p id="explain">Start in n10 Desktop → Fleet, or run beam init or beam join. Open the link or scan the QR code shown there.</p>
+</div>
+<dl id="summary" hidden>
+  <dt>Action</dt><dd id="action"></dd>
+  <dt>Machine</dt><dd><strong id="machine"></strong></dd>
+  <dt>Machine fingerprint</dt><dd><code id="fingerprint"></code></dd>
 </dl>
-<p><button id="go" type="button" disabled>Continue with your passkey</button></p>
-<p id="status"></p>
+<p id="safety" hidden>Continue only if you started this request just now. Compare the action, machine name and machine fingerprint with n10 Desktop or your terminal.</p>
+<p id="expiry" class="note" hidden>Requests expire after five minutes. The originating machine shows whether this request is still active.</p>
+<div id="problem" role="alert" hidden></div>
+<p id="capability" class="note" role="status"></p>
+<details id="compat">
+<summary>Passkey compatibility</summary>
+<p>beam needs WebAuthn PRF, not just ordinary passkeys. PRF derives the key that encrypts your fleet directory. Support depends on the browser, operating system, passkey provider and sometimes the way a security key connects. The ceremony page checks browser capabilities, then verifies the selected passkey result.</p>
+<p>This is what vendors document, not a matrix beam has tested end to end. The browser’s encryption support and the passkey provider’s PRF support are separate requirements; unsupported or unverified combinations are not promised to work.</p>
+<table>
+<tr><th scope="row">Safari</th><td>For this page use Safari 18.4 or later. Safari 18.0 PRF support alone is insufficient.</td></tr>
+<tr><th scope="row">Apple Passwords, iCloud Keychain</th><td>Use updated Apple software. iOS/iPadOS 18.4+ with Safari 18.4+ is the page’s practical baseline; macOS Safari 18.4+ also needs a compatible provider. <strong>Unverified:</strong> the oldest supported macOS and provider pairing, and whether Apple’s fix for PRF over a phone (hybrid) has shipped.</td></tr>
+<tr><th scope="row">Firefox</th><td>Firefox 139+ on desktop has the browser features. Your passkey provider must still supply PRF. Firefox 130 alone is not enough to promise PRF. <strong>Unverified:</strong> Firefox on Android and iOS.</td></tr>
+<tr><th scope="row">Chrome</th><td>Chrome 133+ meets the encryption baseline. PRF must still be confirmed for your provider. <strong>Unverified:</strong> the first Chrome release with PRF, and Google Password Manager’s PRF support by operating system and version.</td></tr>
+<tr><th scope="row">1Password for iOS</th><td>1Password for iOS 8.10.74+ adds provider PRF support on iOS 18. This page also needs Safari/iOS 18.4+ for X25519.</td></tr>
+<tr><th scope="row">1Password browser extension (beta 2.26.1), Android (beta 8.10.38)</th><td>PRF was introduced in these beta versions; earliest stable versions are <strong>unverified</strong> here. Update your provider and use the result check.</td></tr>
+<tr><th scope="row">Security keys, YubiKey</th><td>Use a PRF-capable FIDO2 key with a browser/OS that exposes it. A key supporting hmac-secret alone does not guarantee WebAuthn PRF. <strong>Unverified:</strong> firmware and operating system minimums.</td></tr>
+<tr><th scope="row">Windows Hello</th><td><strong>Unverified.</strong> Browser support does not imply Windows Hello support.</td></tr>
+<tr><th scope="row">Bitwarden, Proton Pass, other providers</th><td><strong>Unverified.</strong> A provider that unlocks its own vault with PRF may still not return PRF for beam’s passkey.</td></tr>
+<tr><th scope="row">Edge, Samsung Internet</th><td><strong>Unverified.</strong> Chrome’s version numbers do not carry over; this page checks at runtime.</td></tr>
+</table>
+</details>
+<div class="buttons">
+  <button id="go" type="button" hidden disabled></button>
+  <button id="anyway" type="button" class="secondary" hidden>Try anyway</button>
+</div>
+<p id="anyway-note" class="note" hidden>Your provider may handle passkeys separately from the browser. beam still requires a valid PRF result.</p>
+<p id="progress" role="status"></p>
+<section id="result" hidden>
+  <h2 id="result-heading" tabindex="-1"></h2>
+  <p id="result-body"></p>
+  <p id="result-extra" hidden></p>
+  <details>
+    <summary>Technical details</summary>
+    <pre id="technical-text"></pre>
+  </details>
+</section>
+<div class="buttons">
+  <button id="cancel" type="button" class="secondary" hidden>Cancel request</button>
+  <button id="copy" type="button" class="secondary" hidden>Copy link</button>
+</div>
 </main>
 <footer>
 <span>beam, a notaharness project</span>
@@ -58,14 +117,18 @@ footer a { color: inherit; }
 </footer>
 <script>
 (() => {
-  const p = new URLSearchParams(location.hash.slice(1));
-  const op = p.get("o"), slot = p.get("s") || "", label = p.get("l") || "";
   const $ = (id) => document.getElementById(id);
-  const say = (text) => { $("status").textContent = text; };
-  const heading = { c: "Create your beam fleet", a: `Add ${label} to your fleet`, r: `Remove ${label} from your fleet` }[op];
-  $("action").textContent = heading || "beam";
-  $("label").textContent = label;
-  $("fingerprint").textContent = (p.get("f") || "").replace(/(.{4})(?=.)/g, "$1 ");
+  const put = (id, text) => { $(id).textContent = text; };
+  const show = (...ids) => ids.forEach((id) => { $(id).hidden = false; });
+  const hide = (...ids) => ids.forEach((id) => { $(id).hidden = true; });
+
+  // What a tap approves, as the page and the originating machine both show it.
+  const ACTION = {
+    c: (r) => `Create fleet passkey for “${r.fleetName}”`,
+    a: (r) => `Add “${r.label}” to fleet`,
+    r: (r) => `Remove “${r.label}” from fleet`,
+  };
+
   const decode = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
   const encode = (b) => btoa(String.fromCharCode(...new Uint8Array(b))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   const bytes = (...parts) => {
@@ -74,6 +137,30 @@ footer a { color: inherit; }
     all.reduce((at, x) => (out.set(x, at), at + x.length), 0);
     return out;
   };
+  // exactly is s as n bytes of canonical unpadded base64url, or null.
+  const exactly = (s, n) => {
+    try {
+      const b = decode(s);
+      return /^[A-Za-z0-9_-]+$/.test(s) && b.length === n && encode(b) === s ? b : null;
+    } catch {
+      return null; // not base64 at all
+    }
+  };
+  // name is a label's rule (docs/02): 1–64 scalar values, none of / \ { } or a control.
+  const name = (s) => [...s].length >= 1 && [...s].length <= 64 && !/[\/\\{}\u0000-\u001f\u007f-\u009f]/.test(s);
+
+  // parse reads the fragment's request, or null for one that is not one.
+  function parse(fragment) {
+    const p = new URLSearchParams(fragment);
+    const one = (k) => (p.getAll(k).length === 1 ? p.get(k) : null);
+    const o = one("o"), s = one("s"), k = one("k"), c = one("c"), l = one("l"), f = one("f");
+    const n = p.has("n") ? one("n") : "beam";
+    if (!Object.hasOwn(ACTION, o) || [s, k, c, l, f].includes(null)) return null;
+    const req = { o, label: l, fleetName: n, fingerprint: f, slot: exactly(s, 16) && s, key: exactly(k, 32), challenge: exactly(c, 32) };
+    const valid = req.slot && req.key && req.challenge && /^[0-9a-f]{16}$/.test(f) && name(l) && (o !== "c" || (n !== null && name(n)));
+    return valid ? req : null;
+  }
+
   // HPKE base mode, single shot (RFC 9180): DHKEM(X25519, HKDF-SHA256),
   // HKDF-SHA256, AES-128-GCM, sealed to the daemon's key for this slot.
   const u16 = (n) => [n >> 8, n & 255];
@@ -94,65 +181,206 @@ footer a { color: inherit; }
     const iv = await expand(suiteId, secret, "base_nonce", context, 12);
     return bytes(enc, await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plaintext));
   }
-  let pkR;
-  async function send(result, out) {
-    const sealed = await seal(pkR, bytes("beam-ceremony:v1", slot), bytes(new URLSearchParams({ result, ...out }).toString()));
-    const res = await fetch("/v1/slots/" + slot, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sealed: encode(sealed) }) });
-    if (res.status === 201) return say("Done. The machine finishes on its own; you can close this page.");
-    if (res.status === 409) {
-      return say(`This request was already answered from another device, or by an earlier try of yours. If you did not answer it before, someone who saw the code did: check ${label || "the machine"}, and if it enrolled, run beam fleet reset there.`);
-    }
-    say("beam.n10.is did not take the answer (" + res.status + "). Run the beam command again.");
+
+  const hash = location.hash.slice(1);
+  if (!hash) return;
+  const req = parse(hash);
+  if (!req) {
+    put("heading", "This link is incomplete or invalid.");
+    put("explain", "Return to n10 Desktop or your terminal and start again for a fresh link.");
+    $("intro").setAttribute("role", "alert");
+    return;
   }
-  async function create() {
-    const cred = await navigator.credentials.create({ publicKey: {
+  const { o, label } = req;
+  const info = bytes("beam-ceremony:v1", req.slot);
+  const ready = {
+    c: { heading: "Step 1 of 2 · Create your fleet passkey",
+      explain: `Save a passkey for ${req.fleetName} at beam.n10.is. This creates the fleet’s credential. A second prompt will authorize ${label} and unlock its encrypted directory.`,
+      button: "Create passkey", waiting: "Waiting for your passkey manager to create the passkey…" },
+    a: { heading: `Authorize ${label}`,
+      explain: "Use your fleet’s passkey to sign this machine’s membership and unlock the encrypted directory. If you just created a fleet passkey, this is step 2 of 2.",
+      button: "Authorize machine", waiting: "Waiting for your fleet passkey…" },
+    r: { heading: `Remove ${label} from your fleet`,
+      explain: "Use your fleet’s passkey to permanently revoke this machine identity. Offline machines learn when they reconnect.",
+      button: "Authorize removal", waiting: "Waiting for your fleet passkey to sign the revocation…" },
+  }[o];
+  put("heading", ready.heading);
+  put("explain", ready.explain);
+  put("action", ACTION[o](req));
+  put("machine", label);
+  put("fingerprint", req.fingerprint.replace(/(.{4})(?=.)/g, "$1 "));
+  put("go", ready.button);
+  if (o === "r") $("go").classList.add("danger");
+  show("summary", "safety", "expiry");
+
+  // The terminal states (docs/02, Ceremonies): a heading, what to do, and
+  // for some a line more.
+  const DELIVERED = {
+    ok: {
+      c: ["Passkey created. One more step.", `Return to n10 Desktop or your terminal. Open the new link or scan the new QR code, then use this same passkey to authorize ${label}. This page cannot open the second step.`],
+      a: ["Approval sent.", `Return to ${label} to check whether it joined. beam still needs to verify the answer and finish directory work. After joining, compare the fleet fingerprint with a machine already in your fleet.`],
+      r: ["Revocation approval sent.", "Return to your originating machine to check that the revocation completed and see its publication and acknowledgement status."],
+    }[o],
+    "prf-unsupported": ["This passkey did not provide WebAuthn PRF.",
+      "beam needs PRF to derive its encrypted directory key. The browser, OS and selected passkey provider must support it. Return to your machine and start a fresh request using a supported combination.",
+      o === "c" ? "A passkey may have been saved, but fleet creation is not complete." : "Use the same fleet passkey; a new passkey creates a different fleet."],
+    cancelled: ["Passkey request cancelled or not allowed.",
+      "The browser did not return a passkey. You may have cancelled, the prompt may have expired, or no eligible passkey was available. Return to your machine to try again with a fresh link."],
+    failed: ["The passkey request failed.", "The browser could not complete the request. Return to your machine and try a fresh request."],
+  };
+  const UNDELIVERED = {
+    409: ["This request was already answered.",
+      "Another device, or an earlier attempt on this device, sent the first answer. Check the originating machine. If you did not approve that answer and it enrolled, reset the fleet on that machine. A reset does not undo a completed revocation."],
+    429: ["Too many requests.", "beam.n10.is did not accept this answer. Wait a minute, then cancel the pending request on the originating machine and start again."],
+    0: ["Could not confirm delivery.",
+      "Check the originating machine before starting again: it may have received your answer. If it is still waiting, cancel there and start a fresh request."],
+  };
+  const UNSEALED = ["Could not encrypt the answer.",
+    "Nothing was sent from this attempt. Return to the originating machine, cancel this request and start again in a supported browser."];
+
+  // finish shows a terminal state and ends the page's part: no retry on this slot.
+  function finish([heading, body, extra], error, technical) {
+    hide("expiry");
+    put("progress", "");
+    $("result").setAttribute("role", error ? "alert" : "status");
+    put("result-heading", heading);
+    put("result-body", body);
+    put("result-extra", extra || "");
+    $("result-extra").hidden = !extra;
+    put("technical-text", technical);
+    show("result");
+    $("result-heading").focus();
+  }
+
+  let pkR, settled = false, controller = null; // pkR: the daemon's key, once it seals
+
+  // deliver seals answer and writes it to the slot, once, whatever it is.
+  async function deliver([result, fields, why]) {
+    if (settled) return;
+    settled = true;
+    hide("go", "anyway", "anyway-note", "cancel", "copy");
+    put("progress", "Sending the encrypted answer to your machine…");
+    const passkey = "Passkey result: " + result + (why ? ` (${why})` : "");
+    let sealed;
+    try {
+      sealed = await seal(pkR, info, bytes(new URLSearchParams({ result, ...fields }).toString()));
+    } catch (e) {
+      return finish(UNSEALED, true, `${passkey}\nEncryption: ${e && e.name}\nDelivery: nothing sent`);
+    }
+    let status = 0;
+    try {
+      status = (await fetch("/v1/slots/" + req.slot, { method: "POST", credentials: "omit", cache: "no-store", signal: AbortSignal.timeout(20000),
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sealed: encode(sealed) }) })).status;
+    } catch {} // no response, or none in 20 s: status 0
+    const technical = `${passkey}\nDelivery: ${status ? "HTTP " + status : "no response"}`;
+    if (status === 201) {
+      if (result === "prf-unsupported") $("compat").open = true;
+      return finish(DELIVERED[result], result !== "ok", technical);
+    }
+    finish(UNDELIVERED[status] || [`beam.n10.is did not accept the answer (HTTP ${status}).`, "Return to the originating machine and start a fresh request."], true, technical);
+  }
+
+  // The WebAuthn calls (docs/02). Each returns [result, fields, why].
+  async function create(signal) {
+    const cred = await navigator.credentials.create({ signal, publicKey: {
       rp: { id: "beam.n10.is", name: "beam" },
-      user: { id: crypto.getRandomValues(new Uint8Array(16)), name: p.get("n") || "beam", displayName: p.get("n") || "beam" },
-      challenge: decode(p.get("c")),
+      user: { id: crypto.getRandomValues(new Uint8Array(16)), name: req.fleetName, displayName: req.fleetName },
+      challenge: req.challenge,
       pubKeyCredParams: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -8 }],
       authenticatorSelection: { residentKey: "required", userVerification: "required" },
       extensions: { prf: {} },
     } });
-    if (cred.getClientExtensionResults().prf?.enabled !== true) return ["prf-unsupported", {}];
+    if (cred.getClientExtensionResults().prf?.enabled !== true) return ["prf-unsupported", {}, "prf.enabled was not true after create"];
     return ["ok", { credentialId: encode(cred.rawId), clientDataJSON: encode(cred.response.clientDataJSON), attestationObject: encode(cred.response.attestationObject) }];
   }
-  async function get() {
-    const cred = await navigator.credentials.get({ publicKey: {
+  async function get(signal) {
+    const cred = await navigator.credentials.get({ signal, publicKey: {
       rpId: "beam.n10.is",
-      challenge: decode(p.get("c")),
+      challenge: req.challenge,
       userVerification: "required",
       extensions: { prf: { eval: { first: new TextEncoder().encode("beam:v1:directory") } } },
     } });
     const first = cred.getClientExtensionResults().prf?.results?.first;
-    if (!first) return ["prf-unsupported", {}];
+    const prf = first == null ? null : new Uint8Array(first);
+    if (prf?.length !== 32) return ["prf-unsupported", {}, "prf.results.first was not 32 bytes after get"];
     return ["ok", {
       credentialId: encode(cred.rawId), clientDataJSON: encode(cred.response.clientDataJSON),
-      authenticatorData: encode(cred.response.authenticatorData), signature: encode(cred.response.signature), prf: encode(first),
+      authenticatorData: encode(cred.response.authenticatorData), signature: encode(cred.response.signature), prf: encode(prf),
     }];
   }
-  (async () => {
-    if (!heading || !/^[A-Za-z0-9_-]{22}$/.test(slot) || !p.get("k") || !p.get("c")) {
-      return say("This link is incomplete. Run the beam command again.");
-    }
+
+  // approve runs the call on an explicit click; a disabled button takes no
+  // second. The call starts before anything is awaited, inside the click's
+  // user activation. A null credential throws, and fails, as any exception.
+  function approve() {
+    controller = new AbortController();
+    $("go").disabled = true;
+    hide("anyway", "anyway-note", "problem");
+    put("progress", ready.waiting);
+    (o === "c" ? create : get)(controller.signal)
+      .catch((e) => [e && (e.name === "NotAllowedError" || e.name === "AbortError") ? "cancelled" : "failed", {}, e && e.name])
+      .then(deliver);
+  }
+  $("go").addEventListener("click", approve);
+  $("anyway").addEventListener("click", approve);
+  $("cancel").addEventListener("click", () => {
+    controller?.abort();
+    deliver(["cancelled", {}, "cancelled on this page"]);
+  });
+  $("copy").addEventListener("click", () => {
+    navigator.clipboard.writeText(location.href).then(() => put("progress", "Link copied."), () => put("progress", "Copy the link from the address bar."));
+  });
+
+  // What this browser can do, checked before any prompt (docs/02).
+  const webauthn = isSecureContext && "PublicKeyCredential" in window &&
+    typeof navigator.credentials?.create === "function" && typeof navigator.credentials?.get === "function";
+  // sealer is the daemon's key once a disposable seal to it works, which
+  // exercises every primitive the answer needs; null if one is missing.
+  async function sealer() {
     try {
-      pkR = await crypto.subtle.importKey("raw", decode(p.get("k")), { name: "X25519" }, true, []);
+      const key = await crypto.subtle.importKey("raw", req.key, { name: "X25519" }, true, []);
+      await seal(key, info, new Uint8Array(1));
+      return key;
     } catch {
-      return say("This browser cannot seal beam's answer: it needs X25519 in Web Crypto (Safari 17, Chrome 133, Firefox 130 or later).");
+      return null;
     }
-    say("Continue only if you started this just now.");
+  }
+  // prf is getClientCapabilities' extension:prf, or undefined when the
+  // browser cannot say within three seconds.
+  async function prf() {
+    try {
+      const caps = await Promise.race([PublicKeyCredential.getClientCapabilities(), new Promise((r) => setTimeout(r, 3000))]);
+      const v = caps?.["extension:prf"];
+      return typeof v === "boolean" ? v : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  const problem = (...lines) => {
+    $("problem").replaceChildren(...lines.map((line) => Object.assign(document.createElement("p"), { textContent: line })));
+    show("problem");
+  };
+  (async () => {
+    let prfSupport;
+    [pkR, prfSupport] = await Promise.all([sealer(), webauthn ? prf() : undefined]);
+    show("copy");
+    const noWebAuthn = "This browser cannot run a WebAuthn passkey request. Open this link in an up-to-date browser.";
+    if (!pkR) {
+      return problem(...(webauthn ? [] : [noWebAuthn]), "This browser cannot encrypt beam’s answer. It needs X25519 in Web Crypto. Use Safari 18.4+, Chrome 133+, or Firefox 130+; passkey PRF support is also required.",
+        "Return to the originating machine to cancel or restart.");
+    }
+    show("cancel");
+    if (!webauthn) return problem(noWebAuthn);
+    show("go");
+    if (prfSupport === false) {
+      problem("This browser reports that WebAuthn PRF is unavailable. Choose a supported browser before continuing.");
+      $("compat").open = true;
+      return show("anyway", "anyway-note");
+    }
+    put("capability", prfSupport ? "Browser PRF support detected. Your selected passkey provider must support PRF too."
+      : "This browser cannot confirm PRF support in advance. You can try; beam will check the selected passkey’s result.");
     $("go").disabled = false;
   })();
-  $("go").addEventListener("click", async () => {
-    $("go").disabled = true;
-    say("Waiting for your passkey…");
-    let answer;
-    try {
-      answer = await (op === "c" ? create() : get());
-    } catch (e) {
-      answer = [e && e.name === "NotAllowedError" ? "cancelled" : "failed", {}];
-    }
-    await send(...answer).catch(() => say("beam.n10.is could not be reached. Run the beam command again."));
-  });
 })();
 </script>
 </body>

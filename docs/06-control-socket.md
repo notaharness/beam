@@ -25,8 +25,10 @@ Linux, 103 on macOS) is refused before anything else, naming `BEAM_SOCKET`.
   1; the helper connects to the winner either way.
 - **Shutdown.** `daemon.shutdown`, SIGTERM or SIGINT stop the daemon, whoever started
   it; so does the end of its stdin for one started with `--exit-with-parent`
-  ([07](07-cli.md)). Stopping, the daemon closes its socket first, lets a fleet reset or
-  re-join under way finish, then refuses new streams, ends every stream it serves and
+  ([07](07-cli.md)). Stopping, the daemon closes its socket first (an op that fails
+  meanwhile gets no reply, since the stop may be why, a ceremony's `*.wait` among them;
+  its connection closes when the daemon closes its clients' connections), lets a fleet
+  reset or re-join under way finish, then refuses new streams, ends every stream it serves and
   waits up to 10 s for each to tear down ([04](04-streams.md)), so a session's teardown
   completes before the daemon exits. An open `pty` session holds that for its 5 s grace.
   A fleet reset and a re-join end the streams the same way. Clients treat a closed
@@ -56,7 +58,7 @@ does.
 
 | op | request | result |
 |---|---|---|
-| `status` | | `{ version, ready, enrolled, peerId, label, fleetId?, address?, derp: { region, source }, peers: { connected, offline, revoked, revokedByFleet } }` |
+| `status` | | `{ version, ready, enrolled, generation, peerId, label, fleetId?, address?, derp: { region, source }, peers: { connected, offline, revoked, revokedByFleet } }`; `generation` counts this daemon's enrolment changes since it started, an enrolment and a reset each one, so a re-join into the same fleet with the same `peerId` still reads as a new enrolment |
 | `events.subscribe` | | `{}` |
 | `daemon.shutdown` | | `{}` then exit |
 
@@ -91,7 +93,7 @@ while the daemon waits on the ceremony's slot. One ceremony at a time (`busy`).
 | `fleet.reset` | `{ confirm: "reset" }` | `{}` |
 
 While a `*.wait` runs, its client also gets `stage { stage }` events as the daemon
-reaches `reading directory` and `publishing` ([07](07-cli.md)). A `*.wait` without its
+reaches `reading directory`, `notifying peers` and `publishing` ([07](07-cli.md)). A `*.wait` without its
 `*.start` under way is `ceremony-state`, and so is a slot answered with a result that
 does not open under the ceremony's key ([02](02-identity.md)). `published: "pending"`
 means the directory append is queued in `state.db` and retried (a write the worker

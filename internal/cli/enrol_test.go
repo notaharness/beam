@@ -38,7 +38,7 @@ func initFleet(t *testing.T, label string) *machine {
 	m := blank(t, label)
 	m.start(t)
 	r := m.beam("", "init", "--label", label)
-	if r.code != 0 || !strings.Contains(r.out, "publishing\ncreated fleet ") || !strings.Contains(r.out, "published to directory") {
+	if r.code != 0 || !strings.Contains(r.out, "publishing\ncreated fleet ") || !strings.Contains(r.out, "Published to directory") {
 		t.Fatalf("init: %+v", r)
 	}
 	return m.enrolled(t)
@@ -95,9 +95,10 @@ func join(t *testing.T, label string) *machine {
 }
 
 func (m *machine) status(t *testing.T) (st struct {
-	Enrolled bool   `json:"enrolled"`
-	PeerID   string `json:"peerId"`
-	FleetID  string `json:"fleetId"`
+	Enrolled   bool   `json:"enrolled"`
+	PeerID     string `json:"peerId"`
+	FleetID    string `json:"fleetId"`
+	Generation uint64 `json:"generation"`
 }) {
 	t.Helper()
 	if r := m.beam("", "status", "--json"); r.code != 0 || json.Unmarshal([]byte(r.out), &st) != nil {
@@ -142,7 +143,7 @@ func TestJoinShowsFleet(t *testing.T) {
 	fleet := "fleet " + identity.Fingerprint(owner.Credential().FleetID())
 	m := blank(t, "beta")
 	m.start(t)
-	if r := m.beam("", "join", "--label", "beta"); r.code != 0 || !strings.Contains(r.out, "joined "+fleet+";") {
+	if r := m.beam("", "join", "--label", "beta"); r.code != 0 || !strings.Contains(r.out, "joined "+fleet+";") || !strings.HasSuffix(r.out, "connecting…\nPublished to directory\n") {
 		t.Errorf("join: %+v, want %q", r, fleet)
 	}
 	if r := a.beam("", "status"); !strings.Contains(r.out, " · "+fleet+" · ") {
@@ -194,7 +195,7 @@ func TestRevokeLive(t *testing.T) {
 	connectedAll(t, a, b, c)
 	start := time.Now()
 	r := a.beam("", "revoke", "gamma")
-	want := "publishing\nrevoked \"gamma\" on this machine\npublished to directory\nacknowledged by 1 of 1 peers"
+	want := "notifying peers\npublishing\nrevoked \"gamma\" on this machine\nPublished to directory\nacknowledged by 1 of 1 peers"
 	if r.code != 0 || !strings.Contains(r.out, want) {
 		t.Fatalf("revoke: %+v", r)
 	}
@@ -232,7 +233,7 @@ func TestRevokeWorkerDown(t *testing.T) {
 	await(t, reached, "the revocation's publishing")
 	worker.SetDown(true)
 	release()
-	if r := <-revoked; r.code != 0 || !strings.Contains(r.out, "publication pending; will retry") {
+	if r := <-revoked; r.code != 0 || !strings.Contains(r.out, "Saved on this machine. Directory publication is pending; beam will retry while it runs.") {
 		t.Fatalf("revoke: %+v", r)
 	}
 	waitState(t, a, c, "revoked")
@@ -365,11 +366,13 @@ func TestFleetReset(t *testing.T) {
 		t.Fatalf("fleet.reset without confirm: %v", err)
 	}
 	c.Close()
+	before := b.status(t)
 	if r := b.beam("reset\n", "fleet", "reset"); r.code != 0 {
 		t.Fatalf("reset: %+v", r)
 	}
-	if st := b.status(t); st.Enrolled {
-		t.Fatalf("status after reset: %+v", st)
+	reset := b.status(t)
+	if reset.Enrolled || reset.Generation <= before.Generation {
+		t.Fatalf("status after reset: %+v, before %+v", reset, before)
 	}
 	if _, err := os.Stat(filepath.Join(b.dir, "fleet.json")); !os.IsNotExist(err) {
 		t.Errorf("fleet.json: %v", err)
@@ -379,6 +382,10 @@ func TestFleetReset(t *testing.T) {
 	join2 := b.beam("", "join", "--label", "beta")
 	if join2.code != 0 || b.enrolled(t).id() != id {
 		t.Fatalf("re-join: %+v, id %s want %s", join2, b.id(), id)
+	}
+	// docs/06: the same fleet and peer id, a later generation
+	if st := b.status(t); st.FleetID != before.FleetID || st.PeerID != before.PeerID || st.Generation <= reset.Generation {
+		t.Errorf("status after re-join: %+v, after reset %+v", st, reset)
 	}
 	connectedAll(t, a, b)
 	send("after 1")
@@ -685,7 +692,7 @@ func TestRevocationReadAtStart(t *testing.T) {
 	c := join(t, "gamma")
 	connectedAll(t, a, b, c)
 	b.stop()
-	if r := a.beam("", "revoke", "gamma"); r.code != 0 || !strings.Contains(r.out, "published to directory") {
+	if r := a.beam("", "revoke", "gamma"); r.code != 0 || !strings.Contains(r.out, "Published to directory") {
 		t.Fatalf("revoke: %+v", r)
 	}
 	a.stop()

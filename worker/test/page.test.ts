@@ -26,6 +26,10 @@ describe("the ceremony page", () => {
     }
   });
 
+  it("writes no markup from its script: names from the fragment are text", () => {
+    expect(only("script")).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write|createContextualFragment/);
+  });
+
   it("loads nothing", () => {
     expect(page).not.toMatch(/\bsrc=|<link\b|@import|url\((?!#)/);
     // The one href is a navigation, not a fetch: the repository link in the footer.

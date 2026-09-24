@@ -150,7 +150,8 @@ Cache-Control: public, max-age=300
 ```
 
 The page is a static asset (`worker/public/`) and these headers live in its `_headers`;
-a worker test recomputes the hashes. `connect-src` names the slot route's path prefix,
+a worker test recomputes the hashes, and the page's flows run in Chromium under them,
+failing on any policy violation. `connect-src` names the slot route's path prefix,
 not `'self'`: the page can write a slot and reach nothing else. A deploy that adds a
 table runs `schema.sql` against the remote database first (`worker/README.md`). Deploy is `wrangler deploy` from `worker/` with
 Hermann's Cloudflare account, `beam.n10.is` a custom domain of the worker;
@@ -173,8 +174,9 @@ complexity 4 or below.
 ## CI
 
 Push (`.github/workflows/ci.yml`): job `ci`, required on `main`: the worker's vitest in
-workerd (the CSP hashes included), `make lint`, `make crap` (`go test -race` with
-coverage, the Playwright ceremony test among them, then the CRAP gate), `make dist`
+workerd (the CSP hashes included) and the ceremony page's flows in Chromium, `make
+lint`, `make crap` (`go test -race` with coverage, the Playwright ceremony test among
+them, then the CRAP gate), `make dist`
 (cross-compile four targets), and the `directory` and `ceremony` packages' tests again
 against the worker under `wrangler dev`, the Go directory client and the slot reader
 held to the real routes. Job `darwin`: `make test` on macOS, where the process

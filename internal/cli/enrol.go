@@ -5,11 +5,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 
+	"github.com/notaharness/beam/internal/ceremony"
 	"github.com/notaharness/beam/internal/control"
 	"github.com/notaharness/beam/internal/identity"
 	"golang.org/x/term"
@@ -30,7 +34,7 @@ func runInit(e *env) int {
 	}
 	err := e.ceremony("init", map[string]any{"label": *label, "fleetName": *fleetName}, "create", &res)
 	if err != nil {
-		return e.fail(err)
+		return e.failCeremony("init", err)
 	}
 	fmt.Fprintf(e.stdout, "created fleet %s  ·  this machine: %s (%s)\n%s\n", identity.Fingerprint(res.FleetID), e.label(), identity.Fingerprint(res.PeerID), publication(res.Published))
 	return 0
@@ -44,19 +48,14 @@ func runJoin(e *env) int {
 		return e.fail(errUsage)
 	}
 	var res struct {
-		FleetID string `json:"fleetId"`
-		Members int    `json:"members"`
+		FleetID   string `json:"fleetId"`
+		Members   int    `json:"members"`
+		Published any    `json:"published"`
 	}
-	err := e.ceremony("join", map[string]any{"label": *label}, "sign", &res)
-	var oe *control.OpError
-	if errors.As(err, &oe) && oe.Code == "directory-unavailable" {
-		fmt.Fprintln(e.stderr, "directory unavailable; try again")
-		return 1
+	if err := e.ceremony("join", map[string]any{"label": *label}, "sign", &res); err != nil {
+		return e.failCeremony("join", err)
 	}
-	if err != nil {
-		return e.fail(err)
-	}
-	fmt.Fprintf(e.stdout, "joined fleet %s; %d other machines known; connecting…\n", identity.Fingerprint(res.FleetID), res.Members)
+	fmt.Fprintf(e.stdout, "joined fleet %s; %d other machines known; connecting…\n%s\n", identity.Fingerprint(res.FleetID), res.Members, publication(res.Published))
 	return 0
 }
 
@@ -79,7 +78,7 @@ func runRevoke(e *env) int {
 		AcknowledgedBy int `json:"acknowledgedBy"`
 	}
 	if err := e.ceremony("revoke", map[string]any{"peer": e.args[0]}, "sign", &res); err != nil {
-		return e.fail(err)
+		return e.failCeremony("revoke", err)
 	}
 	label, others := e.args[0], 0
 	for _, p := range who.Peers {
@@ -150,14 +149,18 @@ func (e *env) ceremony(op string, params map[string]any, first string, out any) 
 			fmt.Fprintln(e.stdout, data.Stage)
 		}
 	}
-	return c.Call(op+".wait", nil, out)
+	err = c.Call(op+".wait", nil, out)
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.As(err, new(net.Error)) {
+		return interrupted{err}
+	}
+	return err
 }
 
 // show shows a ceremony's URL: as a QR code for a phone when stdout is a
 // terminal, then as text, the fallback, on every output; and opens the
 // browser when there is one (docs/07).
 func (e *env) show(ceremonyURL, kind string) {
-	fmt.Fprintf(e.stdout, "waiting for your passkey (%s)\n", kind)
+	fmt.Fprintf(e.stdout, "waiting for your passkey (%s)\n%s", kind, summary(ceremonyURL))
 	if f, ok := e.stdout.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
 		_ = drawQR(e.stdout, ceremonyURL) // the URL follows either way
 	}
@@ -192,7 +195,20 @@ func (e *env) label() string {
 
 func publication(p any) string {
 	if p == true {
-		return "published to directory"
+		return "Published to directory"
 	}
-	return "publication pending; will retry"
+	return "Saved on this machine. Directory publication is pending; beam will retry while it runs."
+}
+
+// summary is what a ceremony approves, read from its URL, as the page shows
+// it (docs/07).
+func summary(ceremonyURL string) string {
+	u, _ := url.Parse(ceremonyURL)
+	f, _ := url.ParseQuery(u.Fragment)
+	action := map[string]string{
+		ceremony.Create: "Create fleet passkey for “" + f.Get("n") + "”",
+		ceremony.Add:    "Add “" + f.Get("l") + "” to fleet",
+		ceremony.Remove: "Remove “" + f.Get("l") + "” from fleet",
+	}[f.Get("o")]
+	return fmt.Sprintf("Action               %s\nMachine              %s\nMachine fingerprint  %s\n", action, f.Get("l"), identity.Fingerprint(f.Get("f")))
 }

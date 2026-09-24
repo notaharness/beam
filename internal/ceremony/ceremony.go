@@ -48,7 +48,8 @@ type Request struct {
 
 // Ceremony is one running ceremony, waiting on its slot.
 type Ceremony struct {
-	URL string
+	URL  string
+	Kind string // the Request's
 
 	worker   string // the directory worker holding the slot
 	key      *ecdh.PrivateKey
@@ -84,7 +85,7 @@ func Start(req Request, worker string) (*Ceremony, error) {
 	rand.Read(readKey)
 	h := sha256.Sum256(readKey)
 	ctx, stop := context.WithCancel(context.Background())
-	c := &Ceremony{worker: worker, key: key, readKey: readKey, slot: b64(h[:16]), stop: stop,
+	c := &Ceremony{Kind: req.Kind, worker: worker, key: key, readKey: readKey, slot: b64(h[:16]), stop: stop,
 		done: make(chan outcome, 1), timedOut: make(chan struct{})}
 	frag := url.Values{"o": {req.Kind}, "s": {c.slot}, "k": {b64(key.PublicKey().Bytes())}, "c": {b64(req.Challenge)},
 		"l": {req.Label}, "f": {req.PeerID[:min(16, len(req.PeerID))]}} // the table in docs/02

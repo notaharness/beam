@@ -60,7 +60,7 @@ func (d *daemon) finish(op string, cc *clientConn) (any, error) {
 	defer d.end(f)
 	r, err := f.cer.Wait(f.ctx)
 	if err != nil {
-		return nil, ceremonyErr(err)
+		return nil, ceremonyErr(err, f.cer.Kind)
 	}
 	return f.then(f.ctx, cc, r)
 }
@@ -74,7 +74,7 @@ func (d *daemon) another(ctx context.Context, cc *clientConn, req ceremony.Reque
 	}
 	_ = cc.send(event{"ceremony", map[string]string{"ceremonyUrl": cer.URL}}) // a gone client cancels nothing; the ceremony times out
 	r, err := cer.Wait(ctx)
-	return r, ceremonyErr(err)
+	return r, ceremonyErr(err, cer.Kind)
 }
 
 // stage tells the client waiting on a flow what it does now (docs/07).
@@ -91,9 +91,12 @@ func refusal(err error) error {
 	return fail(err.Error(), "")
 }
 
-// ceremonyErr is a ceremony's end as a socket error.
-func ceremonyErr(err error) error {
-	for _, code := range []error{ceremony.ErrTimeout, ceremony.ErrState, ceremony.ErrCancelled, ceremony.ErrPRFUnsupported} {
+// ceremonyErr is the end of a ceremony of kind as a socket error.
+func ceremonyErr(err error, kind string) error {
+	if errors.Is(err, ceremony.ErrPRFUnsupported) {
+		return fail("prf-unsupported", ceremony.Missing(kind))
+	}
+	for _, code := range []error{ceremony.ErrTimeout, ceremony.ErrState, ceremony.ErrCancelled} {
 		if errors.Is(err, code) {
 			return fail(code.Error(), "")
 		}

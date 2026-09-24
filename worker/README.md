@@ -7,8 +7,8 @@ The directory API and the ceremony page at `https://beam.n10.is` ([docs/09](../d
 
 ```sh
 npm ci
-npm test                              # tsc, then vitest in workerd
-npx playwright install chromium       # for internal/ceremony's TestBrowserCeremony
+npx playwright install chromium       # for the page's flows and internal/ceremony's TestBrowserCeremony
+npm test                              # tsc, vitest in workerd, then the page's flows in Chromium
 ```
 
 The Go directory client's and ceremony slot reader's tests (`internal/directory`,

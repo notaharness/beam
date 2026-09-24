@@ -150,6 +150,9 @@ func (d *daemon) serveConn(c net.Conn) {
 
 func (d *daemon) dispatch(cc *clientConn, req request) {
 	res, err := d.op(cc, req)
+	if err != nil && d.ctx.Err() != nil {
+		return // the daemon is stopping, which may be why: the connection closes unanswered
+	}
 	resp := response{ID: req.ID, OK: err == nil, Result: res}
 	var oe *OpError
 	switch {
