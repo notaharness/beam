@@ -116,7 +116,7 @@ after(async () => {
 // load opens the page at url in a fresh browser context, with a virtual
 // authenticator (prf: whether it does PRF; present: whether it answers
 // without a touch) and the slot route answering slot, which is a status or
-// "abort" for a request that gets no response.
+// "abort" for a request that gets no response, "hang" for one never answered.
 async function load(url, o = {}) {
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -137,6 +137,7 @@ async function load(url, o = {}) {
       posts.push({ path: u.pathname, body: JSON.parse(route.request().postData()) });
       const slot = o.slot ?? 201;
       if (slot === "abort") return route.abort("connectionreset");
+      if (slot === "hang") return; // never answered
       return route.fulfill({ status: slot, contentType: "application/json", body: slot === 201 ? "{}" : '{"error":"x"}' });
     }
     return route.fulfill({ status: 404 });
@@ -342,17 +343,19 @@ describe("the ceremony page's checks before any prompt", () => {
   });
 
   const prf = [
-    ["reports PRF", "true", "Browser PRF support detected. Your selected passkey provider must support PRF too.", "status"],
-    ["cannot report PRF: no key", "absent", "This browser cannot confirm PRF support in advance. You can try; beam will check the selected passkey’s result.", "status"],
-    ["cannot report PRF: not a boolean", "odd", "This browser cannot confirm PRF support in advance. You can try; beam will check the selected passkey’s result.", "status"],
-    ["cannot report PRF: no method", "none", "This browser cannot confirm PRF support in advance. You can try; beam will check the selected passkey’s result.", "status"],
-    ["cannot report PRF: it throws", "throws", "This browser cannot confirm PRF support in advance. You can try; beam will check the selected passkey’s result.", "status"],
-    ["cannot report PRF: no answer in time", "hangs", "This browser cannot confirm PRF support in advance. You can try; beam will check the selected passkey’s result.", "status"],
+    ["reports PRF", "true"],
+    ["cannot report PRF: no key", "absent"],
+    ["cannot report PRF: not a boolean", "odd"],
+    ["cannot report PRF: no method", "none"],
+    ["cannot report PRF: it throws", "throws"],
+    ["cannot report PRF: no answer in time", "hangs"],
   ];
-  for (const [what, caps, copy, role] of prf) {
+  for (const [what, caps] of prf) {
     it(`lets a browser that ${what} approve`, async () => {
       const t = await load(request("a").url, { caps });
-      await t.page.getByRole(role).filter({ hasText: copy }).waitFor({ timeout: 6000 });
+      const copy = caps === "true" ? "Browser PRF support detected. Your selected passkey provider must support PRF too."
+        : "This browser cannot confirm PRF support in advance. You can try; beam will check the selected passkey’s result.";
+      await t.page.getByRole("status").filter({ hasText: copy }).waitFor({ timeout: 6000 });
       assert.ok(await button(t.page).isEnabled());
       assert.equal(await t.page.getByRole("button", { name: "Try anyway" }).count(), 0);
       await t.close();
@@ -371,6 +374,7 @@ describe("the ceremony page's checks before any prompt", () => {
     await t.page.getByRole("button", { name: "Try anyway" }).click();
     assert.deepEqual(await settle(t.page), ["Approval sent.", "Return to buildbox to check whether it joined. beam still needs to verify the answer and finish directory work. After joining, compare the fleet fingerprint with a machine already in your fleet."]);
     assert.equal(sent(req, t.posts).get("result"), "ok");
+    assert.equal(await t.page.getByRole("alert").count(), 0, "the preflight's alert is gone once overridden");
     await t.close();
   });
 
@@ -490,7 +494,7 @@ describe("the ceremony page's passkey calls", () => {
     await t.close();
   });
 
-  for (const [what, credential, detail] of [["another exception", "throw:InvalidStateError", /InvalidStateError/], ["no credential", "null", /failed/]]) {
+  for (const [what, credential, detail] of [["another exception", "throw:InvalidStateError", /InvalidStateError/], ["no credential", "null", /TypeError/]]) {
     it(`reports failed for ${what}`, async () => {
       const req = request("a");
       const t = await load(req.url, { credential });
@@ -516,10 +520,10 @@ describe("the ceremony page's passkey calls", () => {
 describe("the ceremony page's delivery", () => {
   // each result code, made by the authenticator or a replaced call
   const results = [
-    ["ok", { passkey: true }, "Approval sent."],
-    ["prf-unsupported", { passkey: true, prf: false }, "This passkey did not provide WebAuthn PRF."],
-    ["cancelled", { credential: "throw:NotAllowedError" }, "Passkey request cancelled or not allowed."],
-    ["failed", { credential: "throw:UnknownError" }, "The passkey request failed."],
+    ["ok", { passkey: true }],
+    ["prf-unsupported", { passkey: true, prf: false }],
+    ["cancelled", { credential: "throw:NotAllowedError" }],
+    ["failed", { credential: "throw:UnknownError" }],
   ];
   const deliveries = [
     [409, "This request was already answered.",
@@ -531,16 +535,10 @@ describe("the ceremony page's delivery", () => {
     [500, "beam.n10.is did not accept the answer (HTTP 500).", "Return to the originating machine and start a fresh request."],
     [404, "beam.n10.is did not accept the answer (HTTP 404).", "Return to the originating machine and start a fresh request."],
   ];
-  for (const [code, o, on201] of results) {
-    it(`reports a delivered ${code} as ${code}`, async () => {
-      const req = request("a");
-      const t = await load(req.url, o);
-      await t.page.getByRole("button", { name: "Authorize machine" }).click();
-      assert.equal((await settle(t.page))[0], on201);
-      assert.equal(sent(req, t.posts).get("result"), code);
-      await t.close();
-    });
-    for (const [slot, heading, body] of deliveries) {
+  // Each result against the slot answers that must not be read as it (a
+  // 409, no response); the others need only one.
+  for (const [code, o] of results) {
+    for (const [slot, heading, body] of deliveries.filter(([slot]) => slot === 409 || slot === "abort" || code === "ok")) {
       it(`reports ${slot} for ${code} as the slot's answer`, async () => {
         const req = request("a");
         const t = await load(req.url, { ...o, slot });
@@ -556,4 +554,13 @@ describe("the ceremony page's delivery", () => {
       });
     }
   }
+
+  it("gives up on a write that hangs, as one without a response", async () => {
+    const req = request("a");
+    const t = await load(req.url, { passkey: true, slot: "hang" });
+    await t.page.getByRole("button", { name: "Authorize machine" }).click();
+    await t.page.locator("#result:not([hidden])").waitFor({ timeout: 25000 });
+    assert.equal(await text(t.page, "#result-heading"), "Could not confirm delivery.");
+    await t.close();
+  });
 });

@@ -261,7 +261,7 @@ sealed = HPKE base mode, single shot (RFC 9180):
    | `201`, `failed` | The passkey request failed. |
    | `409` | This request was already answered. ([01](01-model.md), The relayed result) |
    | `429` | Too many requests. |
-   | no response | Could not confirm delivery. (the answer may have arrived; nothing is sent again) |
+   | no response in 20 s | Could not confirm delivery. (the answer may have arrived; nothing is sent again) |
    | any other status | beam.n10.is did not accept the answer (HTTP {status}). |
    | sealing failed after the call | Could not encrypt the answer. (nothing was sent) |
 
@@ -278,13 +278,10 @@ The page seals with Web Crypto alone (X25519, HMAC-SHA-256 for HPKE's labelled H
 AES-GCM), so it runs where Web Crypto has X25519: Safari 18.4 and later (iOS and iPadOS
 18.4), Chrome 133, Firefox 130. The daemon opens with Go's `crypto/hpke`. PRF is a
 separate requirement, of the browser, the operating system and the passkey provider
-together: Safari has had it since 18.0, which without X25519 is not enough for this page,
-and Firefox on desktop since 139; a provider must return it for beam's credential too,
-as 1Password for iOS does from 8.10.74 on iOS 18. The page's **Passkey compatibility**
-section lists what vendors document and marks the rest (Windows Hello, Google Password
-Manager, Bitwarden, Proton Pass, Edge, Samsung Internet, security-key firmware)
-unverified. It is documentation, not a tested matrix; the page's checks and the
-passkey's result decide.
+together. What vendors document for each, and what is unverified, is on the page's
+**Passkey compatibility** section and in `beam`'s `prf-unsupported` explanation
+([07](07-cli.md)); it is not a tested matrix, and the page's checks and the passkey's
+result decide.
 
 Page CSP: `default-src 'none'; script-src 'sha256-…'; style-src 'sha256-…'; connect-src
 https://beam.n10.is/v1/slots/`. The one request it makes is the slot write.

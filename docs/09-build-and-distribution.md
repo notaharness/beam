@@ -174,8 +174,9 @@ complexity 4 or below.
 ## CI
 
 Push (`.github/workflows/ci.yml`): job `ci`, required on `main`: the worker's vitest in
-workerd (the CSP hashes included) and the ceremony page's flows in Chromium, `make lint`, `make crap` (`go test -race` with
-coverage, the Playwright ceremony test among them, then the CRAP gate), `make dist`
+workerd (the CSP hashes included) and the ceremony page's flows in Chromium, `make
+lint`, `make crap` (`go test -race` with coverage, the Playwright ceremony test among
+them, then the CRAP gate), `make dist`
 (cross-compile four targets), and the `directory` and `ceremony` packages' tests again
 against the worker under `wrangler dev`, the Go directory client and the slot reader
 held to the real routes. Job `darwin`: `make test` on macOS, where the process

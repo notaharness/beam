@@ -68,15 +68,11 @@ the one boundary the test authenticator cannot exercise.
 `worker/test/flows.test.mjs` (`node --test`, part of the worker's `npm test`) drives the
 page in Chromium under its `_headers`, with a CDP virtual authenticator, the slot route
 answered by the test and every write opened with the ceremony's key, so each test sees
-the result code the page sealed. Browser capabilities the authenticator cannot vary
-(no WebAuthn, no X25519, each `getClientCapabilities` answer, a call that throws, hangs
-or returns nothing, PRF output of the wrong size) are replaced before the page loads.
-It covers the tables of [02](02-identity.md), Ceremonies: every refused fragment, each
-`o`'s heading, Action and button, every check before the prompt, each result code
-against `201`, `409`, `429`, other statuses and no response, and that no prompt comes
-before a click, one call and one write come of any number of clicks and cancels, and no
-policy violation occurs. A mocked authenticator is no evidence of what a real device or
-provider supports; that stays in the manual checks below.
+the result code the page sealed. Browser capabilities the authenticator cannot vary are
+replaced before the page loads. It holds the page to the tables of
+[02](02-identity.md), Ceremonies, and fails on any policy violation. A mocked
+authenticator is no evidence of what a real device or provider supports; that stays in
+the manual checks below.
 
 ## Fake worker
 
