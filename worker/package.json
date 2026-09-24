@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "tsc -p . && vitest run"
+    "test": "tsc -p . && vitest run && node --test test/flows.test.mjs"
   },
   "dependencies": {
     "@simplewebauthn/server": "^14.0.2"
