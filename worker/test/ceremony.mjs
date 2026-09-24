@@ -41,22 +41,22 @@ await page.route("https://beam.n10.is/**", async (route) => {
 });
 page.on("console", (m) => m.type() === "error" && console.error("page:", m.text()));
 
-// approve opens url afresh, approves, and waits for the page to say want.
+// approve opens url afresh, approves, and waits for the page's result to say
+// want.
 async function approve(url, want) {
   await page.goto("about:blank"); // a URL that differs only in its fragment would not load the page again
   await page.goto(url);
   await page.click("#go");
-  await page.locator("#status").filter({ hasText: want }).waitFor();
+  await page.locator("#result-heading").filter({ hasText: want }).waitFor();
 }
 
 // Each ceremony is answered once. A get is then answered again, as a second
 // device would: the slot is taken, and the page says so. (A second create
 // would leave the authenticator a credential the later get might pick.)
 for await (const url of createInterface({ input: process.stdin })) {
-  await approve(url, "Done.");
-  if (new URLSearchParams(new URL(url).hash.slice(1)).get("o") !== "c") {
-    await approve(url, "already answered from another device");
-  }
+  const create = new URLSearchParams(new URL(url).hash.slice(1)).get("o") === "c";
+  await approve(url, create ? "Passkey created. One more step." : "Approval sent.");
+  if (!create) await approve(url, "This request was already answered.");
   console.log("done");
 }
 await browser.close();
