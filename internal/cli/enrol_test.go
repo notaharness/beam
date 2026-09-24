@@ -95,9 +95,10 @@ func join(t *testing.T, label string) *machine {
 }
 
 func (m *machine) status(t *testing.T) (st struct {
-	Enrolled bool   `json:"enrolled"`
-	PeerID   string `json:"peerId"`
-	FleetID  string `json:"fleetId"`
+	Enrolled   bool   `json:"enrolled"`
+	PeerID     string `json:"peerId"`
+	FleetID    string `json:"fleetId"`
+	Generation uint64 `json:"generation"`
 }) {
 	t.Helper()
 	if r := m.beam("", "status", "--json"); r.code != 0 || json.Unmarshal([]byte(r.out), &st) != nil {
@@ -365,11 +366,13 @@ func TestFleetReset(t *testing.T) {
 		t.Fatalf("fleet.reset without confirm: %v", err)
 	}
 	c.Close()
+	before := b.status(t)
 	if r := b.beam("reset\n", "fleet", "reset"); r.code != 0 {
 		t.Fatalf("reset: %+v", r)
 	}
-	if st := b.status(t); st.Enrolled {
-		t.Fatalf("status after reset: %+v", st)
+	reset := b.status(t)
+	if reset.Enrolled || reset.Generation <= before.Generation {
+		t.Fatalf("status after reset: %+v, before %+v", reset, before)
 	}
 	if _, err := os.Stat(filepath.Join(b.dir, "fleet.json")); !os.IsNotExist(err) {
 		t.Errorf("fleet.json: %v", err)
@@ -379,6 +382,10 @@ func TestFleetReset(t *testing.T) {
 	join2 := b.beam("", "join", "--label", "beta")
 	if join2.code != 0 || b.enrolled(t).id() != id {
 		t.Fatalf("re-join: %+v, id %s want %s", join2, b.id(), id)
+	}
+	// docs/06: the same fleet and peer id, a later generation
+	if st := b.status(t); st.FleetID != before.FleetID || st.PeerID != before.PeerID || st.Generation <= reset.Generation {
+		t.Errorf("status after re-join: %+v, after reset %+v", st, reset)
 	}
 	connectedAll(t, a, b)
 	send("after 1")

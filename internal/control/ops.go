@@ -72,15 +72,16 @@ func (d *daemon) op(cc *clientConn, r request) (any, error) {
 }
 
 type statusResult struct {
-	Version  string     `json:"version"`
-	Ready    bool       `json:"ready"`
-	Enrolled bool       `json:"enrolled"`
-	PeerID   string     `json:"peerId,omitempty"`
-	Label    string     `json:"label,omitempty"`
-	FleetID  string     `json:"fleetId,omitempty"`
-	Address  string     `json:"address,omitempty"`
-	DERP     derpStatus `json:"derp"`
-	Peers    peerCounts `json:"peers"`
+	Version    string     `json:"version"`
+	Ready      bool       `json:"ready"`
+	Enrolled   bool       `json:"enrolled"`
+	Generation uint64     `json:"generation"`
+	PeerID     string     `json:"peerId,omitempty"`
+	Label      string     `json:"label,omitempty"`
+	FleetID    string     `json:"fleetId,omitempty"`
+	Address    string     `json:"address,omitempty"`
+	DERP       derpStatus `json:"derp"`
+	Peers      peerCounts `json:"peers"`
 }
 
 type derpStatus struct {
@@ -96,8 +97,10 @@ type peerCounts struct {
 }
 
 func opStatus(d *daemon, _ *clientConn, _ request) (any, error) {
-	res := statusResult{Version: d.o.Version}
-	e := d.enrolment()
+	d.mu.Lock()
+	e, gen := d.en, d.gen // the enrolment and its generation together
+	d.mu.Unlock()
+	res := statusResult{Version: d.o.Version, Generation: gen}
 	if e == nil {
 		return res, nil
 	}

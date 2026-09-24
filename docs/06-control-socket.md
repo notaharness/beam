@@ -58,7 +58,7 @@ does.
 
 | op | request | result |
 |---|---|---|
-| `status` | | `{ version, ready, enrolled, peerId, label, fleetId?, address?, derp: { region, source }, peers: { connected, offline, revoked, revokedByFleet } }` |
+| `status` | | `{ version, ready, enrolled, generation, peerId, label, fleetId?, address?, derp: { region, source }, peers: { connected, offline, revoked, revokedByFleet } }`; `generation` counts this daemon's enrolment changes since it started, an enrolment and a reset each one, so a re-join into the same fleet with the same `peerId` still reads as a new enrolment |
 | `events.subscribe` | | `{}` |
 | `daemon.shutdown` | | `{}` then exit |
 
