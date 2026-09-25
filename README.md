@@ -31,9 +31,8 @@ you trust during a pairing ceremony.
 
 ## Install and quick start
 
-The implementation is a prototype. The npm package is prepared for release but has not
-been published yet. Once released, install it on each machine (macOS or Linux, arm64
-or x64):
+The implementation is a prototype. Install the npm package on each machine (macOS or
+Linux, arm64 or x64):
 
 ```sh
 npm install -g @notaharness/beam
