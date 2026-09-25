@@ -194,8 +194,6 @@ packs the same binaries, handed over as a workflow artifact, and publishes the p
 packages and last the shim, with provenance, under `next` for a prerelease. It
 authenticates through npm's trusted publishing (OIDC: `id-token: write`, npm 11.5.1 or
 later, which Node 24 has), each package naming `notaharness/beam` and `release.yml` as
-its trusted publisher. A package with none yet, at the first release, is published with
-the `NPM_TOKEN` secret, which npm falls back to while it is set. Run by hand from `main`
+its trusted publisher. Run by hand from `main`
 (`workflow_dispatch`) with a version, the workflow rehearses that release: no GitHub
-release, whose the token is if there is one, and `npm publish --dry-run`. CONTRIBUTING.md
-has the steps.
+release, and `npm publish --dry-run`. CONTRIBUTING.md has the steps.
