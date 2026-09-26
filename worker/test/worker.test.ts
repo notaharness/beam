@@ -206,6 +206,13 @@ describe("docs/09 rate", () => {
     expect((await call("GET", "/v1/entries", undefined, f.token, "192.0.2.2")).status).toBe(200);
   }, 30_000); // 123 requests, which a slow runner takes over the default 5 s for
 
+  // An IPv6 client holds a /64 at least: its addresses share one rate.
+  it("counts an IPv6 client by its /64", async () => {
+    for (let i = 0; i < 120; i++) await call("GET", "/v1/entries", undefined, random(32), "2001:db8:0:1::1");
+    expect((await call("GET", "/v1/entries", undefined, random(32), "2001:DB8:0:1:ffff:0:0:2")).status).toBe(429);
+    expect((await call("GET", "/v1/entries", undefined, random(32), "2001:db8:0:2::1")).status).toBe(401);
+  }, 30_000);
+
   // Anyone can register a fleet with a key of their own, each fleet a store of
   // up to 5,000 entries: an address creates a few a minute, which a person
   // starting a fleet never needs more than.
