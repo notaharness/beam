@@ -5,7 +5,10 @@ port is the only other thing it listens on; a ceremony's result comes back throu
 worker, [02](02-identity.md).) Override with `BEAM_SOCKET`, which is also what the
 daemon injects into remote processes; `BEAM_CONFIG_DIR` selects the directory and
 therefore the default path. A path longer than a Unix socket address holds (107 bytes on
-Linux, 103 on macOS) is refused before anything else, naming `BEAM_SOCKET`.
+Linux, 103 on macOS) is refused before anything else, naming `BEAM_SOCKET`. A socket path
+another user owns is refused too, by clients and by a starting daemon alike: where
+`BEAM_SOCKET` names a shared directory, whoever listened there first is not this user's
+daemon.
 
 ## Lifecycle
 

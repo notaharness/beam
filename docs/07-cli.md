@@ -80,7 +80,10 @@ scan with your phone or open the link; approve only a page that shows what you r
 
 Action, Machine and Machine fingerprint are read from the URL's fragment and are what
 the page shows for it, the Action in the page's words ([02](02-identity.md),
-Ceremonies).
+Ceremonies). The CLI shows, draws and opens only a request on the ceremony page: a URL
+that is not printable ASCII, not under `https://beam.n10.is/#`, or whose action, label,
+fingerprint or fleet name is not one, is refused as `internal` and the ceremony
+cancelled, whatever answered on the socket.
 
 The QR code encodes the URL byte for byte at error correction level L. Each character
 cell is a braille pattern (U+2800–U+28FF) holding 2 × 4 modules, a light module a raised

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net"
 	"os"
@@ -60,13 +61,31 @@ func Connect(p Paths, env []string) (*Client, error) {
 	return nil, errors.Join(spawnErr, err)
 }
 
-// Dial connects to the daemon at p if one listens.
+// Dial connects to the daemon at p if one listens there and its socket is
+// this user's.
 func Dial(p Paths) (*Client, error) {
+	if err := owned(p.Socket); err != nil {
+		return nil, err
+	}
 	c, err := net.Dial("unix", p.Socket)
 	if err != nil {
 		return nil, err
 	}
 	return newClient(c), nil
+}
+
+// owned refuses a path another user owns (docs/06): where BEAM_SOCKET names
+// a shared directory, whoever listened there first is not this user's
+// daemon. A path with nothing at it is left for the dial to report.
+func owned(path string) error {
+	st, err := os.Stat(path)
+	if err != nil {
+		return nil
+	}
+	if uid := st.Sys().(*syscall.Stat_t).Uid; int(uid) != os.Getuid() {
+		return fmt.Errorf("%s belongs to another user (uid %d): %w", path, uid, fs.ErrPermission)
+	}
+	return nil
 }
 
 func newClient(c net.Conn) *Client {

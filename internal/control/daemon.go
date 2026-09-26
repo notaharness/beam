@@ -125,7 +125,11 @@ func lock(path string) (func(), error) {
 }
 
 // listen serves the socket with mode 0600, removing a file no one listens on.
+// It takes over no path another user owns.
 func listen(path string) (net.Listener, error) {
+	if err := owned(path); err != nil {
+		return nil, err
+	}
 	if c, err := net.Dial("unix", path); err == nil {
 		c.Close()
 		return nil, fmt.Errorf("%s: another daemon is listening", path)
