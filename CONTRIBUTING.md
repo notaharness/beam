@@ -4,6 +4,9 @@ The spec in `docs/` is the contract. Code follows it; where they drift, one of t
 fixed in the same PR, and the PR says which. A choice the spec is silent on is recorded
 in `docs/11-decisions.md`.
 
+A security vulnerability is reported privately, as [SECURITY.md](SECURITY.md) says, not
+in an issue or a pull request.
+
 ## No clutter
 
 One way to do each thing. No flag nobody sets, no abstraction with one implementation,
@@ -44,8 +47,8 @@ the work, and docs/09 describes it.
 
 1. Every PR of the stack is merged and `main` is green.
 2. Rehearse from `main`: `gh workflow run release.yml -f version=vX.Y.Z`, then
-   `gh run watch`. The whole workflow runs without a GitHub release and with
-   `npm publish --dry-run`, and its log says whose npm token would publish, if any.
+   `gh run watch`. The whole workflow runs without a GitHub release or an npm publish,
+   and checks that npm takes it as every package's trusted publisher.
 3. `git tag vX.Y.Z main && git push origin vX.Y.Z`. Job `release` checks the tag is
    canonical semver, builds the four binaries and the four of the test kit, packs the five
    npm packages, checks npm would publish each at the binary's version, and creates the
@@ -71,21 +74,14 @@ When a job fails part-way:
   the version is spent. Delete its GitHub release (`gh release delete vX.Y.Z`) and
   release the next patch.
 
-### First release
+### npm trusted publishing
 
-`v0.1.0` publishes packages that npm does not have yet, and a trusted publisher can
-only be set on a package that exists, so that one release publishes with a token.
-
-1. The scope `@notaharness` is the npm organization `notaharness`; it must exist.
-2. The repository secret `NPM_TOKEN` is a granular npm access token with read and write
-   on the `@notaharness` scope. It exists for this release only.
-3. Release `v0.1.0` as above; the `publish` job's log names the token's user.
-4. On npmjs.com, for each of `@notaharness/beam`, `@notaharness/beam-darwin-arm64`,
-   `@notaharness/beam-darwin-x64`, `@notaharness/beam-linux-x64` and
-   `@notaharness/beam-linux-arm64`: Settings, Trusted Publisher, GitHub Actions, with
-   organization `notaharness`, repository `beam`, workflow filename `release.yml` and
-   no environment. Then set its publishing access to require two-factor authentication
-   and disallow tokens.
-5. Delete the token on npmjs.com, and the secret: `gh secret delete NPM_TOKEN`. Every
-   later release publishes through trusted publishing, and the `publish` job's log says
-   so.
+The workflow holds no npm token. Each of `@notaharness/beam`,
+`@notaharness/beam-darwin-arm64`, `@notaharness/beam-darwin-x64`,
+`@notaharness/beam-linux-x64` and `@notaharness/beam-linux-arm64` has a trusted
+publisher on npmjs.com (the package's Settings, Trusted Publisher, GitHub Actions):
+organization `notaharness`, repository `beam`, workflow filename `release.yml`, no
+environment. Each package's publishing access requires two-factor authentication and
+disallows tokens. npm sets a trusted publisher only on a package that exists, so a new
+platform package is first published by hand at `0.0.0`, a version no release uses; then
+set its trusted publisher and publishing access.

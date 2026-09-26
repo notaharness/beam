@@ -75,31 +75,28 @@ jobs:
     env:
       VERSION: ${{ needs.release.outputs.version }}
       DIST_TAG: ${{ needs.release.outputs.prerelease == 'true' && 'next' || 'latest' }}
-      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && '--dry-run' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24 # npm 11.5.1 or later publishes through trusted publishing
-          registry-url: https://registry.npmjs.org
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: binaries
           path: dist
       - run: node npm/pack.mjs "$VERSION"
-      # npm tries trusted publishing (OIDC) first and falls back to the token,
-      # so the NPM_TOKEN secret matters only while a package has no trusted
-      # publisher: the first release.
-      - name: the npm token, when NPM_TOKEN is set
-        run: |
-          if [ -z "$NODE_AUTH_TOKEN" ]; then echo "no NPM_TOKEN: publishing through trusted publishing"; exit 0; fi
-          echo "NPM_TOKEN is $(npm whoami)'s"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: publish the platform packages, then the shim
+      # npm publish exchanges the job's OIDC token even in a dry run, and logs
+      # whether the package's trusted publisher took it. Every package must
+      # before any is published: a publish that stops part-way spends the version.
+      - name: npm takes this workflow as every package's trusted publisher
         run: |
           for p in dist/npm/beam-*/ dist/npm/beam/; do
-            npm publish $DRY_RUN --provenance --access public --tag "$DIST_TAG" "$p"
+            npm publish --dry-run --loglevel verbose --tag "$DIST_TAG" "$p" 2> npm.log || { cat npm.log; exit 1; }
+            grep -q 'oidc Successfully retrieved and set token' npm.log || { grep oidc npm.log; echo "$p: no trusted publisher took this workflow"; exit 1; }
           done
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - if: github.event_name == 'push'
+        name: publish the platform packages, then the shim
+        run: |
+          for p in dist/npm/beam-*/ dist/npm/beam/; do
+            npm publish --provenance --access public --tag "$DIST_TAG" "$p"
+          done
