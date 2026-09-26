@@ -47,8 +47,8 @@ the work, and docs/09 describes it.
 
 1. Every PR of the stack is merged and `main` is green.
 2. Rehearse from `main`: `gh workflow run release.yml -f version=vX.Y.Z`, then
-   `gh run watch`. The whole workflow runs without a GitHub release and with
-   `npm publish --dry-run`.
+   `gh run watch`. The whole workflow runs without a GitHub release or an npm publish,
+   and checks that npm takes it as every package's trusted publisher.
 3. `git tag vX.Y.Z main && git push origin vX.Y.Z`. Job `release` checks the tag is
    canonical semver, builds the four binaries and the four of the test kit, packs the five
    npm packages, checks npm would publish each at the binary's version, and creates the
