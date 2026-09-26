@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -666,6 +667,55 @@ func TestRefusedWriteDropped(t *testing.T) {
 		sqlite(t, a, func(tx *sql.Tx) error { return tx.QueryRow(`SELECT count(*) FROM pending`).Scan(&queued) })
 		return queued == 0
 	})
+}
+
+// docs/07 Enrolment: the CLI shows and opens only a ceremony on beam.n10.is's
+// page, whatever answers on the socket, and prints nothing of its fragment a
+// terminal would take as a control sequence.
+func TestCeremonyURLChecked(t *testing.T) {
+	m := blank(t, "box")
+	os.MkdirAll(filepath.Dir(m.paths().Socket), 0o700)
+	ln, err := net.Listen("unix", m.paths().Socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	hostile := "file:///Applications/Calculator.app#f=0123456789abcdef&l=" + url.QueryEscape("box\x1b]0;owned\x07") + "&o=a"
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go fakeDaemon(c, map[string]any{"join.start": map[string]string{"ceremonyUrl": hostile}})
+		}
+	}()
+	r := m.beam("", "join", "--label", "box")
+	if r.code == 0 || strings.Contains(r.out, "file://") || strings.ContainsRune(r.out+r.err, 0x1b) {
+		t.Fatalf("a hostile ceremony URL: %+v", r)
+	}
+}
+
+// fakeDaemon answers each op on c with its result in results, and any other
+// op with ceremony-cancelled.
+func fakeDaemon(c net.Conn, results map[string]any) {
+	defer c.Close()
+	d := json.NewDecoder(c)
+	for {
+		var req struct {
+			ID json.RawMessage `json:"id"`
+			Op string          `json:"op"`
+		}
+		if d.Decode(&req) != nil {
+			return
+		}
+		res := map[string]any{"id": req.ID, "ok": false, "error": "ceremony-cancelled"}
+		if r, ok := results[req.Op]; ok {
+			res = map[string]any{"id": req.ID, "ok": true, "result": r}
+		}
+		b, _ := json.Marshal(res)
+		c.Write(append(b, '\n'))
+	}
 }
 
 // docs/06: only the worker's own refusal drops a queued write. A 4xx from
