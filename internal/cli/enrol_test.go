@@ -407,6 +407,24 @@ func TestFleetReset(t *testing.T) {
 	}
 }
 
+// docs/02 reset: a reset is how a compromised fleet recovers, and a node key
+// copied off a machine is part of what it recovers from. The machine's next
+// enrolment has a new node key, so a new peer id.
+func TestResetNewKey(t *testing.T) {
+	a := initFleet(t, "alpha")
+	b := join(t, "beta")
+	connectedAll(t, a, b)
+	if r := b.beam("reset\n", "fleet", "reset"); r.code != 0 {
+		t.Fatalf("reset: %+v", r)
+	}
+	if r := b.beam("", "join", "--label", "beta"); r.code != 0 {
+		t.Fatalf("join: %+v", r)
+	}
+	if id := b.status(t).PeerID; id == b.id() {
+		t.Fatalf("beta enrolled again as %s, its old key", id[:8])
+	}
+}
+
 // docs/02 reset: a reset ends the ceremony under way, and one whose result is
 // already being handled commits nothing; one committing finishes first. The
 // machine ends reset.
