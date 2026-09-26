@@ -5,6 +5,7 @@ package cli_test
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -737,6 +738,52 @@ func fakeDaemon(c net.Conn, results map[string]any) {
 		}
 		b, _ := json.Marshal(res)
 		c.Write(append(b, '\n'))
+	}
+}
+
+// docs/02 directory: the worker keeps the first blob for a statement, and
+// verifies the assertion, not the blob. A statement it holds already counts
+// as published only if what it holds is the record: a copy of the
+// revocation's assertion, appended first with a junk blob (by a member the
+// revocation was pushed to), leaves the revocation queued, not published,
+// and so does the retry that follows.
+func TestHeldStatementChecked(t *testing.T) {
+	a := initFleet(t, "alpha")
+	c := join(t, "gamma")
+	connectedAll(t, a, c)
+	reached, release := pauseAt(t, a, "publishing", c.id())
+	revoked := make(chan result, 1)
+	go func() { revoked <- a.beam("", "revoke", "gamma") }()
+	await(t, reached, "the revocation's publishing")
+	var rec identity.Record
+	sqlite(t, a, func(tx *sql.Tx) error {
+		var b []byte
+		err := tx.QueryRow(`SELECT record FROM pending`).Scan(&b)
+		if err == nil {
+			err = json.Unmarshal(b, &rec)
+		}
+		return err
+	})
+	h := rec.StatementHash()
+	junk, _ := json.Marshal(map[string]any{"kind": rec.Kind, "statementHash": base64.RawURLEncoding.EncodeToString(h[:]),
+		"blob": base64.RawURLEncoding.EncodeToString(make([]byte, 64)), "assertion": rec.Assertion})
+	res, err := http.Post(dirURL+"/v1/fleets/"+owner.Credential().FleetID()+"/entries", "application/json", strings.NewReader(string(junk)))
+	if err != nil || res.StatusCode != http.StatusCreated {
+		t.Fatalf("junk append: %v %v", res, err)
+	}
+	res.Body.Close()
+	reads := worker.Reads(owner.Credential().FleetID())
+	release()
+	if r := <-revoked; r.code != 0 || strings.Contains(r.out, "Published to directory") {
+		t.Fatalf("a revocation over its statement held with junk: %+v", r)
+	}
+	waitFor(t, 5*time.Second, "the publish's and the retry's reads", func() bool {
+		return worker.Reads(owner.Credential().FleetID()) >= reads+2
+	})
+	var queued int
+	sqlite(t, a, func(tx *sql.Tx) error { return tx.QueryRow(`SELECT count(*) FROM pending`).Scan(&queued) })
+	if queued != 1 {
+		t.Errorf("%d writes queued, want the revocation", queued)
 	}
 }
 
