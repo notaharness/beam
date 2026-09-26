@@ -54,6 +54,23 @@ func TestExec(t *testing.T) {
 	}
 }
 
+// docs/04 Injected environment: a remote process starts from a login's
+// environment, not the whole of the daemon's. What the daemon's starter had,
+// a tmux pane, an SSH session or a token, stays with the daemon.
+func TestExecEnvironment(t *testing.T) {
+	t.Setenv("TMUX", "/tmp/tmux-1000/default,4242,0")
+	t.Setenv("TMUX_PANE", "%7")
+	t.Setenv("SSH_AUTH_SOCK", "/tmp/ssh-beam/agent.1")
+	t.Setenv("GITHUB_TOKEN", "hunter2")
+	t.Setenv("LANG", "C.UTF-8")
+	ms := fleet(t, "alpha", "beta")
+	waitState(t, ms[0], ms[1], "connected")
+	r := ms[0].beam("", "exec", "beta", "--", "sh", "-c", `printf '%s|%s|%s|%s|%s|%s' "$TMUX" "$TMUX_PANE" "$SSH_AUTH_SOCK" "$GITHUB_TOKEN" "$LANG" "$HOME"`)
+	if want := "||||C.UTF-8|" + os.Getenv("HOME"); r.code != 0 || r.out != want {
+		t.Fatalf("got %+v, want stdout %q", r, want)
+	}
+}
+
 func TestExecKilledBySignal(t *testing.T) {
 	ms := fleet(t, "alpha", "beta")
 	waitState(t, ms[0], ms[1], "connected")
