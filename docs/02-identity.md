@@ -98,7 +98,7 @@ challenge     = SHA-256( "beam-member:v1" ‖ statementHash )
 4. `assertion.credentialId == fleet.credentialId`.
 5. Recompute the challenge. Verify the assertion with a WebAuthn library
    (`go-webauthn/webauthn`): `type == "webauthn.get"`, `origin == "https://beam.n10.is"`,
-   `rpIdHash == SHA-256("beam.n10.is")`, UV flag set, signature valid under
+   `rpIdHash == SHA-256("beam.n10.is")`, UP and UV flags set, `crossOrigin` not true, signature valid under
    `fleet.credentialPublicKey`, sign count ignored.
 6. `peerId` has no revocation.
 

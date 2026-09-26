@@ -138,7 +138,7 @@ page and past `since`, a minute for a whole read. A worker outside them is unava
 | `POST /v1/fleets/:id/entries` | the assertion in the body | `{ kind, statementHash, blob, assertion }`. Verifies the assertion with the domain of `kind` (`member` or `revoke`). `201 { seq }`; `200 { seq }` if `statementHash` already exists; `404` for an unknown fleet. |
 
 Assertion verification (`@simplewebauthn/server`): origin `https://beam.n10.is`, RP ID
-`beam.n10.is`, UV required, challenge as above, counter ignored, and the assertion's
+`beam.n10.is`, UP and UV required, cross-origin client data refused, challenge as above, counter ignored, and the assertion's
 credential id must be the fleet's. A refused append is `403`, a body or a blob over its
 cap or a full fleet `413`, and a client address over its rate `429`, through Workers'
 rate-limit binding. A revoked machine holds `T_read` and can read; it cannot append. A slot is

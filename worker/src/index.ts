@@ -213,7 +213,9 @@ function address(ip: string): string {
 }
 
 // verified checks an entry's shape and its assertion: by credentialId, under
-// pk, over SHA-256("beam-<kind>:v1" ‖ statementHash), with user verification.
+// pk, over SHA-256("beam-<kind>:v1" ‖ statementHash), with user presence and
+// verification, and not cross-origin: the page cannot be framed, and the
+// daemon refuses one too.
 async function verified(credentialId: string, pk: Uint8Array<ArrayBuffer>, e: Entry) {
   const hash = bytes(e.statementHash);
   const blob = bytes(e.blob);
@@ -223,7 +225,8 @@ async function verified(credentialId: string, pk: Uint8Array<ArrayBuffer>, e: En
   const challenge = await sha256(concat(new TextEncoder().encode(`beam-${e.kind}:v1`), hash));
   let ok = false;
   try {
-    ok = a.credentialId === credentialId && (await verifyAuthenticationResponse({
+    const crossOrigin = JSON.parse(new TextDecoder().decode(bytes(a.clientDataJSON))).crossOrigin === true;
+    ok = a.credentialId === credentialId && !crossOrigin && (await verifyAuthenticationResponse({
       response: {
         id: a.credentialId,
         rawId: a.credentialId,
