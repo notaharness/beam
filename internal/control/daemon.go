@@ -152,23 +152,19 @@ func (d *daemon) enroll(f *identity.Fleet, own *identity.Record) (*enrolment, er
 	if err != nil {
 		return nil, fmt.Errorf("fleet.json: %w", err)
 	}
+	cred := identity.Credential{ID: f.CredentialID, PublicKey: pk}
 	st, err := store.Open(d.o.Paths.file(stateFile))
 	if err != nil {
 		return nil, err
 	}
 	if own != nil {
-		err := st.AddPending(*own, now())
-		if err == nil {
-			err = d.o.Paths.save(fleetFile, f)
-		}
-		if err != nil {
+		if err := d.adopt(st, cred, f, own); err != nil {
 			st.Close()
 			return nil, err
 		}
 	}
 	ctx, cancel := context.WithCancel(d.ctx)
-	e := &enrolment{ctx: ctx, cancel: cancel, key: k, fleet: f, store: st, mail: mailbox.NewSubscribers(st),
-		cred: identity.Credential{ID: f.CredentialID, PublicKey: pk}}
+	e := &enrolment{ctx: ctx, cancel: cancel, key: k, fleet: f, store: st, mail: mailbox.NewSubscribers(st), cred: cred}
 	entry, _ := json.Marshal(f.Entry)
 	e.node, err = transport.Start(transport.Config{Key: k, Entry: entry,
 		Admit:  func(raw json.RawMessage) (string, [32]byte, func(), string) { return d.admit(e, raw) },
@@ -193,6 +189,20 @@ func (d *daemon) enroll(f *identity.Fleet, own *identity.Record) (*enrolment, er
 		}
 	}
 	return e, err
+}
+
+// adopt readies st for a new enrolment with f: of the revocations and
+// pending writes a reset kept it keeps those f's credential signed (a re-join
+// into the same fleet), queues f's own entry, then writes fleet.json.
+func (d *daemon) adopt(st *store.Store, cred identity.Credential, f *identity.Fleet, own *identity.Record) error {
+	err := st.Keep(func(r identity.Record) bool { return cred.Verify(r, func(string) bool { return false }) == nil })
+	if err == nil {
+		err = st.AddPending(*own, now())
+	}
+	if err == nil {
+		err = d.o.Paths.save(fleetFile, f)
+	}
+	return err
 }
 
 // enrolment is the enrolment under way, or nil.

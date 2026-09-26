@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 
@@ -69,21 +70,67 @@ func pendingKey(r identity.Record) string {
 	return hex.EncodeToString(h[:])
 }
 
-// Reset forgets the fleet (docs/02, beam fleet reset): every peer and
-// revocation, the pending directory writes, and the mail to and from the
-// peers, which goes with them. The message counters stay: they belong to the
-// keys, which outlive the fleet, and one restarted at 1 would make a peer
-// that remembers it drop new mail as duplicates.
+// Reset forgets the fleet's machines (docs/02, beam fleet reset): every peer,
+// and the mail to and from them, which goes with them. The revocations and
+// the pending directory writes stay, for the next enrolment to keep those its
+// credential signed (Keep): a re-join into the same fleet goes on refusing a
+// machine revoked here, whose revocation may exist nowhere else yet. The
+// message counters stay: they belong to the keys, which outlive the fleet,
+// and one restarted at 1 would make a peer that remembers it drop new mail as
+// duplicates.
 func (s *Store) Reset() error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }() // a no-op once committed
-	for _, table := range []string{"peers", "revocations", "pending", "outbound", "inbound", "quarantine"} {
+	for _, table := range []string{"peers", "outbound", "inbound", "quarantine"} {
 		if _, err := tx.Exec(`DELETE FROM ` + table); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
+}
+
+// Keep deletes the revocations and pending directory writes signed does not
+// hold for: at an enrolment, those another fleet's credential signed.
+func (s *Store) Keep(signed func(identity.Record) bool) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }() // a no-op once committed
+	for _, t := range []struct{ table, key string }{{"revocations", "peer_id"}, {"pending", "statement_hash"}} {
+		drop, err := unsigned(tx, t.table, t.key, signed)
+		for _, k := range drop {
+			if err == nil {
+				_, err = tx.Exec(`DELETE FROM `+t.table+` WHERE `+t.key+` = ?`, k)
+			}
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// unsigned lists the keys of table's records signed does not hold for.
+func unsigned(tx *sql.Tx, table, key string, signed func(identity.Record) bool) ([]string, error) {
+	rows, err := tx.Query(`SELECT ` + key + `, record FROM ` + table)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var drop []string
+	for rows.Next() {
+		var k, b string
+		var r identity.Record
+		if err := rows.Scan(&k, &b); err != nil {
+			return nil, err
+		}
+		if json.Unmarshal([]byte(b), &r) != nil || !signed(r) {
+			drop = append(drop, k)
+		}
+	}
+	return drop, rows.Err()
 }
