@@ -9,11 +9,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -623,6 +627,40 @@ func TestRefusedWriteDropped(t *testing.T) {
 		sqlite(t, a, func(tx *sql.Tx) error { return tx.QueryRow(`SELECT count(*) FROM pending`).Scan(&queued) })
 		return queued == 0
 	})
+}
+
+// docs/06: only the worker's own refusal drops a queued write. A 4xx from
+// anything between (a captive portal, a proxy, the edge) leaves it queued,
+// and it lands once the path clears.
+func TestForeignRefusalKeepsWrite(t *testing.T) {
+	target, _ := url.Parse(dirURL)
+	pass := httputil.NewSingleHostReverseProxy(target)
+	var blocking atomic.Bool
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if blocking.Load() && strings.HasSuffix(r.URL.Path, "/entries") {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, "<html>blocked by policy</html>")
+			return
+		}
+		pass.ServeHTTP(w, r)
+	}))
+	defer proxy.Close()
+	a := initFleet(t, "alpha")
+	a.stop()
+	a.dirURL = proxy.URL
+	a.start(t)
+	c := join(t, "gamma")
+	connectedAll(t, a, c)
+	fleetID := owner.Credential().FleetID()
+	before := worker.Len(fleetID)
+	blocking.Store(true)
+	if r := a.beam("", "revoke", "gamma"); r.code != 0 || !strings.Contains(r.out, "Directory publication is pending") {
+		t.Fatalf("revoke: %+v", r)
+	}
+	time.Sleep(3 * time.Second) // a retry meets the proxy too
+	blocking.Store(false)
+	waitFor(t, 15*time.Second, "the revocation in the directory", func() bool { return worker.Len(fleetID) == before+1 })
 }
 
 // docs/02: a record this machine signs is queued with the state it commits,
