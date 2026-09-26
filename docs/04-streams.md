@@ -52,7 +52,10 @@ to grants.
 `argv?`, `cwd?`, `env?`, `cols`, `rows`. Empty `argv` runs the login shell: `$SHELL` if it
 names an executable, else `/bin/sh`, invoked as `-<basename>`. Otherwise `argv[0]`
 directly, no shell. `cwd` absolute or `~/`-relative, resolved on the acceptor. `env`
-merged over the daemon's environment; injected variables last. Unix: `creack/pty`.
+merged over a login's part of the daemon's environment (`HOME`, `USER`, `LOGNAME`,
+`SHELL`, `PATH`, `TERM`, `TZ`, `TMPDIR`, `LANG`, `LC_*`); injected variables last. The
+rest of the daemon's environment belongs to whatever started it, a tmux pane, an SSH
+session or a script holding a token, and no peer's process sees it. Unix: `creack/pty`.
 
 Control from the opener: `{"kind":"resize","cols":…,"rows":…}` (2–500). Data both ways
 raw. Process exit → `close {"reason":"exit","exitCode":n,"signal"?:s}`; a process ended

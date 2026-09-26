@@ -25,7 +25,7 @@ const (
 
 // Spawn is how the acceptor runs a stream's process.
 type Spawn struct {
-	Env    []string          // the daemon's environment
+	Env    []string          // the daemon's environment, of which a login's part is passed on
 	Inject map[string]string // BEAM_* variables, set last
 	Home   string            // what ~ means
 }
@@ -57,7 +57,7 @@ func (sp Spawn) command(h Header) (*exec.Cmd, *refusal) {
 	if !ok {
 		return nil, &refusal{"params", "cwd must be absolute or ~/-relative"}
 	}
-	env := mergeEnv(sp.Env, h.Env, sp.Inject)
+	env := mergeEnv(loginEnv(sp.Env), h.Env, sp.Inject)
 	var cmd *exec.Cmd
 	if len(h.Argv) == 0 {
 		shell := loginShell(env)
@@ -97,6 +97,23 @@ func loginShell(env []string) string {
 	}
 	return "/bin/sh"
 }
+
+// loginEnv is the part of env a login would give (docs/04): who and where
+// the user is, the path, the terminal type, the time zone and the locale. The
+// rest belongs to whatever started the daemon (a tmux pane, an SSH session, a
+// script holding a token) and stays with it.
+func loginEnv(env []string) []string {
+	var out []string
+	for _, kv := range env {
+		if k, _, _ := strings.Cut(kv, "="); loginVars[k] || strings.HasPrefix(k, "LC_") {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
+var loginVars = map[string]bool{"HOME": true, "USER": true, "LOGNAME": true, "SHELL": true, "PATH": true,
+	"TERM": true, "TZ": true, "TMPDIR": true, "LANG": true}
 
 // mergeEnv is base with over applied, then inject.
 func mergeEnv(base []string, over, inject map[string]string) []string {
