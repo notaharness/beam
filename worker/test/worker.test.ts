@@ -91,6 +91,7 @@ describe("docs/09 routes", () => {
     expect((await append(await entry((await fleet()).auth, "member"))).status).toBe(403);
     expect((await append(await entry(f.auth, "member", random(8193)))).status).toBe(413);
     expect((await append(await entry(f.auth, "member", random(10), 0x01))).status).toBe(403); // no user verification
+    expect((await append(await entry(f.auth, "member", random(10), 0x04))).status).toBe(403); // no user presence
     expect((await append({ ...member, kind: undefined })).status).toBe(400);
     expect((await append(member, (await fleet()).id)).status).toBe(404);
   });
@@ -109,6 +110,7 @@ describe("docs/09 routes", () => {
       await entry(f.auth, "member", undefined, undefined, { type: "webauthn.create" }),
       await entry(f.auth, "member", undefined, undefined, { origin: "https://beam.n10.is.example" }),
       await entry(f.auth, "member", undefined, undefined, { rpId: "n10.is" }),
+      await entry(f.auth, "member", undefined, undefined, { crossOrigin: true }), // the page cannot be framed
       await entry(impostor, "member"),
     ]) {
       expect(await append(e)).toBe(403);

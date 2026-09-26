@@ -317,6 +317,28 @@
       "want": "bad-assertion"
     },
     {
+      "name": "user presence unset",
+      "record": {
+        "v": 1,
+        "kind": "member",
+        "peerId": "1a92f23852dc908d97316a3b13578281",
+        "nodePublic": "pOCSkrZRwni5dyxWn1-puxPZBrRqtoyd-dwrRAn4ogk",
+        "address": "tcpGFwWCCk4JKStlHCeLl3LFafX6m7E9kGtGq2jJ353CtECfiiCWFrWCCkw8wWHudKMOe9x_uce97IGTEA8kOJ-LJumvOH2kgcMmFxWCBlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWFygaFhToGiYWhwZGVycC5leGFtcGxlLm5ldGFkGQG7",
+        "label": "buildbox",
+        "issuedAt": 1758570000000,
+        "assertion": {
+          "credentialId": "BwcHBwcHBwcHBwcHBwcHBw",
+          "clientDataJSON": "eyJ0eXBlIjoid2ViYXV0aG4uZ2V0IiwiY2hhbGxlbmdlIjoiWnhzYzgybzdSaVp4VE9ScG9COTF2WGhSQXduVlpYQWNKZ2M0R2hDNmdJMCIsIm9yaWdpbiI6Imh0dHBzOi8vYmVhbS5uMTAuaXMiLCJjcm9zc09yaWdpbiI6ZmFsc2V9",
+          "authenticatorData": "_JvZf9fbq9O8QQOsGe9Bb_qNcXN65AXcwbrSKUdWYt0EAAAAAA",
+          "signature": "MEQCIFF24Ciwltco_3xVgWoRqtPfiocqKvrJ44K4N8rRU_OsAiBGs2c09WZpTciRtgNU5Vu_c0bGpX3nERcJdrOfUZ5C6A"
+        }
+      },
+      "statement": "{\"address\":\"tcpGFwWCCk4JKStlHCeLl3LFafX6m7E9kGtGq2jJ353CtECfiiCWFrWCCkw8wWHudKMOe9x_uce97IGTEA8kOJ-LJumvOH2kgcMmFxWCBlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWFygaFhToGiYWhwZGVycC5leGFtcGxlLm5ldGFkGQG7\",\"issuedAt\":1758570000000,\"kind\":\"member\",\"label\":\"buildbox\",\"nodePublic\":\"pOCSkrZRwni5dyxWn1-puxPZBrRqtoyd-dwrRAn4ogk\",\"peerId\":\"1a92f23852dc908d97316a3b13578281\",\"v\":1}",
+      "statementHash": "c4d02549c2d69ef83230dc99d6c4086a1406378af5a3d61d4ba9f87dcf6f56da",
+      "challenge": "Zxsc82o7RiZxTORpoB91vXhRAwnVZXAcJgc4GhC6gI0",
+      "want": "bad-assertion"
+    },
+    {
       "name": "create instead of get",
       "record": {
         "v": 1,
