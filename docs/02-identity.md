@@ -358,11 +358,14 @@ assertion by any other credential is `wrong-passkey`.
 ### `beam fleet reset`
 
 Daemon-owned recovery for a lost passkey or a compromised fleet: closes every tunnel,
-deletes `fleet.json` and all peers from `state.db`, keeps `key.json` (the machine's
-identity is not the problem) and the mailbox tables (queued mail to old peers is deleted
-with the peers; the message counters, which belong to the keys, stay). It keeps the
+deletes `fleet.json`, `key.json` and all peers from `state.db`, and keeps the mailbox
+tables (queued mail to old peers is deleted with the peers; the message counters stay).
+`key.json` goes because a compromised fleet recovers from copied node keys too: the
+next `init` or `join` makes a new key, so a new `peerId`. A re-join into the same fleet
+enrols that new identity; the old one's entry stays valid there until it is revoked,
+which it should be if its key may have been copied. It keeps the
 revocations and pending writes too: the next enrolment keeps those its credential
-signed, a re-join into the same fleet, and deletes the rest. A revocation not yet in the
+signed, a re-join into the same fleet, and deletes the rest and any entry of the old key. A revocation not yet in the
 directory, of a machine that was offline, may exist nowhere else, and a re-join that
 forgot it would admit that machine again. It ends the ceremony under way,
 and one already past its tap commits nothing (`ceremony-cancelled`): a ceremony commits

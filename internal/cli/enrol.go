@@ -108,7 +108,7 @@ func runFleet(e *env) int {
 	if err := e.call("fleet.reset", map[string]any{"confirm": "reset"}, nil); err != nil {
 		return e.fail(err)
 	}
-	fmt.Fprintln(e.stdout, "fleet state removed; this machine keeps its key. Run beam init or beam join.")
+	fmt.Fprintln(e.stdout, "fleet state and this machine's key removed; its next beam init or beam join makes a new one.")
 	return 0
 }
 

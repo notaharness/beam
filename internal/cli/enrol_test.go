@@ -385,11 +385,11 @@ func TestFleetReset(t *testing.T) {
 	waitState(t, a, b, "offline")
 	id := b.id()
 	join2 := b.beam("", "join", "--label", "beta")
-	if join2.code != 0 || b.enrolled(t).id() != id {
-		t.Fatalf("re-join: %+v, id %s want %s", join2, b.id(), id)
+	if join2.code != 0 || b.enrolled(t).id() == id {
+		t.Fatalf("re-join: %+v, id %s, the old one", join2, b.id())
 	}
-	// docs/06: the same fleet and peer id, a later generation
-	if st := b.status(t); st.FleetID != before.FleetID || st.PeerID != before.PeerID || st.Generation <= reset.Generation {
+	// docs/06: the same fleet, a new peer id (docs/02: a new key), a later generation
+	if st := b.status(t); st.FleetID != before.FleetID || st.PeerID == before.PeerID || st.Generation <= reset.Generation {
 		t.Errorf("status after re-join: %+v, after reset %+v", st, reset)
 	}
 	connectedAll(t, a, b)
@@ -438,6 +438,7 @@ func TestResetEndsCeremony(t *testing.T) {
 			if r := b.beam("", "join", "--label", "beta"); r.code != 0 {
 				t.Fatalf("join: %+v", r)
 			}
+			b.enrolled(t) // a reset gave it a new key; no pause hook is set yet
 		}
 		c, err := control.Connect(b.paths(), nil)
 		if err != nil {
@@ -527,10 +528,13 @@ func TestOldFleetRevokesNothing(t *testing.T) {
 	if r := c.beam("", "join", "--label", "gamma"); r.code != 0 {
 		t.Fatalf("join: %+v", r)
 	}
-	connectedAll(t, b, c)
+	bID, cID := b.status(t).PeerID, c.status(t).PeerID // new keys; not enrolled(t), which the pause hook would race
+	waitFor(t, 30*time.Second, "beta and gamma connected", func() bool {
+		return b.peers(t)[cID].State == "connected" && c.peers(t)[bID].State == "connected"
+	})
 	release()
 	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
-		if s := b.peers(t)[c.id()].State; s == "revoked" {
+		if s := b.peers(t)[cID].State; s == "revoked" {
 			t.Fatalf("the old fleet's revocation reached the new one: gamma is %s", s)
 		}
 	}

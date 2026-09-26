@@ -20,7 +20,7 @@ var explanations = map[string]string{
 	"busy":                  "Another passkey request is already running. Finish or cancel it where you started it, then try again.",
 	"already-enrolled":      "This machine already belongs to a fleet. Run beam status to inspect it.",
 	"not-enrolled":          "This machine is not in a fleet. Create or join a fleet first (beam init or beam join).",
-	"revoked-peer":          "This machine identity has been revoked. Resetting its fleet will not make that identity eligible to rejoin.",
+	"revoked-peer":          "This machine identity has been revoked. beam fleet reset gives this machine a new identity, which joins with a new approval.",
 	"unknown-peer":          "This machine is no longer in the local peer list. Check beam peers before trying again.",
 	"ambiguous-peer":        "More than one machine matches. Select a machine by its fingerprint.",
 	"params":                "beam rejected these details. Check the machine and fleet names.",
