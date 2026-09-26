@@ -204,7 +204,7 @@ describe("docs/09 rate", () => {
     expect(codes.slice(0, 119).every((c) => c === 200)).toBe(true);
     expect(codes[120]).toBe(429);
     expect((await call("GET", "/v1/entries", undefined, f.token, "192.0.2.2")).status).toBe(200);
-  });
+  }, 30_000); // 123 requests, which a slow runner takes over the default 5 s for
 
   // Anyone can register a fleet with a key of their own, each fleet a store of
   // up to 5,000 entries: an address creates a few a minute, which a person
@@ -226,5 +226,5 @@ describe("docs/09 rate", () => {
     for (let i = 0; i < 121; i++) await call("POST", `/v1/fleets/${f.id}/entries`, junk, undefined, "203.0.113.66");
     expect((await call("POST", `/v1/fleets/${f.id}/entries`, await entry(f.auth, "revoke"), undefined, "198.51.100.7")).status).toBe(201);
     expect((await call("GET", "/v1/entries", undefined, f.token, "198.51.100.7")).status).toBe(200);
-  });
+  }, 30_000);
 });
