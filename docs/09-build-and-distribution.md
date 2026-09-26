@@ -120,7 +120,11 @@ cannot spend the page's one write; a waiting daemon makes about three slot reads
 minute. A fleet registration also counts against 10 a minute per client address, through
 a binding of its own: anyone can register a fleet under a key of their own, and a person
 starting one needs one. A request is counted before the worker does anything with it, so
-one that proves nothing spends its own address's rate and no fleet's. A waiting read
+one that proves nothing spends its own address's rate and no fleet's. The binding counts
+in each Cloudflare location on its own and lets a burst through while counts settle, so
+these rates bound what one client does to the worker, not what many do in all; nothing
+caps the fleets registered in all or the database's size, and Cloudflare's own limits
+and billing alerts are what watch those. A waiting read
 only reads the database; the one that takes the result writes once. The
 client holds the worker to the same bounds: a response at most a full page of the
 largest entries, at most 500 entries a page and 5,000 in all, a `next` only after a full
