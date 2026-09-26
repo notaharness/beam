@@ -118,7 +118,7 @@ after(async () => {
 // without a touch) and the slot route answering slot, which is a status or
 // "abort" for a request that gets no response, "hang" for one never answered.
 async function load(url, o = {}) {
-  const context = await browser.newContext();
+  const context = await browser.newContext({ reducedMotion: o.motion ?? "no-preference" });
   const page = await context.newPage();
   page.setDefaultTimeout(8000);
   const cdp = await context.newCDPSession(page);
@@ -178,15 +178,30 @@ async function settle(page) {
 }
 
 describe("the ceremony page, without a request", () => {
-  it("says where to start and offers no passkey", async () => {
+  it("is beam's homepage and offers no passkey", async () => {
     const t = await load("https://beam.n10.is/");
-    assert.equal(await text(t.page, "h1"), "Connect your machines with beam");
-    assert.equal(await text(t.page, "#explain"), "Start in n10 Desktop → Fleet, or run beam init or beam join. Open the link or scan the QR code shown there.");
+    assert.equal(await text(t.page, "h1"), "beam pools your machines into a fleet");
+    assert.ok(await t.page.locator("#home").isVisible());
+    assert.ok(await t.page.getByRole("img", { name: "Three machines joined by beams, packets running both ways" }).isVisible());
+    assert.equal(await t.page.getByRole("link", { name: "n10" }).getAttribute("href"), "https://n10.is");
+    assert.equal(await t.page.getByRole("link", { name: "open source" }).getAttribute("href"), "https://github.com/notaharness/beam");
+    assert.equal(await t.page.getByRole("alert").count(), 0);
     assert.equal(await t.page.getByRole("button").count(), 0);
-    assert.equal(await t.page.locator("details#compat summary").textContent(), "Passkey compatibility");
+    assert.equal(await t.page.locator("details#compat").isVisible(), false);
+    assert.equal(await t.page.locator("#summary").isVisible(), false);
     assert.equal(await t.calls(), 0);
     await t.close();
   });
+
+  for (const [motion, animation] of [["no-preference", "beam"], ["reduce", "none"]]) {
+    it(`moves its beams' packets ${animation === "none" ? "not at all" : "along them"} under prefers-reduced-motion: ${motion}`, async () => {
+      const t = await load("https://beam.n10.is/", { motion });
+      const names = await t.page.locator("#home .packet").evaluateAll((all) => all.map((e) => getComputedStyle(e).animationName));
+      assert.ok(names.length > 0);
+      assert.deepEqual([...new Set(names)], [animation]);
+      await t.close();
+    });
+  }
 });
 
 describe("the ceremony page, given an invalid request", () => {
@@ -224,6 +239,7 @@ describe("the ceremony page, given an invalid request", () => {
       const t = await load(req.url);
       assert.equal(await text(t.page, "[role=alert] h1"), "This link is incomplete or invalid.");
       assert.equal(await text(t.page, "[role=alert] #explain"), "Return to n10 Desktop or your terminal and start again for a fresh link.");
+      assert.equal(await t.page.locator("#home").isVisible(), false);
       assert.equal(await t.page.getByRole("button").count(), 0);
       assert.equal(await t.calls(), 0);
       assert.equal(t.posts.length, 0);
@@ -242,6 +258,7 @@ describe("the ceremony page, given an invalid request", () => {
   it("ignores a parameter it does not know", async () => {
     const t = await load(request("a").url + "&z=1");
     assert.equal(await text(t.page, "h1"), "Authorize buildbox");
+    assert.equal(await t.page.locator("#home").isVisible(), false);
     await t.close();
   });
 

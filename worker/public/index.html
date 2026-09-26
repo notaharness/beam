@@ -5,10 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>beam</title>
 <style>
-:root { --fg: #1b1b1b; --bg: #fff; --muted: #5f5f5f; --rule: #e2e2e2; --btn-bg: #1b1b1b; --btn-fg: #fff; --danger: #b3261e; --danger-fg: #fff; --alert: #8c1d18; }
+:root { --fg: #1b1b1b; --bg: #fff; --muted: #5f5f5f; --rule: #e2e2e2; --btn-bg: #1b1b1b; --btn-fg: #fff; --danger: #b3261e; --danger-fg: #fff; --alert: #8c1d18; --beam: #9caf88; --packet: #8b843b; }
 @media (prefers-color-scheme: dark) {
-  :root { --fg: #e8e8e8; --bg: #141414; --muted: #a3a3a3; --rule: #2c2c2c; --btn-bg: #e8e8e8; --btn-fg: #141414; --danger: #f2b8b5; --danger-fg: #601410; --alert: #f2b8b5; }
+  :root { --fg: #e8e8e8; --bg: #141414; --muted: #a3a3a3; --rule: #2c2c2c; --btn-bg: #e8e8e8; --btn-fg: #141414; --danger: #f2b8b5; --danger-fg: #601410; --alert: #f2b8b5; --packet: #e3c16f; }
 }
+[hidden] { display: none; }
 body { font: 16px/1.5 system-ui, sans-serif; max-width: 36rem; min-height: 100vh; margin: 0 auto; padding: 0 1rem; color: var(--fg); background: var(--bg); display: flex; flex-direction: column; box-sizing: border-box; overflow-wrap: anywhere; }
 header { display: flex; align-items: center; gap: 0.75rem; padding: 2rem 0 1.5rem; border-bottom: 1px solid var(--rule); }
 header svg { width: 3rem; height: 3rem; flex: none; margin: -0.25rem; }
@@ -40,7 +41,18 @@ table { border-collapse: collapse; width: 100%; font-size: 0.875rem; margin: 0.5
 th, td { text-align: left; vertical-align: top; padding: 0.375rem 0.5rem 0.375rem 0; border-top: 1px solid var(--rule); }
 th { font-weight: 600; width: 34%; }
 footer { padding: 1.5rem 0 2rem; border-top: 1px solid var(--rule); font-size: 0.875rem; color: var(--muted); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem; }
-footer a { color: inherit; }
+a { color: inherit; }
+.scene { display: block; width: 100%; height: auto; margin: 0.5rem 0 1.5rem; }
+.scene .machine { fill: var(--bg); stroke: var(--fg); stroke-width: 2; stroke-linejoin: round; }
+.scene .part { fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; }
+.scene .lane { stroke: var(--beam); stroke-width: 2; opacity: 0.5; }
+.scene .packet { stroke: var(--packet); stroke-width: 3; stroke-linecap: round; stroke-dasharray: 6 94; stroke-dashoffset: -47; }
+@media (prefers-reduced-motion: no-preference) {
+  .scene .packet { animation: beam 2.4s linear infinite; }
+  .scene .slow .packet { animation-duration: 3.2s; }
+  .scene .packet + .packet { animation-delay: -1.1s; }
+}
+@keyframes beam { from { stroke-dashoffset: 100; } to { stroke-dashoffset: 0; } }
 </style>
 </head>
 <body>
@@ -62,8 +74,27 @@ footer a { color: inherit; }
 </header>
 <main>
 <div id="intro">
-<h1 id="heading" tabindex="-1">Connect your machines with beam</h1>
-<p id="explain">Start in n10 Desktop → Fleet, or run beam init or beam join. Open the link or scan the QR code shown there.</p>
+<h1 id="heading" tabindex="-1">beam pools your machines into a fleet</h1>
+<p id="explain">Open a shell, run a command or send a durable message from one machine you own to another, over encrypted tunnels. Your passkey protects the fleet: only machines it approves join.</p>
+</div>
+<div id="home">
+<svg class="scene" viewBox="0 0 320 120" role="img" aria-label="Three machines joined by beams, packets running both ways">
+  <!-- each beam is two lanes along its own x axis, one packet each way -->
+  <g transform="translate(80 69) rotate(-24.3)"><line class="lane" x1="0" y1="-3" x2="66" y2="-3" /><line class="lane" x1="0" y1="3" x2="66" y2="3" />
+    <line class="packet" x1="0" y1="-3" x2="66" y2="-3" pathLength="100" /><line class="packet" x1="66" y1="3" x2="0" y2="3" pathLength="100" /></g>
+  <g transform="translate(180 42) rotate(23.4)"><line class="lane" x1="0" y1="-3" x2="78" y2="-3" /><line class="lane" x1="0" y1="3" x2="78" y2="3" />
+    <line class="packet" x1="0" y1="-3" x2="78" y2="-3" pathLength="100" /><line class="packet" x1="78" y1="3" x2="0" y2="3" pathLength="100" /></g>
+  <g class="slow" transform="translate(90 90)"><line class="lane" x1="0" y1="-3" x2="162" y2="-3" /><line class="lane" x1="0" y1="3" x2="162" y2="3" />
+    <line class="packet" x1="0" y1="-3" x2="162" y2="-3" pathLength="100" /><line class="packet" x1="162" y1="3" x2="0" y2="3" pathLength="100" /></g>
+  <rect class="machine" x="24" y="62" width="52" height="34" rx="3" />
+  <path class="machine" d="M14,100 H86 L80,107 H20 Z" />
+  <rect class="machine" x="144" y="8" width="32" height="48" rx="3" />
+  <path class="part" d="M152,20 H168 M152,28 H168 M152,36 H168" />
+  <rect class="machine" x="260" y="66" width="28" height="46" rx="5" />
+  <path class="part" d="M270,104 H278" />
+</svg>
+<p>Start in n10 Desktop → Fleet, or run beam init on your first machine and beam join on each of the others. Open the link or scan the QR code it shows to use your passkey here.</p>
+<p>beam is <a href="https://github.com/notaharness/beam">open source</a> and part of <a href="https://n10.is">n10</a>.</p>
 </div>
 <dl id="summary" hidden>
   <dt>Action</dt><dd id="action"></dd>
@@ -74,7 +105,7 @@ footer a { color: inherit; }
 <p id="expiry" class="note" hidden>Requests expire after five minutes. The originating machine shows whether this request is still active.</p>
 <div id="problem" role="alert" hidden></div>
 <p id="capability" class="note" role="status"></p>
-<details id="compat">
+<details id="compat" hidden>
 <summary>Passkey compatibility</summary>
 <p>beam needs WebAuthn PRF, not just ordinary passkeys. PRF derives the key that encrypts your fleet directory. Support depends on the browser, operating system, passkey provider and sometimes the way a security key connects. The ceremony page checks browser capabilities, then verifies the selected passkey result.</p>
 <p>This is what vendors document, not a matrix beam has tested end to end. The browser’s encryption support and the passkey provider’s PRF support are separate requirements; unsupported or unverified combinations are not promised to work.</p>
@@ -184,6 +215,8 @@ footer a { color: inherit; }
 
   const hash = location.hash.slice(1);
   if (!hash) return;
+  hide("home");
+  show("compat");
   const req = parse(hash);
   if (!req) {
     put("heading", "This link is incomplete or invalid.");

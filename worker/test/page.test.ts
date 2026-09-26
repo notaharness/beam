@@ -32,7 +32,8 @@ describe("the ceremony page", () => {
 
   it("loads nothing", () => {
     expect(page).not.toMatch(/\bsrc=|<link\b|@import|url\((?!#)/);
-    // The one href is a navigation, not a fetch: the repository link in the footer.
-    expect([...page.matchAll(/\bhref="([^"]*)"/g)].map((m) => m[1])).toEqual(["https://github.com/notaharness/beam"]);
+    // Each href is a navigation, not a fetch: the homepage's links to the
+    // repository and n10, and the repository again in the footer.
+    expect([...page.matchAll(/\bhref="([^"]*)"/g)].map((m) => m[1])).toEqual(["https://github.com/notaharness/beam", "https://n10.is", "https://github.com/notaharness/beam"]);
   });
 });
