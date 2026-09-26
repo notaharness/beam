@@ -37,9 +37,9 @@ async function entry(auth: Authenticator, kind: string, blob = random(200), flag
   return { kind, statementHash: b64(hash), blob: b64(blob), assertion: await auth.assert(challenge, flags, as) };
 }
 
-async function register(f: Awaited<ReturnType<typeof fleet>>, first?: Awaited<ReturnType<typeof entry>>) {
+async function register(f: Awaited<ReturnType<typeof fleet>>, first?: Awaited<ReturnType<typeof entry>>, ip?: string) {
   first ??= await entry(f.auth, "member");
-  return call("POST", "/v1/fleets", { credentialId: f.auth.credentialId, credentialPublicKey: b64(f.auth.cose), readToken: b64(f.token), first });
+  return call("POST", "/v1/fleets", { credentialId: f.auth.credentialId, credentialPublicKey: b64(f.auth.cose), readToken: b64(f.token), first }, undefined, ip);
 }
 
 describe("docs/09 routes", () => {
@@ -204,6 +204,17 @@ describe("docs/09 rate", () => {
     expect(codes.slice(0, 119).every((c) => c === 200)).toBe(true);
     expect(codes[120]).toBe(429);
     expect((await call("GET", "/v1/entries", undefined, f.token, "192.0.2.2")).status).toBe(200);
+  });
+
+  // Anyone can register a fleet with a key of their own, each fleet a store of
+  // up to 5,000 entries: an address creates a few a minute, which a person
+  // starting a fleet never needs more than.
+  it("allows 10 fleet registrations a minute per client address", async () => {
+    const codes = [];
+    for (let i = 0; i < 11; i++) codes.push((await register(await fleet(), undefined, "192.0.2.10")).status);
+    expect(codes.slice(0, 10).every((c) => c === 201)).toBe(true);
+    expect(codes[10]).toBe(429);
+    expect((await call("GET", "/v1/entries", undefined, random(32), "192.0.2.10")).status).toBe(401);
   });
 
   // A fleetId is no secret: every member, revoked ones included, holds it.
