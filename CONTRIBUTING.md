@@ -82,5 +82,6 @@ The workflow holds no npm token. Each of `@notaharness/beam`,
 publisher on npmjs.com (the package's Settings, Trusted Publisher, GitHub Actions):
 organization `notaharness`, repository `beam`, workflow filename `release.yml`, no
 environment. Each package's publishing access requires two-factor authentication and
-disallows tokens. npm sets a trusted publisher only on a package that exists, so a new platform
-package is published once by hand before a release can publish it.
+disallows tokens. npm sets a trusted publisher only on a package that exists, so a new
+platform package is first published by hand at `0.0.0`, a version no release uses; then
+set its trusted publisher and publishing access.
