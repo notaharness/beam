@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-The version under npm's `latest` dist-tag receives fixes. A fix ships as a new version.
+The newest release, prerelease or not, receives fixes. A fix ships as a new release.
 
 ## Reporting a vulnerability
 
