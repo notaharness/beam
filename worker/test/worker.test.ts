@@ -14,9 +14,10 @@ beforeAll(async () => {
   await env.DB.batch(schema.split(";").filter((s) => s.trim()).map((s) => env.DB.prepare(s)));
 });
 
-function call(method: string, path: string, body?: unknown, token?: Uint8Array | string, ip?: string): Promise<Response> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (ip !== undefined) headers["CF-Connecting-IP"] = ip;
+// call makes a request, by default from an address of its own, so rates do
+// not add up across tests.
+function call(method: string, path: string, body?: unknown, token?: Uint8Array | string, ip = crypto.randomUUID()): Promise<Response> {
+  const headers: Record<string, string> = { "Content-Type": "application/json", "CF-Connecting-IP": ip };
   if (token !== undefined) headers.Authorization = "Bearer " + (typeof token === "string" ? token : b64(token));
   return exports.default.fetch(new Request("https://beam.n10.is" + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }));
 }
@@ -195,13 +196,14 @@ describe("docs/09 caps", () => {
 });
 
 describe("docs/09 rate", () => {
-  it("allows 120 requests a minute per fleet", async () => {
+  it("allows 120 directory requests a minute per client address", async () => {
     const f = await fleet();
     await register(f);
     const codes = [];
-    for (let i = 0; i < 121; i++) codes.push((await call("GET", "/v1/entries", undefined, f.token)).status);
+    for (let i = 0; i < 121; i++) codes.push((await call("GET", "/v1/entries", undefined, f.token, "192.0.2.1")).status);
     expect(codes.slice(0, 119).every((c) => c === 200)).toBe(true);
     expect(codes[120]).toBe(429);
+    expect((await call("GET", "/v1/entries", undefined, f.token, "192.0.2.2")).status).toBe(200);
   });
 
   // A fleetId is no secret: every member, revoked ones included, holds it.

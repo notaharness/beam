@@ -60,6 +60,7 @@
 | D54 | Shutdown, reset and re-join wait, bounded, for the streams they end to tear down (06). | A pty session that ignores SIGHUP is killed 5 s later by a timer in the daemon; a daemon that exited first would leave it running. The bound keeps a stuck handler from holding shutdown forever. | 04, 06 |
 | D55 | `beam daemon` marks every inherited descriptor above 2 close-on-exec at start, walking `/dev/fd`; where it cannot be listed they stay as they are. | A daemon started from Electron inherits descriptors that are not close-on-exec (inotify, a socket, a V8 snapshot), and every shell it starts for a peer would hold them. | 07 |
 | D56 | The test kit is the beamtest build itself: `beam testkit` serves the dev relay and fake worker, released as `beamtest-*` binaries with `SHA256SUMS` on the GitHub release, never on npm. | n10's e2e and other projects test against the same relay, worker and authenticator beam's own tests use, without building beam; npm would put a software passkey one typo from `@notaharness/beam`. | 09, 10 |
+| D57 | The worker limits every route by client address, counted before any work, and no route by fleet. | A `fleetId` is no secret (every member, revoked ones included, holds it), so a per-fleet rate spent by requests that prove nothing let anyone lock a fleet out of its directory. An address pays for its own requests. | 09 |
 
 ## Milestone gate
 

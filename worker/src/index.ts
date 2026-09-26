@@ -58,9 +58,9 @@ export default {
     try {
       if (req.method === "POST" && slot) return await writeSlot(env, req, slot[1]);
       if (req.method === "GET" && slot) return await readSlot(env, req, slot[1]);
-      if (req.method === "POST" && url.pathname === "/v1/fleets") return await register(env, await body(req));
+      if (req.method === "POST" && url.pathname === "/v1/fleets") return await register(env, req);
       if (req.method === "GET" && url.pathname === "/v1/entries") return await read(env, req, url);
-      if (req.method === "POST" && append) return await appendEntry(env, append[1], await body(req));
+      if (req.method === "POST" && append) return await appendEntry(env, req, append[1]);
       throw new Refusal(404, "not-found");
     } catch (e) {
       if (e instanceof Refusal) return json(e.status, { error: e.reason });
@@ -71,14 +71,15 @@ export default {
 
 // POST /v1/fleets: create a fleet with its first entry, a member statement
 // signed by the credential it registers.
-async function register(env: Env, req: any): Promise<Response> {
+async function register(env: Env, r: Request): Promise<Response> {
+  await limit(env, client(r, "directory"));
+  const req = await body(r);
   const pk = bytes(req.credentialPublicKey);
   const token = bytes(req.readToken);
   if (typeof req.credentialId !== "string" || !req.credentialId || token.length !== 32 || typeof req.first !== "object") {
     throw new Refusal(400, "params");
   }
   const fleetId = hex(await sha256(pk));
-  await limit(env, fleetId);
   const first = await verified(req.credentialId, pk, { ...req.first, kind: "member" });
   const now = Date.now();
   try {
@@ -98,11 +99,11 @@ async function register(env: Env, req: any): Promise<Response> {
 // GET /v1/entries?since=: the fleet the bearer token opens, from since on.
 // Every token that opens nothing gets the same 401.
 async function read(env: Env, req: Request, url: URL): Promise<Response> {
+  await limit(env, client(req, "directory"));
   const token = bytes((req.headers.get("Authorization") ?? "").replace(/^Bearer /, ""));
   const fleet = await env.DB.prepare("SELECT fleet_id, credential_id, credential_pk FROM fleets WHERE read_hash = ?")
     .bind(await sha256(token)).first<Fleet>();
   if (!fleet) throw new Refusal(401, "unauthorized");
-  await limit(env, fleet.fleet_id);
   const since = Number(url.searchParams.get("since") ?? "0");
   if (!Number.isSafeInteger(since) || since < 0) throw new Refusal(400, "params");
   const { results } = await env.DB.prepare(
@@ -122,11 +123,12 @@ async function read(env: Env, req: Request, url: URL): Promise<Response> {
 // credential in the domain of its kind; appending one held already answers
 // its seq. One statement allocates the seq and checks the cap, so appends
 // at once cannot pass it together.
-async function appendEntry(env: Env, fleetId: string, req: any): Promise<Response> {
+async function appendEntry(env: Env, r: Request, fleetId: string): Promise<Response> {
+  await limit(env, client(r, "directory"));
+  const req = await body(r);
   if (req.kind !== "member" && req.kind !== "revoke") throw new Refusal(400, "params");
   const fleet = await env.DB.prepare("SELECT fleet_id, credential_id, credential_pk FROM fleets WHERE fleet_id = ?").bind(fleetId).first<Fleet>();
   if (!fleet) throw new Refusal(404, "no-fleet");
-  await limit(env, fleetId);
   const e = await verified(fleet.credential_id, new Uint8Array(fleet.credential_pk), req);
   const held = () => env.DB.prepare("SELECT seq FROM entries WHERE fleet_id = ? AND statement_hash = ?").bind(fleetId, e.hash).first<number>("seq");
   let seq = await held();
@@ -189,10 +191,12 @@ async function readSlot(env: Env, req: Request, slot: string): Promise<Response>
   return json(200, { sealed: b64(sealed) });
 }
 
-// client is the rate key of a request's address, for slot reads or writes:
-// counted apart, so reads cannot spend the one write a phone makes.
-function client(req: Request, route: "read" | "write"): string {
-  return `slot-${route}:` + (req.headers.get("CF-Connecting-IP") ?? "");
+// client is the rate key of a request's address, for slot reads, slot
+// writes or the directory: counted apart, so reads cannot spend the one
+// write a phone makes. It is charged before any work, so a request that
+// proves nothing spends only its own address's rate, never a fleet's.
+function client(req: Request, route: "read" | "write" | "directory"): string {
+  return `${route}:` + (req.headers.get("CF-Connecting-IP") ?? "");
 }
 
 // verified checks an entry's shape and its assertion: by credentialId, under
@@ -230,8 +234,8 @@ async function verified(credentialId: string, pk: Uint8Array<ArrayBuffer>, e: En
   return { hash, blob, assertion };
 }
 
-async function limit(env: Env, fleetId: string) {
-  if (!(await env.LIMITER.limit({ key: fleetId })).success) throw new Refusal(429, "rate-limited");
+async function limit(env: Env, key: string) {
+  if (!(await env.LIMITER.limit({ key })).success) throw new Refusal(429, "rate-limited");
 }
 
 // body is a request's JSON. It reads at most MAX_BODY bytes, counted as

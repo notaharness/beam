@@ -109,13 +109,15 @@ CREATE INDEX slots_created ON slots (created_at);
 ```
 
 Caps: 16 KiB per request body, counted as it arrives whatever `Content-Length` says; 8
-KiB per blob; 5,000 entries per fleet, checked by the statement that allocates the seq;
-120 requests/min per fleet. No expiry for fleets and entries. A slot holds at most 8 KiB
+KiB per blob; 5,000 entries per fleet, checked by the statement that allocates the seq.
+No expiry for fleets and entries. A slot holds at most 8 KiB
 of sealed result and lives five minutes from its write, the ceremony's timeout: a row
-older than that is absent to every route, and each write deletes the expired ones. Slot
-reads and slot writes are each limited to 120 requests/min per client address
-(`CF-Connecting-IP`), through the same binding, counted apart so that reads cannot spend
-the page's one write; a waiting daemon makes about three reads a minute. A waiting read
+older than that is absent to every route, and each write deletes the expired ones.
+Directory requests, slot reads and slot writes are each limited to 120 requests/min per
+client address (`CF-Connecting-IP`), through one binding, counted apart so that reads
+cannot spend the page's one write; a waiting daemon makes about three slot reads a
+minute. A request is counted before the worker does anything with it, so one that proves
+nothing spends its own address's rate and no fleet's. A waiting read
 only reads the database; the one that takes the result writes once. The
 client holds the worker to the same bounds: a response at most a full page of the
 largest entries, at most 500 entries a page and 5,000 in all, a `next` only after a full
@@ -135,8 +137,8 @@ page and past `since`, a minute for a whole read. A worker outside them is unava
 Assertion verification (`@simplewebauthn/server`): origin `https://beam.n10.is`, RP ID
 `beam.n10.is`, UV required, challenge as above, counter ignored, and the assertion's
 credential id must be the fleet's. A refused append is `403`, a body or a blob over its
-cap or a full fleet `413`, and a fleet over its rate `429`, through Workers' rate-limit
-binding. A revoked machine holds `T_read` and can read; it cannot append. A slot is
+cap or a full fleet `413`, and a client address over its rate `429`, through Workers'
+rate-limit binding. A revoked machine holds `T_read` and can read; it cannot append. A slot is
 `:slot` as 22 base64url characters encoding 16 bytes; any other is `404`. The worker can
 open no slot's ciphertext; it never sees the key.
 
