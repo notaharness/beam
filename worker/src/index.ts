@@ -198,7 +198,18 @@ async function readSlot(env: Env, req: Request, slot: string): Promise<Response>
 // write a phone makes. It is charged before any work, so a request that
 // proves nothing spends only its own address's rate, never a fleet's.
 function client(req: Request, route: "read" | "write" | "directory" | "register"): string {
-  return `${route}:` + (req.headers.get("CF-Connecting-IP") ?? "");
+  return `${route}:` + address(req.headers.get("CF-Connecting-IP") ?? "");
+}
+
+// address is who a client is to a rate: its IPv4 address, or its IPv6
+// address's /64, the least an IPv6 client holds.
+function address(ip: string): string {
+  if (!ip.includes(":") || ip.includes(".")) return ip;
+  const [head, tail] = ip.toLowerCase().split("::");
+  const left = head ? head.split(":") : [];
+  const right = tail ? tail.split(":") : [];
+  const groups = tail === undefined ? left : [...left, ...Array(8 - left.length - right.length).fill("0"), ...right];
+  return groups.slice(0, 4).map((g) => g.padStart(4, "0")).join(":") + "::/64";
 }
 
 // verified checks an entry's shape and its assertion: by credentialId, under

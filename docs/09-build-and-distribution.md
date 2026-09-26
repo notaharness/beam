@@ -114,7 +114,8 @@ No expiry for fleets and entries. A slot holds at most 8 KiB
 of sealed result and lives five minutes from its write, the ceremony's timeout: a row
 older than that is absent to every route, and each write deletes the expired ones.
 Directory requests, slot reads and slot writes are each limited to 120 requests/min per
-client address (`CF-Connecting-IP`), through one binding, counted apart so that reads
+client address (`CF-Connecting-IP`; an IPv6 address counts by its /64, the least an IPv6
+client holds), through one binding, counted apart so that reads
 cannot spend the page's one write; a waiting daemon makes about three slot reads a
 minute. A fleet registration also counts against 10 a minute per client address, through
 a binding of its own: anyone can register a fleet under a key of their own, and a person
