@@ -80,7 +80,10 @@ $BEAM_DIR/
 
 The signed statement is `canonical(entry without assertion)`: JSON per RFC 8785 (JCS),
 keys sorted, no whitespace, integers only (safe integers; a duplicate key or any other
-number is `bad-entry`). The WebAuthn challenge commits to its hash, so the directory
+number is `bad-entry`). A record's JSON, assertion included, is at most 8 KiB, what a
+directory blob holds ([09](09-build-and-distribution.md)); a longer one, or one with a
+field a record does not have, is `bad-entry` before it is canonicalised, since a record
+arrives in a hello before anything is verified. The WebAuthn challenge commits to its hash, so the directory
 worker can recompute it without the plaintext:
 
 ```
