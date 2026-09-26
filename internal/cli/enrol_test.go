@@ -517,6 +517,45 @@ func TestOldFleetRevokesNothing(t *testing.T) {
 	}
 }
 
+// docs/02 reset: a revocation that has not reached the directory survives a
+// reset, so that a re-join into the same fleet keeps refusing the revoked
+// machine, which was offline and never learned it.
+func TestResetKeepsRevocation(t *testing.T) {
+	a := initFleet(t, "alpha")
+	c := join(t, "gamma")
+	connectedAll(t, a, c)
+	c.stop()
+	reached, release := pauseAt(t, a, "publishing", c.id())
+	defer worker.SetDown(false)
+	revoked := make(chan result, 1)
+	go func() { revoked <- a.beam("", "revoke", "gamma") }()
+	await(t, reached, "the revocation's publishing")
+	worker.SetDown(true)
+	release()
+	if r := <-revoked; r.code != 0 || !strings.Contains(r.out, "Directory publication is pending") {
+		t.Fatalf("revoke: %+v", r)
+	}
+	a.stop()
+	worker.SetDown(false)
+	a.dirURL = "http://127.0.0.1:1" // the directory stays out of reach until the reset
+	a.start(t)
+	if r := a.beam("reset\n", "fleet", "reset"); r.code != 0 {
+		t.Fatalf("reset: %+v", r)
+	}
+	a.stop()
+	a.dirURL = ""
+	a.start(t)
+	if r := a.beam("", "join", "--label", "alpha"); r.code != 0 {
+		t.Fatalf("re-join: %+v", r)
+	}
+	alpha := a.status(t).PeerID // not a.enrolled: the pause hook reads a's entry
+	c.start(t)
+	waitFor(t, 30*time.Second, "alpha to refuse gamma", func() bool { return c.peers(t)[alpha].State == "revoked-by-fleet" })
+	if r := c.beam("", "exec", alpha, "--", "true"); r.code == 0 {
+		t.Fatal("the revoked machine ran a command on alpha")
+	}
+}
+
 // A stream opened before a reset attaches to nothing after it.
 func TestOpenEndsWithReset(t *testing.T) {
 	a := initFleet(t, "alpha")
