@@ -64,6 +64,7 @@
 | D58 | Fleet registrations have a rate of their own, 10 a minute per client address. | Registration needs no one's passkey but the registrant's, and each fleet holds up to 5,000 entries; at the directory's 120 a minute one address could fill the database every fleet and every ceremony slot share. | 09 |
 | D59 | Only a refusal carrying one of the worker's own reasons is the worker's; the client takes any other 4xx as the worker unavailable, and a queued write stays queued. | A dropped write is gone for good, a revocation included, and a captive portal, a proxy or Cloudflare's edge answers 4xx pages of its own. Retrying one the worker really refused costs a request every few minutes. | 06, 09 |
 | D60 | `beam fleet reset` keeps revocations and pending writes; a new enrolment keeps those its credential signed and deletes the rest. | A revocation made while its machine was offline and the directory out of reach exists only on this machine until it is published; a reset that deleted it let a re-join into the same fleet admit the revoked machine again. Another fleet's credential signed nothing the new one should act on. | 02, 10 |
+| D61 | A receiver stores an envelope as it encodes again what it checked, not the bytes that arrived. | Go matches JSON keys in any case and lets the last of two win; a sender could have beam check one `from` while applications, reading JSON otherwise, saw another. A sender that encodes as beam does sends those same bytes. | 04, 05 |
 
 ## Milestone gate
 
