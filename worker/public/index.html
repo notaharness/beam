@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>beam</title>
 <style>
-:root { --fg: #1b1b1b; --bg: #fff; --muted: #5f5f5f; --rule: #e2e2e2; --btn-bg: #1b1b1b; --btn-fg: #fff; --danger: #b3261e; --danger-fg: #fff; --alert: #8c1d18; --beam: #9caf88; --packet: #8b843b; }
+:root { --fg: #1b1b1b; --bg: #fff; --muted: #5f5f5f; --rule: #e2e2e2; --btn-bg: #1b1b1b; --btn-fg: #fff; --danger: #b3261e; --danger-fg: #fff; --alert: #8c1d18; --beam: #7a9066; --packet: #c08a1e; }
 @media (prefers-color-scheme: dark) {
-  :root { --fg: #e8e8e8; --bg: #141414; --muted: #a3a3a3; --rule: #2c2c2c; --btn-bg: #e8e8e8; --btn-fg: #141414; --danger: #f2b8b5; --danger-fg: #601410; --alert: #f2b8b5; --packet: #e3c16f; }
+  :root { --fg: #e8e8e8; --bg: #141414; --muted: #a3a3a3; --rule: #2c2c2c; --btn-bg: #e8e8e8; --btn-fg: #141414; --danger: #f2b8b5; --danger-fg: #601410; --alert: #f2b8b5; --beam: #6f7d62; --packet: #e3c16f; }
 }
 [hidden] { display: none; }
 body { font: 16px/1.5 system-ui, sans-serif; max-width: 36rem; min-height: 100vh; margin: 0 auto; padding: 0 1rem; color: var(--fg); background: var(--bg); display: flex; flex-direction: column; box-sizing: border-box; overflow-wrap: anywhere; }
@@ -45,7 +45,7 @@ a { color: inherit; }
 .scene { display: block; width: 100%; height: auto; margin: 0.5rem 0 1.5rem; }
 .scene .machine { fill: var(--bg); stroke: var(--fg); stroke-width: 2; stroke-linejoin: round; }
 .scene .part { fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; }
-.scene .lane { stroke: var(--beam); stroke-width: 2; opacity: 0.5; }
+.scene .lane { stroke: var(--beam); stroke-width: 2; }
 .scene .packet { stroke: var(--packet); stroke-width: 3; stroke-linecap: round; stroke-dasharray: 6 94; stroke-dashoffset: -47; }
 @media (prefers-reduced-motion: no-preference) {
   .scene .packet { animation: beam 2.4s linear infinite; }
