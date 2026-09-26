@@ -124,7 +124,10 @@ one that proves nothing spends its own address's rate and no fleet's. A waiting 
 only reads the database; the one that takes the result writes once. The
 client holds the worker to the same bounds: a response at most a full page of the
 largest entries, at most 500 entries a page and 5,000 in all, a `next` only after a full
-page and past `since`, a minute for a whole read. A worker outside them is unavailable.
+page and past `since`, a minute for a whole read. A worker outside them is unavailable, and so is a refusal
+without one of the worker's own reasons (`params`, `bad-assertion`, `too-large`,
+`blob-too-large`, `fleet-full`, `unauthorized`, `no-fleet`, `not-found`, `exists`): a
+captive portal, a proxy or the edge answered it.
 
 ### Routes
 

@@ -97,7 +97,9 @@ reaches `reading directory`, `notifying peers` and `publishing` ([07](07-cli.md)
 `*.start` under way is `ceremony-state`, and so is a slot answered with a result that
 does not open under the ceremony's key ([02](02-identity.md)). `published: "pending"`
 means the directory append is queued in `state.db` and retried (a write the worker
-refuses outright is dropped from the queue and logged); event `directory.published {
+refuses outright, with one of its own reasons ([09](09-build-and-distribution.md)), is
+dropped from the queue and logged; any other refusal came from the path to the worker,
+and the write stays queued); event `directory.published {
 kind, peerId }` fires when it lands. `join` fails outright with `directory-unavailable`
 because it cannot proceed without the read.
 

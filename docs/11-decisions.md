@@ -62,6 +62,7 @@
 | D56 | The test kit is the beamtest build itself: `beam testkit` serves the dev relay and fake worker, released as `beamtest-*` binaries with `SHA256SUMS` on the GitHub release, never on npm. | n10's e2e and other projects test against the same relay, worker and authenticator beam's own tests use, without building beam; npm would put a software passkey one typo from `@notaharness/beam`. | 09, 10 |
 | D57 | The worker limits every route by client address, counted before any work, and no route by fleet. | A `fleetId` is no secret (every member, revoked ones included, holds it), so a per-fleet rate spent by requests that prove nothing let anyone lock a fleet out of its directory. An address pays for its own requests. | 09 |
 | D58 | Fleet registrations have a rate of their own, 10 a minute per client address. | Registration needs no one's passkey but the registrant's, and each fleet holds up to 5,000 entries; at the directory's 120 a minute one address could fill the database every fleet and every ceremony slot share. | 09 |
+| D59 | Only a refusal carrying one of the worker's own reasons is the worker's; the client takes any other 4xx as the worker unavailable, and a queued write stays queued. | A dropped write is gone for good, a revocation included, and a captive portal, a proxy or Cloudflare's edge answers 4xx pages of its own. Retrying one the worker really refused costs a request every few minutes. | 06, 09 |
 
 ## Milestone gate
 

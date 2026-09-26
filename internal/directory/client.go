@@ -190,25 +190,35 @@ func (c Client) do(ctx context.Context, method, path, token string, body, res an
 	return nil
 }
 
-// status maps a response to the client's errors.
+// refusals are the reasons the worker gives for refusing a request
+// (docs/09). Only a refusal with one of them is the worker's own.
+var refusals = map[string]bool{"params": true, "bad-assertion": true, "too-large": true, "blob-too-large": true,
+	"fleet-full": true, "unauthorized": true, "no-fleet": true, "not-found": true, "exists": true}
+
+// status maps a response to the client's errors. A refusal without one of
+// the worker's own reasons came from something between (a captive portal, a
+// proxy, the edge), and so does not count as the worker's: the worker is
+// unavailable, as it is when it asks to wait or fails.
 func status(resp *http.Response) error {
-	switch s := resp.StatusCode; {
-	case s < 300:
+	s := resp.StatusCode
+	if s < 300 {
 		return nil
+	}
+	var e struct {
+		Error string `json:"error"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&e) // a body that is not the worker's has no reason
+	switch {
+	case s == http.StatusTooManyRequests || s >= 500 || !refusals[e.Error]:
+		return fmt.Errorf("%w: %s", ErrUnavailable, resp.Status)
 	case s == http.StatusUnauthorized:
 		return ErrUnauthorized
 	case s == http.StatusNotFound:
 		return ErrNoFleet
 	case s == http.StatusConflict:
 		return ErrExists
-	case s == http.StatusTooManyRequests || s >= 500:
-		return fmt.Errorf("%w: %s", ErrUnavailable, resp.Status)
 	}
-	var e struct {
-		Error string `json:"error"`
-	}
-	_ = json.NewDecoder(resp.Body).Decode(&e) // a refusal without a reason is still one
-	return &Refused{Status: resp.StatusCode, Reason: e.Error}
+	return &Refused{Status: s, Reason: e.Error}
 }
 
 func b64(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
