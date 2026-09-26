@@ -118,7 +118,7 @@ after(async () => {
 // without a touch) and the slot route answering slot, which is a status or
 // "abort" for a request that gets no response, "hang" for one never answered.
 async function load(url, o = {}) {
-  const context = await browser.newContext({ reducedMotion: o.motion ?? "no-preference" });
+  const context = await browser.newContext({ reducedMotion: o.motion ?? "no-preference", colorScheme: o.scheme ?? "light" });
   const page = await context.newPage();
   page.setDefaultTimeout(8000);
   const cdp = await context.newCDPSession(page);
@@ -193,6 +193,25 @@ describe("the ceremony page, without a request", () => {
     await t.close();
   });
 
+  // WCAG 1.4.11: the beams are the picture, so each lane holds 3:1 against the page.
+  for (const scheme of ["light", "dark"]) {
+    it(`draws its beams at 3:1 or more against the page in ${scheme} mode`, async () => {
+      const t = await load("https://beam.n10.is/", { scheme });
+      const [lane, page, opacity] = await t.page.locator("#home .lane").first().evaluate((e) => {
+        const s = getComputedStyle(e);
+        return [s.stroke, getComputedStyle(document.body).backgroundColor, s.opacity];
+      });
+      const luminance = (rgb) => {
+        const [r, g, b] = rgb.match(/\d+/g).map((v) => v / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const [hi, lo] = [luminance(lane), luminance(page)].sort((a, b) => b - a);
+      assert.equal(opacity, "1");
+      assert.ok((hi + 0.05) / (lo + 0.05) >= 3, `${lane} on ${page}`);
+      await t.close();
+    });
+  }
+
   for (const [motion, animation] of [["no-preference", "beam"], ["reduce", "none"]]) {
     it(`moves its beams' packets ${animation === "none" ? "not at all" : "along them"} under prefers-reduced-motion: ${motion}`, async () => {
       const t = await load("https://beam.n10.is/", { motion });
@@ -240,6 +259,7 @@ describe("the ceremony page, given an invalid request", () => {
       assert.equal(await text(t.page, "[role=alert] h1"), "This link is incomplete or invalid.");
       assert.equal(await text(t.page, "[role=alert] #explain"), "Return to n10 Desktop or your terminal and start again for a fresh link.");
       assert.equal(await t.page.locator("#home").isVisible(), false);
+      assert.ok(await t.page.locator("details#compat").isVisible());
       assert.equal(await t.page.getByRole("button").count(), 0);
       assert.equal(await t.calls(), 0);
       assert.equal(t.posts.length, 0);
@@ -259,6 +279,7 @@ describe("the ceremony page, given an invalid request", () => {
     const t = await load(request("a").url + "&z=1");
     assert.equal(await text(t.page, "h1"), "Authorize buildbox");
     assert.equal(await t.page.locator("#home").isVisible(), false);
+    assert.ok(await t.page.locator("details#compat").isVisible());
     await t.close();
   });
 
@@ -384,6 +405,7 @@ describe("the ceremony page's checks before any prompt", () => {
     const t = await load(req.url, { caps: "false", passkey: true });
     await t.page.getByRole("alert").filter({ hasText: "This browser reports that WebAuthn PRF is unavailable. Choose a supported browser before continuing." }).waitFor();
     assert.ok(await button(t.page).isDisabled());
+    assert.ok(await t.page.locator("details#compat").isVisible());
     assert.ok(await t.page.locator("details#compat").evaluate((d) => d.open));
     assert.equal(await text(t.page, "#anyway-note"), "Your provider may handle passkeys separately from the browser. beam still requires a valid PRF result.");
     assert.equal(await t.calls(), 0);
@@ -461,6 +483,7 @@ describe("the ceremony page's passkey calls", () => {
     assert.deepEqual(await settle(t.page), ["This passkey did not provide WebAuthn PRF.",
       "beam needs PRF to derive its encrypted directory key. The browser, OS and selected passkey provider must support it. Return to your machine and start a fresh request using a supported combination."]);
     assert.equal(await text(t.page, "#result-extra"), "A passkey may have been saved, but fleet creation is not complete.");
+    assert.ok(await t.page.locator("details#compat").isVisible());
     assert.ok(await t.page.locator("details#compat").evaluate((d) => d.open));
     assert.match(await text(t.page, "#technical-text"), /prf\.enabled/);
     assert.equal(sent(req, t.posts).get("result"), "prf-unsupported");
