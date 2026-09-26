@@ -14,8 +14,9 @@ beforeAll(async () => {
   await env.DB.batch(schema.split(";").filter((s) => s.trim()).map((s) => env.DB.prepare(s)));
 });
 
-function call(method: string, path: string, body?: unknown, token?: Uint8Array | string): Promise<Response> {
+function call(method: string, path: string, body?: unknown, token?: Uint8Array | string, ip?: string): Promise<Response> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (ip !== undefined) headers["CF-Connecting-IP"] = ip;
   if (token !== undefined) headers.Authorization = "Bearer " + (typeof token === "string" ? token : b64(token));
   return exports.default.fetch(new Request("https://beam.n10.is" + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }));
 }
@@ -201,5 +202,16 @@ describe("docs/09 rate", () => {
     for (let i = 0; i < 121; i++) codes.push((await call("GET", "/v1/entries", undefined, f.token)).status);
     expect(codes.slice(0, 119).every((c) => c === 200)).toBe(true);
     expect(codes[120]).toBe(429);
+  });
+
+  // A fleetId is no secret: every member, revoked ones included, holds it.
+  // Requests that prove nothing must not spend the owner's budget.
+  it("does not let junk from one address lock a fleet's owner out", async () => {
+    const f = await fleet();
+    await register(f);
+    const junk = { kind: "revoke", statementHash: b64(random(32)), blob: "", assertion: { credentialId: "x", clientDataJSON: "", authenticatorData: "", signature: "" } };
+    for (let i = 0; i < 121; i++) await call("POST", `/v1/fleets/${f.id}/entries`, junk, undefined, "203.0.113.66");
+    expect((await call("POST", `/v1/fleets/${f.id}/entries`, await entry(f.auth, "revoke"), undefined, "198.51.100.7")).status).toBe(201);
+    expect((await call("GET", "/v1/entries", undefined, f.token, "198.51.100.7")).status).toBe(200);
   });
 });
