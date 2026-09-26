@@ -9,6 +9,7 @@ import { isoBase64URL } from "@simplewebauthn/server/helpers";
 interface Env {
   DB: D1Database;
   LIMITER: RateLimit;
+  REGISTRATIONS: RateLimit;
 }
 
 const RP_ID = "beam.n10.is";
@@ -72,7 +73,8 @@ export default {
 // POST /v1/fleets: create a fleet with its first entry, a member statement
 // signed by the credential it registers.
 async function register(env: Env, r: Request): Promise<Response> {
-  await limit(env, client(r, "directory"));
+  await limit(env.LIMITER, client(r, "directory"));
+  await limit(env.REGISTRATIONS, client(r, "register"));
   const req = await body(r);
   const pk = bytes(req.credentialPublicKey);
   const token = bytes(req.readToken);
@@ -99,7 +101,7 @@ async function register(env: Env, r: Request): Promise<Response> {
 // GET /v1/entries?since=: the fleet the bearer token opens, from since on.
 // Every token that opens nothing gets the same 401.
 async function read(env: Env, req: Request, url: URL): Promise<Response> {
-  await limit(env, client(req, "directory"));
+  await limit(env.LIMITER, client(req, "directory"));
   const token = bytes((req.headers.get("Authorization") ?? "").replace(/^Bearer /, ""));
   const fleet = await env.DB.prepare("SELECT fleet_id, credential_id, credential_pk FROM fleets WHERE read_hash = ?")
     .bind(await sha256(token)).first<Fleet>();
@@ -124,7 +126,7 @@ async function read(env: Env, req: Request, url: URL): Promise<Response> {
 // its seq. One statement allocates the seq and checks the cap, so appends
 // at once cannot pass it together.
 async function appendEntry(env: Env, r: Request, fleetId: string): Promise<Response> {
-  await limit(env, client(r, "directory"));
+  await limit(env.LIMITER, client(r, "directory"));
   const req = await body(r);
   if (req.kind !== "member" && req.kind !== "revoke") throw new Refusal(400, "params");
   const fleet = await env.DB.prepare("SELECT fleet_id, credential_id, credential_pk FROM fleets WHERE fleet_id = ?").bind(fleetId).first<Fleet>();
@@ -152,7 +154,7 @@ async function appendEntry(env: Env, r: Request, fleetId: string): Promise<Respo
 // ceremony's URL. One write per slot: the id stays taken for five minutes
 // from it, read or not, so a late second writer learns it lost.
 async function writeSlot(env: Env, req: Request, slot: string): Promise<Response> {
-  await limit(env, client(req, "write"));
+  await limit(env.LIMITER, client(req, "write"));
   const { sealed } = await body(req);
   const b = bytes(sealed);
   if (typeof sealed !== "string" || b.length === 0) throw new Refusal(400, "params");
@@ -170,7 +172,7 @@ async function writeSlot(env: Env, req: Request, slot: string): Promise<Response
 // of. It waits up to SLOT_WAIT for the write, only reading meanwhile; the
 // ciphertext goes with the one read that takes it.
 async function readSlot(env: Env, req: Request, slot: string): Promise<Response> {
-  await limit(env, client(req, "read"));
+  await limit(env.LIMITER, client(req, "read"));
   const key = bytes((req.headers.get("Authorization") ?? "").replace(/^Bearer /, ""));
   if (key.length !== 32 || b64((await sha256(key)).slice(0, 16)) !== slot) throw new Refusal(401, "unauthorized");
   const peek = () => env.DB.prepare("SELECT sealed IS NOT NULL AS full FROM slots WHERE slot_id = ? AND created_at > ?")
@@ -195,7 +197,7 @@ async function readSlot(env: Env, req: Request, slot: string): Promise<Response>
 // writes or the directory: counted apart, so reads cannot spend the one
 // write a phone makes. It is charged before any work, so a request that
 // proves nothing spends only its own address's rate, never a fleet's.
-function client(req: Request, route: "read" | "write" | "directory"): string {
+function client(req: Request, route: "read" | "write" | "directory" | "register"): string {
   return `${route}:` + (req.headers.get("CF-Connecting-IP") ?? "");
 }
 
@@ -234,8 +236,8 @@ async function verified(credentialId: string, pk: Uint8Array<ArrayBuffer>, e: En
   return { hash, blob, assertion };
 }
 
-async function limit(env: Env, key: string) {
-  if (!(await env.LIMITER.limit({ key })).success) throw new Refusal(429, "rate-limited");
+async function limit(binding: RateLimit, key: string) {
+  if (!(await binding.limit({ key })).success) throw new Refusal(429, "rate-limited");
 }
 
 // body is a request's JSON. It reads at most MAX_BODY bytes, counted as

@@ -116,8 +116,10 @@ older than that is absent to every route, and each write deletes the expired one
 Directory requests, slot reads and slot writes are each limited to 120 requests/min per
 client address (`CF-Connecting-IP`), through one binding, counted apart so that reads
 cannot spend the page's one write; a waiting daemon makes about three slot reads a
-minute. A request is counted before the worker does anything with it, so one that proves
-nothing spends its own address's rate and no fleet's. A waiting read
+minute. A fleet registration also counts against 10 a minute per client address, through
+a binding of its own: anyone can register a fleet under a key of their own, and a person
+starting one needs one. A request is counted before the worker does anything with it, so
+one that proves nothing spends its own address's rate and no fleet's. A waiting read
 only reads the database; the one that takes the result writes once. The
 client holds the worker to the same bounds: a response at most a full page of the
 largest entries, at most 500 entries a page and 5,000 in all, a `next` only after a full
