@@ -34,12 +34,14 @@ const (
 
 // Client errors: the worker could not be reached or asked to wait
 // (Unavailable), the read token opens no fleet (Unauthorized), an append
-// names no fleet (NoFleet), a registration names one that exists (Exists).
+// names no fleet (NoFleet), a registration names one that exists (Exists),
+// the directory holds a statement under another blob (Conflict).
 var (
 	ErrUnavailable  = errors.New("directory-unavailable")
 	ErrUnauthorized = errors.New("directory: read token opens no fleet")
 	ErrNoFleet      = errors.New("directory: no such fleet")
 	ErrExists       = errors.New("directory: fleet exists")
+	ErrConflict     = errors.New("directory: the statement is held with another blob")
 )
 
 // Refused is any other refusal, with the worker's reason.
@@ -113,17 +115,19 @@ type Client struct {
 func (c Client) Register(ctx context.Context, cred identity.Credential, readToken []byte, first Entry) error {
 	first.Kind = ""
 	body := Registration{CredentialID: cred.ID, CredentialPublicKey: b64(cred.PublicKey), ReadToken: b64(readToken), First: first}
-	return c.do(ctx, http.MethodPost, "/v1/fleets", "", body, nil)
+	_, err := c.do(ctx, http.MethodPost, "/v1/fleets", "", body, nil)
+	return err
 }
 
-// Append adds e to fleetID's directory and returns its seq; an entry the
-// directory holds already returns the seq it has.
-func (c Client) Append(ctx context.Context, fleetID string, e Entry) (int64, error) {
+// Append adds e to fleetID's directory and returns its seq. held says the
+// directory had e's statement already, with the seq it has and the blob
+// appended first, which need not be e's (docs/02).
+func (c Client) Append(ctx context.Context, fleetID string, e Entry) (seq int64, held bool, err error) {
 	var res struct {
 		Seq int64 `json:"seq"`
 	}
-	err := c.do(ctx, http.MethodPost, "/v1/fleets/"+fleetID+"/entries", "", e, &res)
-	return res.Seq, err
+	code, err := c.do(ctx, http.MethodPost, "/v1/fleets/"+fleetID+"/entries", "", e, &res)
+	return res.Seq, code == http.StatusOK, err
 }
 
 // Read returns the whole directory readToken opens: every page's entries
@@ -135,7 +139,7 @@ func (c Client) Read(ctx context.Context, readToken []byte) (Page, error) {
 	var all Page
 	for since := int64(0); ; {
 		var p Page
-		if err := c.do(ctx, http.MethodGet, "/v1/entries?since="+strconv.FormatInt(since, 10), b64(readToken), nil, &p); err != nil {
+		if _, err := c.do(ctx, http.MethodGet, "/v1/entries?since="+strconv.FormatInt(since, 10), b64(readToken), nil, &p); err != nil {
 			return Page{}, err
 		}
 		switch {
@@ -157,7 +161,8 @@ func (c Client) Read(ctx context.Context, readToken []byte) (Page, error) {
 	}
 }
 
-func (c Client) do(ctx context.Context, method, path, token string, body, res any) error {
+// do sends a request and decodes the answer into res, returning its status.
+func (c Client) do(ctx context.Context, method, path, token string, body, res any) (int, error) {
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 	var b []byte
@@ -166,7 +171,7 @@ func (c Client) do(ctx context.Context, method, path, token string, body, res an
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.URL+path, bytes.NewReader(b))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
@@ -174,20 +179,20 @@ func (c Client) do(ctx context.Context, method, path, token string, body, res an
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrUnavailable, err)
+		return 0, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	defer resp.Body.Close()
 	resp.Body = http.MaxBytesReader(nil, resp.Body, maxBody)
 	if err := status(resp); err != nil {
-		return err
+		return resp.StatusCode, err
 	}
 	if res == nil {
-		return nil
+		return resp.StatusCode, nil
 	}
 	if err := json.NewDecoder(resp.Body).Decode(res); err != nil {
-		return fmt.Errorf("%w: %v", ErrUnavailable, err)
+		return resp.StatusCode, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
-	return nil
+	return resp.StatusCode, nil
 }
 
 // refusals are the reasons the worker gives for refusing a request

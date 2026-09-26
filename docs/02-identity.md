@@ -139,9 +139,16 @@ assertion under the fleet's registered credential with `challenge = SHA-256(doma
 statementHash)` for the domain of `kind`, which it can compute without the plaintext, and
 stores the last three. So **appending needs a
 tap**; a revoked machine holding `K_dir` and `T_read` can read forever and never write.
-Readers decrypt, check that the statement inside hashes to `statementHash` (a compromised
-daemon could append a valid assertion with an unrelated blob; that costs one slot and is
-discarded), then verify the record as in "The membership entry".
+Readers decrypt, check that the statement inside hashes to `statementHash`, then verify
+the record as in "The membership entry". The worker keeps the first blob appended for a
+statement, and the assertion does not cover the blob: whoever holds a signed record
+before it is published (a member it was pushed to, a compromised daemon) can append its
+assertion with another blob, which readers discard, and the statement's place in the
+directory is lost. So a writer whose append finds its statement held already reads the
+directory, and dequeues the write only if a reader finds the record there; otherwise the
+write stays queued, logged as a conflict, and a fresh statement (another `beam revoke`)
+takes a place of its own. Binding the blob to the assertion is an open question
+([11](11-decisions.md)).
 
 The directory is read at join and at daemon start, written at init, join and revoke
 with retry from `state.db` while the daemon runs, and never polled. No runtime behaviour
@@ -349,8 +356,9 @@ assertion by any other credential is `wrong-passkey`.
 2. Apply locally: store the revocation and queue it for the directory in one
    transaction; terminate the peer's tunnels and streams.
 3. Push it on every live `sync` stream. Append it to the directory and dequeue it once
-   the worker has it, or held it already; otherwise it stays queued and is retried with
-   backoff while the daemon runs, a restart included.
+   the worker has it, or held it already with this record (see "The directory");
+   otherwise it stays queued and is retried with backoff while the daemon runs, a
+   restart included.
 4. Report `{ local: true, published: true | "pending", acknowledgedBy: n }`. `n` counts the
    peers whose sync answered, within 5 s, a ping sent right after the revocation: the
    stream is ordered, so that pong proves the peer read the revocation first.

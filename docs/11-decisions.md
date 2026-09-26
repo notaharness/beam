@@ -69,6 +69,7 @@
 | D63 | Clients and a starting daemon refuse a socket path another user owns; the CLI shows, draws and opens only a well-formed request on the ceremony page. | A socket at a shared path (`BEAM_SOCKET` in `/tmp`, as a too-long path invites) can be someone else's listener, which would hand the CLI a ceremony URL of its choosing, with the terminal's Action and fingerprint lines to match, or a `file:` URL for `open`. Checking the owner and the URL costs a `stat` and a parse. | 06, 07 |
 | D64 | A record is at most 8 KiB of JSON and must have a record's fields before it is canonicalised. | Records arrive in hellos from anyone holding an address, and canonicalising copies each nested value into its parent: 130 KB of nested objects cost 35 MB before the refusal. 8 KiB is what a directory blob holds, so no publishable record is longer. | 02 |
 | D65 | `beam fleet reset` deletes `key.json`; the next `init` or `join` makes a new node key. | Reset is the recovery for a compromised fleet, and a member used before its revocation may have copied other machines' node keys (01, Blast radius). A kept key enrols again under the new passkey, and its copy with it. The identity is part of the problem. | 01, 02 |
+| D66 | A writer whose append finds its statement held reads the directory, and dequeues the write only if the record is there as a reader takes it; otherwise it stays queued and is logged, retried at the next start or publish. | The worker keeps the first blob for a statement and verifies only the assertion, so a member the record was pushed to could take its place with junk, and a revocation reported published would reach no reader of the directory. Reading costs a request, only when an append was held. | 02, 06 |
 
 ## Milestone gate
 
@@ -107,3 +108,8 @@ another tunnel. Footprint numbers are in [03](03-transport.md).
 7. **Liveness numbers.** 15 s ping, 30 s timeout, 2 s → 5 min backoff, 20 s dial deadline.
    Measure on battery before fixing.
 8. **`msg listen` acks on stdout write.** Acceptable for an observer; state it.
+9. **Binding the blob.** (D66) The assertion covers the statement, not the sealed blob, so
+   a copied assertion takes the statement's place in the directory with junk, and D66
+   only notices. A v2 envelope whose challenge covers a commitment to the blob, sealed
+   under a key derived before the ceremony, would let the worker refuse it. Worth a
+   format version?

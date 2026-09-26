@@ -117,6 +117,7 @@ bare member node (transport only) stands in for a daemon:
 | grants | `msg` refuses `pty` on a live tunnel; `none` still syncs |
 | mailbox | stored/delivered/rejected; crash between store and ack → duplicate suppressed; subscriber defer/ack; `send` while connected flushes immediately |
 | junk in the log | valid assertion, unrelated blob → ignored |
+| junk first | a copy of a revocation's assertion appended with junk before its writer publishes: the writer reports it pending and keeps it queued, the retry too |
 | test authenticator, no browser | on a machine with a display, `beam init` opens the browser, and with `BEAM_TEST_AUTHENTICATOR` in its environment does not |
 | test kit | `beam testkit --exit-with-parent` prints its JSON line; a daemon on it inits, a second joins, and the two connect, through the test authenticator; the kit exits 0 at once when its stdin ends, a slot read still waiting; with a stdin that is no pipe it is a usage error |
 | daemon lock | second daemon exits 1; connect-or-spawn loser connects to winner |

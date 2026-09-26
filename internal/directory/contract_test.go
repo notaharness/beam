@@ -116,9 +116,9 @@ func TestAppend(t *testing.T) {
 	ctx, fleet := context.Background(), o.cred.FleetID()
 	member, revoke := o.entry(identity.Member), o.entry(identity.Revoke)
 	for i, r := range []identity.Record{member, revoke, member} {
-		seq, err := c.Append(ctx, fleet, o.sealed(r))
-		if want := []int64{2, 3, 2}[i]; err != nil || seq != want {
-			t.Fatalf("append %d: seq %d, %v; want %d", i, seq, err, want)
+		seq, held, err := c.Append(ctx, fleet, o.sealed(r))
+		if want := []int64{2, 3, 2}[i]; err != nil || seq != want || held != (i == 2) {
+			t.Fatalf("append %d: seq %d, held %v, %v; want %d", i, seq, held, err, want)
 		}
 	}
 	wrongKind := o.sealed(o.entry(identity.Revoke))
@@ -134,11 +134,11 @@ func TestAppend(t *testing.T) {
 		"a blob over 8 KiB":  {big, 413},
 	} {
 		var ref *directory.Refused
-		if _, err := c.Append(ctx, fleet, tc.e); !errors.As(err, &ref) || ref.Status != tc.status {
+		if _, _, err := c.Append(ctx, fleet, tc.e); !errors.As(err, &ref) || ref.Status != tc.status {
 			t.Errorf("%s: %v, want %d", name, err, tc.status)
 		}
 	}
-	if _, err := c.Append(ctx, newOwner().cred.FleetID(), o.sealed(member)); !errors.Is(err, directory.ErrNoFleet) {
+	if _, _, err := c.Append(ctx, newOwner().cred.FleetID(), o.sealed(member)); !errors.Is(err, directory.ErrNoFleet) {
 		t.Errorf("unknown fleet: %v", err)
 	}
 	p, err := c.Read(ctx, o.tRead)
@@ -154,7 +154,7 @@ func TestJunkDiscarded(t *testing.T) {
 	o.register(t, c, o.entry(identity.Member))
 	signed, other := o.sealed(o.entry(identity.Member)), o.sealed(o.entry(identity.Member))
 	signed.Blob = other.Blob
-	if _, err := c.Append(context.Background(), o.cred.FleetID(), signed); err != nil {
+	if _, _, err := c.Append(context.Background(), o.cred.FleetID(), signed); err != nil {
 		t.Fatal(err)
 	}
 	p, err := c.Read(context.Background(), o.tRead)

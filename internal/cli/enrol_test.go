@@ -332,7 +332,7 @@ func TestJunkInLog(t *testing.T) {
 	signed, other := newMachine(t, "signed").entry, newMachine(t, "other").entry
 	e := directory.NewEntry(kDir, fleetID, signed)
 	e.Blob = directory.NewEntry(kDir, fleetID, other).Blob
-	if _, err := (directory.Client{URL: dirURL}).Append(context.Background(), fleetID, e); err != nil {
+	if _, _, err := (directory.Client{URL: dirURL}).Append(context.Background(), fleetID, e); err != nil {
 		t.Fatal(err)
 	}
 	b := blank(t, "beta")

@@ -21,7 +21,7 @@ func TestReadPages(t *testing.T) {
 	c, o := directory.Client{URL: s.URL}, newOwner()
 	o.register(t, c, o.entry(identity.Member))
 	for range 520 {
-		if _, err := c.Append(context.Background(), o.cred.FleetID(), o.sealed(o.entry(identity.Member))); err != nil {
+		if _, _, err := c.Append(context.Background(), o.cred.FleetID(), o.sealed(o.entry(identity.Member))); err != nil {
 			t.Fatal(err)
 		}
 	}
