@@ -184,10 +184,12 @@ The page:
    `c`, `l` and `f`, with `s` 16 bytes and `k` and `c` 32 bytes, each canonical unpadded
    base64url, `f` 16 lowercase hex characters, and `l` a label (1–64 scalar values
    without `/ \ { }` or a control character). For `o=c`, `n` is a label too, at most once,
-   and `beam` when absent. Other keys are ignored. With no fragment the page says to
-   start in n10 Desktop, `beam init` or `beam join`; any other fragment that is not a
-   request gets "This link is incomplete or invalid." Neither has a button or writes
-   the slot. A request shows its heading and explanation, then **Action**, **Machine**
+   and `beam` when absent. Other keys are ignored. With no fragment the page is beam's
+   homepage: what beam is, machines joined by beams whose packets move only without
+   `prefers-reduced-motion: reduce`, to start in n10 Desktop, `beam init` or `beam join`,
+   and links to the repository and n10.is. Any other fragment that is not a request gets
+   "This link is incomplete or invalid." instead, without the homepage. Neither has a
+   button or writes the slot. A request shows its heading and explanation, then **Action**, **Machine**
    (`l`) and **Machine fingerprint** (`f` in groups of four, as `beam status` prints a
    peerId; never the fleet's), "Continue only if you started this request just now.
    Compare the action, machine name and machine fingerprint with n10 Desktop or your
