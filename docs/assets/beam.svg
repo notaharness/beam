@@ -1,0 +1,819 @@
+<!-- Exported from n10: kirby/apps/website/src/components/beam/mesh/{beam-mesh,ground,machines}.tsx,
+     geometry.ts, palette.ts and src/app/global.css at 8bc6dd624762747407f8c1e521ad74a2d29bf454.
+     React server-rendered to SVG; original geometry and CSS animations retained.
+     Embedded palette; dark selectors use prefers-color-scheme; reduced motion pauses animation.
+     ViewBox expanded for README embedding. No scripts, fonts or external resources. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="400" viewBox="-380 -60 760 400" class="n10-mesh" role="img" aria-labelledby="title desc">
+<title id="title">beam connects your machines</title>
+<desc id="desc">A laptop, workstation, build box and home server linked by beams carrying data in both directions.</desc>
+<style>:root { --n10-sage:#9caf88; --n10-sand:#e3c16f; --color-fd-primary:#4d6139; --color-fd-border:rgb(110 100 70 / .18); }
+@media (prefers-color-scheme:dark) { :root { --color-fd-primary:#b7c9a4; --color-fd-border:rgb(220 210 170 / .11); } }
+:root {
+  --n10-iso-top: #fefdfa;
+  --n10-iso-left: #ebe8dd;
+  --n10-iso-right: #d9d5c6;
+  --n10-iso-line: rgb(80 72 45 / 0.4);
+  --n10-iso-inset: rgb(60 55 35 / 0.2);
+  --n10-iso-screen: #f7f5ee;
+  --n10-iso-code: rgb(60 55 35 / 0.3);
+  --n10-iso-code-sage: var(--color-fd-primary);
+  --n10-iso-code-sand: #b3902f;
+}
+
+@media (prefers-color-scheme: dark) { :root {
+  --n10-iso-top: #34362e;
+  --n10-iso-left: #24261f;
+  --n10-iso-right: #191a15;
+  --n10-iso-line: rgb(235 228 195 / 0.22);
+  --n10-iso-inset: rgb(0 0 0 / 0.4);
+  --n10-iso-screen: #0b0c09;
+  --n10-iso-code: rgb(255 255 255 / 0.35);
+  --n10-iso-code-sage: var(--n10-sage);
+  --n10-iso-code-sand: var(--n10-sand);
+} }
+
+.n10-iso-face {
+  stroke: var(--n10-iso-line);
+  stroke-width: 0.75;
+  stroke-linejoin: round;
+}
+
+.n10-iso-face--top {
+  fill: var(--n10-iso-top);
+}
+
+.n10-iso-face--left {
+  fill: var(--n10-iso-left);
+}
+
+.n10-iso-face--right {
+  fill: var(--n10-iso-right);
+}
+
+.n10-iso-shadow {
+  fill: rgb(30 25 10 / 0.22);
+  filter: blur(3px);
+}
+
+@media (prefers-color-scheme: dark) { .n10-iso-shadow {
+  fill: rgb(0 0 0 / 0.55);
+} }
+
+.n10-iso-inset {
+  fill: var(--n10-iso-inset);
+}
+
+.n10-iso-screen {
+  fill: var(--n10-iso-screen);
+  stroke: var(--n10-iso-line);
+  stroke-width: 0.5;
+}
+
+.n10-iso-code {
+  fill: none;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke: var(--n10-iso-code);
+}
+
+.n10-iso-code--sage {
+  stroke: var(--n10-iso-code-sage);
+}
+
+.n10-iso-code--sand {
+  stroke: var(--n10-iso-code-sand);
+}
+
+.n10-iso-led {
+  fill: var(--n10-sage);
+  animation: n10-iso-blink 2.8s steps(1, end) infinite;
+  animation-play-state: var(--n10-mesh-play);
+}
+
+.n10-iso-led--sand {
+  fill: var(--n10-sand);
+}
+
+@keyframes n10-iso-blink {
+  60% {
+    opacity: 0.25;
+  }
+  75% {
+    opacity: 1;
+  }
+}
+
+.n10-mesh-grid {
+  fill: none;
+  stroke: var(--color-fd-border);
+  stroke-width: 1;
+}
+
+.n10-mesh-pool {
+  opacity: 0.55;
+}
+
+@media (prefers-color-scheme: dark) { .n10-mesh-pool {
+  opacity: 0.3;
+} }
+
+
+.n10-mesh-ray {
+  opacity: 0.4;
+}
+
+.n10-mesh-ray-packet {
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-dasharray: 1.4 48.6;
+  animation: n10-mesh-flow var(--n10-mesh-seconds) linear infinite;
+  animation-play-state: var(--n10-mesh-play);
+}
+
+.n10-mesh-ray-packet--inbound {
+  animation-direction: reverse;
+}
+
+
+.n10-mesh-ribbon {
+  fill: var(--n10-mesh-color);
+  opacity: 0.42;
+}
+
+.n10-mesh-packet {
+  fill: none;
+  stroke: var(--n10-mesh-color);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-dasharray: 4 21;
+  animation: n10-mesh-flow var(--n10-mesh-seconds) linear infinite;
+  animation-play-state: var(--n10-mesh-play);
+}
+
+.n10-mesh-packet--back {
+  stroke-dasharray: 1.5 23.5;
+  stroke-dashoffset: 12;
+  animation-name: n10-mesh-flow-back;
+  animation-duration: calc(var(--n10-mesh-seconds) * 1.35);
+}
+
+@media (prefers-color-scheme: dark) { .n10-mesh-packet {
+  filter: drop-shadow(0 0 3px var(--n10-mesh-color));
+} }
+
+@keyframes n10-mesh-flow {
+  to {
+    stroke-dashoffset: -100;
+  }
+}
+
+@keyframes n10-mesh-flow-back {
+  to {
+    stroke-dashoffset: 112;
+  }
+}
+
+
+.n10-mesh {
+  --n10-mesh-play: running;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .n10-mesh {
+    --n10-mesh-play: paused;
+  }
+}</style>
+<g>
+<defs>
+<radialGradient id="n10-mesh-fade" gradientUnits="userSpaceOnUse" cx="0" cy="156" r="1" gradientTransform="translate(0 156) scale(760 330) translate(0 -156)">
+<stop offset="0" stop-color="white">
+</stop>
+<stop offset="0.35" stop-color="white" stop-opacity="0.8">
+</stop>
+<stop offset="0.85" stop-color="white" stop-opacity="0">
+</stop>
+</radialGradient>
+<mask id="n10-mesh-mask" maskUnits="userSpaceOnUse" x="-800" y="-244" width="1600" height="800">
+<rect x="-800" y="-244" width="1600" height="800" fill="url(#n10-mesh-fade)">
+</rect>
+</mask>
+<radialGradient id="n10-mesh-pool">
+<stop offset="0" stop-color="var(--n10-sand)" stop-opacity="0.5">
+</stop>
+<stop offset="0.55" stop-color="var(--n10-sage)" stop-opacity="0.16">
+</stop>
+<stop offset="1" stop-color="var(--n10-sage)" stop-opacity="0">
+</stop>
+</radialGradient>
+</defs>
+<ellipse cx="0" cy="156" rx="430" ry="250" fill="url(#n10-mesh-pool)" class="n10-mesh-pool">
+</ellipse>
+<g mask="url(#n10-mesh-mask)" class="n10-mesh-grid">
+<polyline points="0,-612 -1330.22,156">
+</polyline>
+<polyline points="0,-612 1330.22,156">
+</polyline>
+<polyline points="20.78,-600 -1309.43,168">
+</polyline>
+<polyline points="-20.78,-600 1309.43,168">
+</polyline>
+<polyline points="41.57,-588 -1288.65,180">
+</polyline>
+<polyline points="-41.57,-588 1288.65,180">
+</polyline>
+<polyline points="62.35,-576 -1267.86,192">
+</polyline>
+<polyline points="-62.35,-576 1267.86,192">
+</polyline>
+<polyline points="83.14,-564 -1247.08,204">
+</polyline>
+<polyline points="-83.14,-564 1247.08,204">
+</polyline>
+<polyline points="103.92,-552 -1226.29,216">
+</polyline>
+<polyline points="-103.92,-552 1226.29,216">
+</polyline>
+<polyline points="124.71,-540 -1205.51,228">
+</polyline>
+<polyline points="-124.71,-540 1205.51,228">
+</polyline>
+<polyline points="145.49,-528 -1184.72,240">
+</polyline>
+<polyline points="-145.49,-528 1184.72,240">
+</polyline>
+<polyline points="166.28,-516 -1163.94,252">
+</polyline>
+<polyline points="-166.28,-516 1163.94,252">
+</polyline>
+<polyline points="187.06,-504 -1143.15,264">
+</polyline>
+<polyline points="-187.06,-504 1143.15,264">
+</polyline>
+<polyline points="207.85,-492 -1122.37,276">
+</polyline>
+<polyline points="-207.85,-492 1122.37,276">
+</polyline>
+<polyline points="228.63,-480 -1101.58,288">
+</polyline>
+<polyline points="-228.63,-480 1101.58,288">
+</polyline>
+<polyline points="249.42,-468 -1080.8,300">
+</polyline>
+<polyline points="-249.42,-468 1080.8,300">
+</polyline>
+<polyline points="270.2,-456 -1060.02,312">
+</polyline>
+<polyline points="-270.2,-456 1060.02,312">
+</polyline>
+<polyline points="290.98,-444 -1039.23,324">
+</polyline>
+<polyline points="-290.98,-444 1039.23,324">
+</polyline>
+<polyline points="311.77,-432 -1018.45,336">
+</polyline>
+<polyline points="-311.77,-432 1018.45,336">
+</polyline>
+<polyline points="332.55,-420 -997.66,348">
+</polyline>
+<polyline points="-332.55,-420 997.66,348">
+</polyline>
+<polyline points="353.34,-408 -976.88,360">
+</polyline>
+<polyline points="-353.34,-408 976.88,360">
+</polyline>
+<polyline points="374.12,-396 -956.09,372">
+</polyline>
+<polyline points="-374.12,-396 956.09,372">
+</polyline>
+<polyline points="394.91,-384 -935.31,384">
+</polyline>
+<polyline points="-394.91,-384 935.31,384">
+</polyline>
+<polyline points="415.69,-372 -914.52,396">
+</polyline>
+<polyline points="-415.69,-372 914.52,396">
+</polyline>
+<polyline points="436.48,-360 -893.74,408">
+</polyline>
+<polyline points="-436.48,-360 893.74,408">
+</polyline>
+<polyline points="457.26,-348 -872.95,420">
+</polyline>
+<polyline points="-457.26,-348 872.95,420">
+</polyline>
+<polyline points="478.05,-336 -852.17,432">
+</polyline>
+<polyline points="-478.05,-336 852.17,432">
+</polyline>
+<polyline points="498.83,-324 -831.38,444">
+</polyline>
+<polyline points="-498.83,-324 831.38,444">
+</polyline>
+<polyline points="519.62,-312 -810.6,456">
+</polyline>
+<polyline points="-519.62,-312 810.6,456">
+</polyline>
+<polyline points="540.4,-300 -789.82,468">
+</polyline>
+<polyline points="-540.4,-300 789.82,468">
+</polyline>
+<polyline points="561.18,-288 -769.03,480">
+</polyline>
+<polyline points="-561.18,-288 769.03,480">
+</polyline>
+<polyline points="581.97,-276 -748.25,492">
+</polyline>
+<polyline points="-581.97,-276 748.25,492">
+</polyline>
+<polyline points="602.75,-264 -727.46,504">
+</polyline>
+<polyline points="-602.75,-264 727.46,504">
+</polyline>
+<polyline points="623.54,-252 -706.68,516">
+</polyline>
+<polyline points="-623.54,-252 706.68,516">
+</polyline>
+<polyline points="644.32,-240 -685.89,528">
+</polyline>
+<polyline points="-644.32,-240 685.89,528">
+</polyline>
+<polyline points="665.11,-228 -665.11,540">
+</polyline>
+<polyline points="-665.11,-228 665.11,540">
+</polyline>
+<polyline points="685.89,-216 -644.32,552">
+</polyline>
+<polyline points="-685.89,-216 644.32,552">
+</polyline>
+<polyline points="706.68,-204 -623.54,564">
+</polyline>
+<polyline points="-706.68,-204 623.54,564">
+</polyline>
+<polyline points="727.46,-192 -602.75,576">
+</polyline>
+<polyline points="-727.46,-192 602.75,576">
+</polyline>
+<polyline points="748.25,-180 -581.97,588">
+</polyline>
+<polyline points="-748.25,-180 581.97,588">
+</polyline>
+<polyline points="769.03,-168 -561.18,600">
+</polyline>
+<polyline points="-769.03,-168 561.18,600">
+</polyline>
+<polyline points="789.82,-156 -540.4,612">
+</polyline>
+<polyline points="-789.82,-156 540.4,612">
+</polyline>
+<polyline points="810.6,-144 -519.62,624">
+</polyline>
+<polyline points="-810.6,-144 519.62,624">
+</polyline>
+<polyline points="831.38,-132 -498.83,636">
+</polyline>
+<polyline points="-831.38,-132 498.83,636">
+</polyline>
+<polyline points="852.17,-120 -478.05,648">
+</polyline>
+<polyline points="-852.17,-120 478.05,648">
+</polyline>
+<polyline points="872.95,-108 -457.26,660">
+</polyline>
+<polyline points="-872.95,-108 457.26,660">
+</polyline>
+<polyline points="893.74,-96 -436.48,672">
+</polyline>
+<polyline points="-893.74,-96 436.48,672">
+</polyline>
+<polyline points="914.52,-84 -415.69,684">
+</polyline>
+<polyline points="-914.52,-84 415.69,684">
+</polyline>
+<polyline points="935.31,-72 -394.91,696">
+</polyline>
+<polyline points="-935.31,-72 394.91,696">
+</polyline>
+<polyline points="956.09,-60 -374.12,708">
+</polyline>
+<polyline points="-956.09,-60 374.12,708">
+</polyline>
+<polyline points="976.88,-48 -353.34,720">
+</polyline>
+<polyline points="-976.88,-48 353.34,720">
+</polyline>
+<polyline points="997.66,-36 -332.55,732">
+</polyline>
+<polyline points="-997.66,-36 332.55,732">
+</polyline>
+<polyline points="1018.45,-24 -311.77,744">
+</polyline>
+<polyline points="-1018.45,-24 311.77,744">
+</polyline>
+<polyline points="1039.23,-12 -290.98,756">
+</polyline>
+<polyline points="-1039.23,-12 290.98,756">
+</polyline>
+<polyline points="1060.02,0 -270.2,768">
+</polyline>
+<polyline points="-1060.02,0 270.2,768">
+</polyline>
+<polyline points="1080.8,12 -249.42,780">
+</polyline>
+<polyline points="-1080.8,12 249.42,780">
+</polyline>
+<polyline points="1101.58,24 -228.63,792">
+</polyline>
+<polyline points="-1101.58,24 228.63,792">
+</polyline>
+<polyline points="1122.37,36 -207.85,804">
+</polyline>
+<polyline points="-1122.37,36 207.85,804">
+</polyline>
+<polyline points="1143.15,48 -187.06,816">
+</polyline>
+<polyline points="-1143.15,48 187.06,816">
+</polyline>
+<polyline points="1163.94,60 -166.28,828">
+</polyline>
+<polyline points="-1163.94,60 166.28,828">
+</polyline>
+<polyline points="1184.72,72 -145.49,840">
+</polyline>
+<polyline points="-1184.72,72 145.49,840">
+</polyline>
+<polyline points="1205.51,84 -124.71,852">
+</polyline>
+<polyline points="-1205.51,84 124.71,852">
+</polyline>
+<polyline points="1226.29,96 -103.92,864">
+</polyline>
+<polyline points="-1226.29,96 103.92,864">
+</polyline>
+<polyline points="1247.08,108 -83.14,876">
+</polyline>
+<polyline points="-1247.08,108 83.14,876">
+</polyline>
+<polyline points="1267.86,120 -62.35,888">
+</polyline>
+<polyline points="-1267.86,120 62.35,888">
+</polyline>
+<polyline points="1288.65,132 -41.57,900">
+</polyline>
+<polyline points="-1288.65,132 41.57,900">
+</polyline>
+<polyline points="1309.43,144 -20.78,912">
+</polyline>
+<polyline points="-1309.43,144 20.78,912">
+</polyline>
+<polyline points="1330.22,156 0,924">
+</polyline>
+<polyline points="-1330.22,156 0,924">
+</polyline>
+</g>
+<g style="--n10-mesh-seconds:11s">
+<linearGradient id="n10-mesh-ray-sand-a" gradientUnits="userSpaceOnUse" x1="0" y1="72" x2="-623.54" y2="-288">
+<stop offset="0" stop-color="#e3c16f" stop-opacity="1">
+</stop>
+<stop offset="0.3" stop-color="#e3c16f" stop-opacity="0.4">
+</stop>
+<stop offset="1" stop-color="#e3c16f" stop-opacity="0">
+</stop>
+</linearGradient>
+<polygon points="-623.54,-290.4 4.16,72 0,74.4 -627.7,-288" fill="url(#n10-mesh-ray-sand-a)" class="n10-mesh-ray">
+</polygon>
+<polyline points="0,71.52 -623.54,-288.48" pathLength="100" stroke="url(#n10-mesh-ray-sand-a)" class="n10-mesh-ray-packet n10-mesh-ray-packet--inbound">
+</polyline>
+</g>
+<g style="--n10-mesh-seconds:9s">
+<linearGradient id="n10-mesh-ray-sand-b" gradientUnits="userSpaceOnUse" x1="145.49" y1="156" x2="769.03" y2="516">
+<stop offset="0" stop-color="#e3c16f" stop-opacity="1">
+</stop>
+<stop offset="0.3" stop-color="#e3c16f" stop-opacity="0.4">
+</stop>
+<stop offset="1" stop-color="#e3c16f" stop-opacity="0">
+</stop>
+</linearGradient>
+<polygon points="145.49,153.6 773.19,516 769.03,518.4 141.34,156" fill="url(#n10-mesh-ray-sand-b)" class="n10-mesh-ray">
+</polygon>
+<polyline points="145.49,155.52 769.03,515.52" pathLength="100" stroke="url(#n10-mesh-ray-sand-b)" class="n10-mesh-ray-packet">
+</polyline>
+</g>
+<g style="--n10-mesh-seconds:12s">
+<linearGradient id="n10-mesh-ray-sage-a" gradientUnits="userSpaceOnUse" x1="0" y1="72" x2="623.54" y2="-288">
+<stop offset="0" stop-color="#9caf88" stop-opacity="1">
+</stop>
+<stop offset="0.3" stop-color="#9caf88" stop-opacity="0.4">
+</stop>
+<stop offset="1" stop-color="#9caf88" stop-opacity="0">
+</stop>
+</linearGradient>
+<polygon points="623.54,-290.4 627.7,-288 0,74.4 -4.16,72" fill="url(#n10-mesh-ray-sage-a)" class="n10-mesh-ray">
+</polygon>
+<polyline points="0,71.52 623.54,-288.48" pathLength="100" stroke="url(#n10-mesh-ray-sage-a)" class="n10-mesh-ray-packet">
+</polyline>
+</g>
+<g style="--n10-mesh-seconds:10s">
+<linearGradient id="n10-mesh-ray-sage-b" gradientUnits="userSpaceOnUse" x1="-145.49" y1="156" x2="-769.03" y2="516">
+<stop offset="0" stop-color="#9caf88" stop-opacity="1">
+</stop>
+<stop offset="0.3" stop-color="#9caf88" stop-opacity="0.4">
+</stop>
+<stop offset="1" stop-color="#9caf88" stop-opacity="0">
+</stop>
+</linearGradient>
+<polygon points="-145.49,153.6 -141.34,156 -769.03,518.4 -773.19,516" fill="url(#n10-mesh-ray-sage-b)" class="n10-mesh-ray">
+</polygon>
+<polyline points="-145.49,155.52 -769.03,515.52" pathLength="100" stroke="url(#n10-mesh-ray-sage-b)" class="n10-mesh-ray-packet n10-mesh-ray-packet--inbound">
+</polyline>
+</g>
+<g style="--n10-mesh-seconds:13s">
+<linearGradient id="n10-mesh-ray-blue-a" gradientUnits="userSpaceOnUse" x1="145.49" y1="156" x2="769.03" y2="-204">
+<stop offset="0" stop-color="#7da3c0" stop-opacity="1">
+</stop>
+<stop offset="0.3" stop-color="#7da3c0" stop-opacity="0.4">
+</stop>
+<stop offset="1" stop-color="#7da3c0" stop-opacity="0">
+</stop>
+</linearGradient>
+<polygon points="769.03,-206.4 773.19,-204 145.49,158.4 141.34,156" fill="url(#n10-mesh-ray-blue-a)" class="n10-mesh-ray">
+</polygon>
+<polyline points="145.49,155.52 769.03,-204.48" pathLength="100" stroke="url(#n10-mesh-ray-blue-a)" class="n10-mesh-ray-packet n10-mesh-ray-packet--inbound">
+</polyline>
+</g>
+<g style="--n10-mesh-seconds:9.5s">
+<linearGradient id="n10-mesh-ray-blue-b" gradientUnits="userSpaceOnUse" x1="0" y1="240" x2="-623.54" y2="600">
+<stop offset="0" stop-color="#7da3c0" stop-opacity="1">
+</stop>
+<stop offset="0.3" stop-color="#7da3c0" stop-opacity="0.4">
+</stop>
+<stop offset="1" stop-color="#7da3c0" stop-opacity="0">
+</stop>
+</linearGradient>
+<polygon points="0,237.6 4.16,240 -623.54,602.4 -627.7,600" fill="url(#n10-mesh-ray-blue-b)" class="n10-mesh-ray">
+</polygon>
+<polyline points="0,239.52 -623.54,599.52" pathLength="100" stroke="url(#n10-mesh-ray-blue-b)" class="n10-mesh-ray-packet">
+</polyline>
+</g>
+<g style="--n10-mesh-seconds:10.5s">
+<linearGradient id="n10-mesh-ray-clay-a" gradientUnits="userSpaceOnUse" x1="-155.88" y1="162" x2="-779.42" y2="-198">
+<stop offset="0" stop-color="#d4896a" stop-opacity="1">
+</stop>
+<stop offset="0.3" stop-color="#d4896a" stop-opacity="0.4">
+</stop>
+<stop offset="1" stop-color="#d4896a" stop-opacity="0">
+</stop>
+</linearGradient>
+<polygon points="-779.42,-200.4 -151.73,162 -155.88,164.4 -783.58,-198" fill="url(#n10-mesh-ray-clay-a)" class="n10-mesh-ray">
+</polygon>
+<polyline points="-155.88,161.52 -779.42,-198.48" pathLength="100" stroke="url(#n10-mesh-ray-clay-a)" class="n10-mesh-ray-packet">
+</polyline>
+</g>
+<g style="--n10-mesh-seconds:12.5s">
+<linearGradient id="n10-mesh-ray-clay-b" gradientUnits="userSpaceOnUse" x1="-10.39" y1="246" x2="613.15" y2="606">
+<stop offset="0" stop-color="#d4896a" stop-opacity="1">
+</stop>
+<stop offset="0.3" stop-color="#d4896a" stop-opacity="0.4">
+</stop>
+<stop offset="1" stop-color="#d4896a" stop-opacity="0">
+</stop>
+</linearGradient>
+<polygon points="-10.39,243.6 617.3,606 613.15,608.4 -14.55,246" fill="url(#n10-mesh-ray-clay-b)" class="n10-mesh-ray">
+</polygon>
+<polyline points="-10.39,245.52 613.15,605.52" pathLength="100" stroke="url(#n10-mesh-ray-clay-b)" class="n10-mesh-ray-packet n10-mesh-ray-packet--inbound">
+</polyline>
+</g>
+</g>
+<g style="--n10-mesh-color:#e3c16f;--n10-mesh-seconds:3.2s">
+<g>
+<polygon points="0,65.28 149.65,151.68 145.49,154.08 -4.16,67.68" class="n10-mesh-ribbon">
+</polygon>
+<polyline points="0,67.2 145.49,151.2" pathLength="100" class="n10-mesh-packet">
+</polyline>
+</g>
+<g>
+<polygon points="0,73.92 149.65,160.32 145.49,162.72 -4.16,76.32" class="n10-mesh-ribbon">
+</polygon>
+<polyline points="0,75.84 145.49,159.84" pathLength="100" class="n10-mesh-packet n10-mesh-packet--back">
+</polyline>
+</g>
+</g>
+<g style="--n10-mesh-color:#9caf88;--n10-mesh-seconds:2.6s">
+<g>
+<polygon points="0,65.28 4.16,67.68 -145.49,154.08 -149.65,151.68" class="n10-mesh-ribbon">
+</polygon>
+<polyline points="0,67.2 -145.49,151.2" pathLength="100" class="n10-mesh-packet">
+</polyline>
+</g>
+<g>
+<polygon points="0,73.92 4.16,76.32 -145.49,162.72 -149.65,160.32" class="n10-mesh-ribbon">
+</polygon>
+<polyline points="0,75.84 -145.49,159.84" pathLength="100" class="n10-mesh-packet n10-mesh-packet--back">
+</polyline>
+</g>
+</g>
+<g style="--n10-mesh-color:#d4896a;--n10-mesh-seconds:3.8s">
+<g>
+<polygon points="-155.88,155.28 -6.24,241.68 -10.39,244.08 -160.04,157.68" class="n10-mesh-ribbon">
+</polygon>
+<polyline points="-155.88,157.2 -10.39,241.2" pathLength="100" class="n10-mesh-packet">
+</polyline>
+</g>
+<g>
+<polygon points="-155.88,163.92 -6.24,250.32 -10.39,252.72 -160.04,166.32" class="n10-mesh-ribbon">
+</polygon>
+<polyline points="-155.88,165.84 -10.39,249.84" pathLength="100" class="n10-mesh-packet n10-mesh-packet--back">
+</polyline>
+</g>
+</g>
+<g style="--n10-mesh-color:#7da3c0;--n10-mesh-seconds:2.9s">
+<g>
+<polygon points="145.49,149.28 149.65,151.68 0,238.08 -4.16,235.68" class="n10-mesh-ribbon">
+</polygon>
+<polyline points="145.49,151.2 0,235.2" pathLength="100" class="n10-mesh-packet">
+</polyline>
+</g>
+<g>
+<polygon points="145.49,157.92 149.65,160.32 0,246.72 -4.16,244.32" class="n10-mesh-ribbon">
+</polygon>
+<polyline points="145.49,159.84 0,243.84" pathLength="100" class="n10-mesh-packet n10-mesh-packet--back">
+</polyline>
+</g>
+</g>
+<g style="--n10-mesh-color:#a98fc4;--n10-mesh-seconds:4.4s">
+<g>
+<polygon points="-135.1,143.28 -58.2,187.68 -62.35,190.08 -139.26,145.68" class="n10-mesh-ribbon">
+</polygon>
+<polygon points="51.96,119.28 56.12,121.68 -62.35,190.08 -66.51,187.68" class="n10-mesh-ribbon">
+</polygon>
+<polygon points="51.96,119.28 128.86,163.68 124.71,166.08 47.8,121.68" class="n10-mesh-ribbon">
+</polygon>
+<polyline points="-135.1,145.2 -62.35,187.2 51.96,121.2 124.71,163.2" pathLength="100" class="n10-mesh-packet">
+</polyline>
+</g>
+<g>
+<polygon points="-135.1,151.92 -58.2,196.32 -62.35,198.72 -139.26,154.32" class="n10-mesh-ribbon">
+</polygon>
+<polygon points="51.96,127.92 56.12,130.32 -62.35,198.72 -66.51,196.32" class="n10-mesh-ribbon">
+</polygon>
+<polygon points="51.96,127.92 128.86,172.32 124.71,174.72 47.8,130.32" class="n10-mesh-ribbon">
+</polygon>
+<polyline points="-135.1,153.84 -62.35,195.84 51.96,129.84 124.71,171.84" pathLength="100" class="n10-mesh-packet n10-mesh-packet--back">
+</polyline>
+</g>
+</g>
+<g>
+<polygon class="n10-iso-shadow" points="0,36.48 61.52,72 0,107.52 -61.52,72">
+</polygon>
+<g>
+<g>
+<polygon points="0,28.8 54.04,60 0,91.2 -54.04,60" class="n10-iso-face n10-iso-face--top">
+</polygon>
+<polygon points="-54.04,60 0,91.2 0,103.2 -54.04,72" class="n10-iso-face n10-iso-face--left">
+</polygon>
+<polygon points="54.04,60 0,91.2 0,103.2 54.04,72" class="n10-iso-face n10-iso-face--right">
+</polygon>
+</g>
+<polygon points="-37.83,73.56 -4.32,92.9 -4.32,96.5 -37.83,77.16" class="n10-iso-inset">
+</polygon>
+<polygon points="-49.72,66.7 -46.47,68.57 -46.47,72.17 -49.72,70.3" class="n10-iso-led" style="animation-delay:0s">
+</polygon>
+<polygon points="-44.85,69.5 -41.61,71.38 -41.61,74.98 -44.85,73.1" class="n10-iso-led n10-iso-led--sand" style="animation-delay:-0.4s">
+</polygon>
+<polygon points="48.64,67.32 5.4,92.28 5.4,95.88 48.64,70.92" class="n10-iso-inset">
+</polygon>
+</g>
+<g>
+<g>
+<polygon points="0,13.92 54.04,45.12 0,76.32 -54.04,45.12" class="n10-iso-face n10-iso-face--top">
+</polygon>
+<polygon points="-54.04,45.12 0,76.32 0,88.32 -54.04,57.12" class="n10-iso-face n10-iso-face--left">
+</polygon>
+<polygon points="54.04,45.12 0,76.32 0,88.32 54.04,57.12" class="n10-iso-face n10-iso-face--right">
+</polygon>
+</g>
+<polygon points="-37.83,58.68 -4.32,78.02 -4.32,81.62 -37.83,62.28" class="n10-iso-inset">
+</polygon>
+<polygon points="-49.72,51.82 -46.47,53.69 -46.47,57.29 -49.72,55.42" class="n10-iso-led" style="animation-delay:-0.7s">
+</polygon>
+<polygon points="-44.85,54.62 -41.61,56.5 -41.61,60.1 -44.85,58.22" class="n10-iso-led n10-iso-led--sand" style="animation-delay:-1.5s">
+</polygon>
+<polygon points="48.64,52.44 5.4,77.4 5.4,81 48.64,56.04" class="n10-iso-inset">
+</polygon>
+</g>
+<g>
+<g>
+<polygon points="0,-0.96 54.04,30.24 0,61.44 -54.04,30.24" class="n10-iso-face n10-iso-face--top">
+</polygon>
+<polygon points="-54.04,30.24 0,61.44 0,73.44 -54.04,42.24" class="n10-iso-face n10-iso-face--left">
+</polygon>
+<polygon points="54.04,30.24 0,61.44 0,73.44 54.04,42.24" class="n10-iso-face n10-iso-face--right">
+</polygon>
+</g>
+<polygon points="-37.83,43.8 -4.32,63.14 -4.32,66.74 -37.83,47.4" class="n10-iso-inset">
+</polygon>
+<polygon points="-49.72,36.94 -46.47,38.81 -46.47,42.41 -49.72,40.54" class="n10-iso-led" style="animation-delay:-1.4s">
+</polygon>
+<polygon points="-44.85,39.74 -41.61,41.62 -41.61,45.22 -44.85,43.34" class="n10-iso-led n10-iso-led--sand" style="animation-delay:-2.6s">
+</polygon>
+<polygon points="48.64,37.56 5.4,62.52 5.4,66.12 48.64,41.16" class="n10-iso-inset">
+</polygon>
+</g>
+<g>
+<g>
+<polygon points="0,-15.84 54.04,15.36 0,46.56 -54.04,15.36" class="n10-iso-face n10-iso-face--top">
+</polygon>
+<polygon points="-54.04,15.36 0,46.56 0,58.56 -54.04,27.36" class="n10-iso-face n10-iso-face--left">
+</polygon>
+<polygon points="54.04,15.36 0,46.56 0,58.56 54.04,27.36" class="n10-iso-face n10-iso-face--right">
+</polygon>
+</g>
+<polygon points="-37.83,28.92 -4.32,48.26 -4.32,51.86 -37.83,32.52" class="n10-iso-inset">
+</polygon>
+<polygon points="-49.72,22.06 -46.47,23.93 -46.47,27.53 -49.72,25.66" class="n10-iso-led" style="animation-delay:-2.0999999999999996s">
+</polygon>
+<polygon points="-44.85,24.86 -41.61,26.74 -41.61,30.34 -44.85,28.46" class="n10-iso-led n10-iso-led--sand" style="animation-delay:-3.7s">
+</polygon>
+<polygon points="48.64,22.68 5.4,47.64 5.4,51.24 48.64,26.28" class="n10-iso-inset">
+</polygon>
+</g>
+</g>
+<g>
+<polygon class="n10-iso-shadow" points="156.92,127.08 195.58,149.4 134.06,184.92 95.4,162.6">
+</polygon>
+<g>
+<polygon points="156.92,59.4 188.1,77.4 134.06,108.6 102.88,90.6" class="n10-iso-face n10-iso-face--top">
+</polygon>
+<polygon points="102.88,90.6 134.06,108.6 134.06,180.6 102.88,162.6" class="n10-iso-face n10-iso-face--left">
+</polygon>
+<polygon points="188.1,77.4 134.06,108.6 134.06,180.6 188.1,149.4" class="n10-iso-face n10-iso-face--right">
+</polygon>
+</g>
+<polygon points="178.37,142.42 143.79,162.38 143.79,164.9 178.37,144.94" class="n10-iso-inset">
+</polygon>
+<polygon points="178.37,136.66 143.79,156.62 143.79,159.14 178.37,139.18" class="n10-iso-inset">
+</polygon>
+<polygon points="178.37,130.9 143.79,150.86 143.79,153.38 178.37,133.42" class="n10-iso-inset">
+</polygon>
+<polygon points="178.37,125.14 143.79,145.1 143.79,147.62 178.37,127.66" class="n10-iso-inset">
+</polygon>
+<polygon points="178.37,119.38 143.79,139.34 143.79,141.86 178.37,121.9" class="n10-iso-inset">
+</polygon>
+<polygon points="109.12,117.24 127.83,128.04 127.83,132.36 109.12,121.56" class="n10-iso-inset">
+</polygon>
+<polygon points="109.12,125.88 127.83,136.68 127.83,141 109.12,130.2" class="n10-iso-inset">
+</polygon>
+<polygon points="109.12,144.6 127.83,155.4 127.83,171.24 109.12,160.44" class="n10-iso-inset">
+</polygon>
+<polygon points="115.98,105.36 120.97,108.24 120.97,112.56 115.98,109.68" class="n10-iso-led">
+</polygon>
+</g>
+<g>
+<polygon class="n10-iso-shadow" points="-160.04,124.08 -90.21,164.4 -139.26,192.72 -209.09,152.4">
+</polygon>
+<g>
+<polygon points="-160.04,125.04 -97.69,161.04 -139.26,185.04 -201.61,149.04" class="n10-iso-face n10-iso-face--top">
+</polygon>
+<polygon points="-201.61,149.04 -139.26,185.04 -139.26,188.4 -201.61,152.4" class="n10-iso-face n10-iso-face--left">
+</polygon>
+<polygon points="-97.69,161.04 -139.26,185.04 -139.26,188.4 -97.69,164.4" class="n10-iso-face n10-iso-face--right">
+</polygon>
+</g>
+<polygon points="-161.08,132.84 -111.2,161.64 -128.86,171.84 -178.75,143.04" class="n10-iso-inset">
+</polygon>
+<polygon points="-148.61,74.04 -86.26,110.04 -98.93,161.76 -161.29,125.76" class="n10-iso-face n10-iso-face--left">
+</polygon>
+<polygon points="-146.38,79.46 -90.26,111.86 -100.78,154.79 -156.9,122.39" class="n10-iso-screen">
+</polygon>
+<polyline points="-142.42,89.42 -116.23,104.54" class="n10-iso-code n10-iso-code--sage">
+</polyline>
+<polyline points="-140.01,97.01 -103.84,117.89" class="n10-iso-code n10-iso-code--sand">
+</polyline>
+<polyline points="-141.34,102.45 -122.63,113.25" class="n10-iso-code n10-iso-code--sage">
+</polyline>
+<polyline points="-138.93,110.04 -112.74,125.16" class="n10-iso-code n10-iso-code--muted">
+</polyline>
+<polyline points="-144,113.31 -129.04,121.95" class="n10-iso-code n10-iso-code--sand">
+</polyline>
+<polyline points="-149.07,116.58 -135.35,124.5" class="n10-iso-code n10-iso-code--sage">
+</polyline>
+</g>
+<g>
+<polygon class="n10-iso-shadow" points="0,212.88 46.97,240 0,267.12 -46.97,240">
+</polygon>
+<g>
+<polygon points="0,202.8 39.49,225.6 0,248.4 -39.49,225.6" class="n10-iso-face n10-iso-face--top">
+</polygon>
+<polygon points="-39.49,225.6 0,248.4 0,262.8 -39.49,240" class="n10-iso-face n10-iso-face--left">
+</polygon>
+<polygon points="39.49,225.6 0,248.4 0,262.8 39.49,240" class="n10-iso-face n10-iso-face--right">
+</polygon>
+</g>
+<polygon points="-35.54,233.64 -32.38,235.46 -32.38,239.06 -35.54,237.24" class="n10-iso-led" style="animation-delay:-1.6s">
+</polygon>
+<polygon points="-19.75,242.47 -3.95,251.59 -3.95,256.2 -19.75,247.08" class="n10-iso-inset">
+</polygon>
+<polygon points="33.57,234.49 5.92,250.45 5.92,255.06 33.57,239.1" class="n10-iso-inset">
+</polygon>
+</g>
+</svg>

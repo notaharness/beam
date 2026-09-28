@@ -1,13 +1,18 @@
 # beam
 
-beam is a simple utility built on [tailcat](https://github.com/tailscale/tailcat) that
-lets you pool the machines you own. Open a shell, run a command, or send a durable
-message from one machine to another. A single Go binary provides the daemon and CLI.
+Run shells, commands and agents across the machines you own.
 
-It pairs naturally with tmux: keep an agent session running on another machine and
-attach when you need it. beam handles reaching the machine; tmux keeps the session.
-You can offload work from your laptop without moving the agent's working directory or
-process back and forth.
+![A laptop, workstation, build box and home server connected by beams carrying data in both directions.](docs/assets/beam.svg)
+
+beam connects your laptop, workstation and headless boxes with one passkey. Open a
+remote shell, run a build on another machine, or queue a durable message until it
+comes online. A single Go binary provides the daemon and CLI, with no SSH keys to
+manage or Tailscale account required. Built on [Tailcat](https://github.com/tailscale/tailcat)
+from [Tailscale](https://tailscale.com).
+
+Pair beam with tmux to keep an agent running on your workstation and attach from your
+laptop when you need it. The session, working directory and processes stay on the
+remote machine; beam gets you there.
 
 beam is part of [notaharness](https://github.com/notaharness), a project making small,
 reusable components for working with agents. The
