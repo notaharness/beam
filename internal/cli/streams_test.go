@@ -63,10 +63,11 @@ func TestExecEnvironment(t *testing.T) {
 	t.Setenv("SSH_AUTH_SOCK", "/tmp/ssh-beam/agent.1")
 	t.Setenv("GITHUB_TOKEN", "hunter2")
 	t.Setenv("LANG", "C.UTF-8")
+	t.Setenv("XDG_RUNTIME_DIR", "/run/user/4242")
 	ms := fleet(t, "alpha", "beta")
 	waitState(t, ms[0], ms[1], "connected")
-	r := ms[0].beam("", "exec", "beta", "--", "sh", "-c", `printf '%s|%s|%s|%s|%s|%s' "$TMUX" "$TMUX_PANE" "$SSH_AUTH_SOCK" "$GITHUB_TOKEN" "$LANG" "$HOME"`)
-	if want := "||||C.UTF-8|" + os.Getenv("HOME"); r.code != 0 || r.out != want {
+	r := ms[0].beam("", "exec", "beta", "--", "sh", "-c", `printf '%s|%s|%s|%s|%s|%s|%s' "$TMUX" "$TMUX_PANE" "$SSH_AUTH_SOCK" "$GITHUB_TOKEN" "$LANG" "$XDG_RUNTIME_DIR" "$HOME"`)
+	if want := "||||C.UTF-8|/run/user/4242|" + os.Getenv("HOME"); r.code != 0 || r.out != want {
 		t.Fatalf("got %+v, want stdout %q", r, want)
 	}
 }
