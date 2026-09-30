@@ -64,15 +64,25 @@ func Connect(p Paths, env []string) (*Client, error) {
 // Dial connects to the daemon at p if one listens there and it runs as this
 // user.
 func Dial(p Paths) (*Client, error) {
-	c, err := net.Dial("unix", p.Socket)
+	c, err := dial(p.Socket, os.Getuid())
 	if err != nil {
 		return nil, err
 	}
-	if err := listenedBy(c.(*net.UnixConn), os.Getuid()); err != nil {
-		c.Close()
-		return nil, fmt.Errorf("%s: %w", p.Socket, err)
-	}
 	return newClient(c), nil
+}
+
+// dial connects to path if a process of uid listens there: every client
+// connection, control or attach, is checked (docs/06).
+func dial(path string, uid int) (net.Conn, error) {
+	c, err := net.Dial("unix", path)
+	if err != nil {
+		return nil, err
+	}
+	if err := listenedBy(c.(*net.UnixConn), uid); err != nil {
+		c.Close()
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return c, nil
 }
 
 // listenedBy refuses a connection whose listener runs as another user than
@@ -172,7 +182,7 @@ func (c *Client) Next() (Event, error) {
 // Attach opens the attach connection for a reserved stream; frames follow in
 // both directions.
 func Attach(p Paths, streamID string) (*stream.Conn, error) {
-	c, err := net.Dial("unix", p.Socket)
+	c, err := dial(p.Socket, os.Getuid())
 	if err != nil {
 		return nil, err
 	}
