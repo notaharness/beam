@@ -63,7 +63,13 @@ The publication line is `Published to directory`, or while the append is queued
 ([06](06-control-socket.md)) `Saved on this machine. Directory publication is pending;
 beam will retry while it runs.`
 
-`beam fleet reset` asks `type "reset" to confirm`.
+`beam fleet reset` asks `type "reset" to confirm`, and ends, when the machine was
+enrolled:
+
+```
+fleet state and this machine's key removed; its next beam init or beam join makes a new one.
+after a join into the same fleet, revoke the old identity from a machine in it: beam revoke 3b27e4b6c8d1bd84928f52ed007a6db5
+```
 
 A ceremony shows:
 
@@ -193,4 +199,6 @@ Peers given filter by sender.
 ## Peer arguments
 
 Resolved by the daemon (`peer.resolve`): full id, ≥ 8-hex prefix, alias, or label. The
-error for ambiguity lists candidates.
+error for ambiguity lists candidates. An alias or label names a revoked machine only if
+no other machine has it, so once a re-joined machine's old identity is revoked, its
+label names the new one; the old one is still reached by its id.

@@ -105,10 +105,16 @@ func runFleet(e *env) int {
 		fmt.Fprintln(e.stderr, "not reset")
 		return 1
 	}
-	if err := e.call("fleet.reset", map[string]any{"confirm": "reset"}, nil); err != nil {
+	var res struct {
+		PeerID string `json:"peerId"`
+	}
+	if err := e.call("fleet.reset", map[string]any{"confirm": "reset"}, &res); err != nil {
 		return e.fail(err)
 	}
 	fmt.Fprintln(e.stdout, "fleet state and this machine's key removed; its next beam init or beam join makes a new one.")
+	if res.PeerID != "" {
+		fmt.Fprintf(e.stdout, "after a join into the same fleet, revoke the old identity from a machine in it: beam revoke %s\n", res.PeerID)
+	}
 	return 0
 }
 

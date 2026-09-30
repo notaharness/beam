@@ -28,21 +28,33 @@ func (e *enrolment) resolve(arg string) (string, error) {
 }
 
 // matching is the peers arg names: by peer id prefix of 8 or more hex digits
-// if any match, else by alias or label.
+// if any match, else by alias or label, where a revoked peer counts only if
+// no other does: after a re-join into the same fleet, revoking the old
+// identity leaves its label to the new one.
 func matching(ps []store.Peer, arg string) []store.Peer {
-	var byPrefix, byName []store.Peer
+	var byPrefix, byName, revoked []store.Peer
 	for _, p := range ps {
-		if len(arg) >= 8 && isHex(arg) && strings.HasPrefix(p.Entry.PeerID, arg) {
+		switch {
+		case len(arg) >= 8 && isHex(arg) && strings.HasPrefix(p.Entry.PeerID, arg):
 			byPrefix = append(byPrefix, p)
-		}
-		if p.Alias != nil && *p.Alias == arg || p.Entry.Label == arg {
+		case !named(p, arg):
+		case p.Revoked:
+			revoked = append(revoked, p)
+		default:
 			byName = append(byName, p)
 		}
 	}
-	if len(byPrefix) > 0 {
+	switch {
+	case len(byPrefix) > 0:
 		return byPrefix
+	case len(byName) > 0:
+		return byName
 	}
-	return byName
+	return revoked
+}
+
+func named(p store.Peer, arg string) bool {
+	return p.Alias != nil && *p.Alias == arg || p.Entry.Label == arg
 }
 
 func isHex(s string) bool {

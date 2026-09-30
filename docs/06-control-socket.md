@@ -73,7 +73,7 @@ pinnedAt, queue: { outbound, inbound, refused } }` (counts, not lists).
 | op | request | result |
 |---|---|---|
 | `peers` | `{ cursor?, limit? ≤ 200 }` | `{ peers: PeerView[], next? }` |
-| `peer.resolve` | `{ peer }` | `{ peerId }`; `peer` is a full id, a ≥ 8-char hex prefix, or an alias/label; hex-looking input is tried as prefix first; `ambiguous-peer` lists candidates in `detail` |
+| `peer.resolve` | `{ peer }` | `{ peerId }`; `peer` is a full id, a ≥ 8-char hex prefix, or an alias/label; hex-looking input is tried as prefix first; an alias or label matches a revoked peer only if it matches no other; `ambiguous-peer` lists candidates in `detail` |
 | `peer.alias` | `{ peer, alias \| null }` | `{}` |
 | `peer.grant` | `{ peer, grant: "all" \| "msg" \| "none" }` | `{}`; an open stream from that peer outside the new grant is terminated |
 
@@ -93,7 +93,7 @@ while the daemon waits on the ceremony's slot. One ceremony at a time (`busy`).
 | `revoke.start` | `{ peer }` | `{ ceremonyUrl }` |
 | `revoke.wait` | | `{ local: true, published: true \| "pending", acknowledgedBy: n }`; `n` as [02](02-identity.md) defines it |
 | `ceremony.cancel` | | `{}` |
-| `fleet.reset` | `{ confirm: "reset" }` | `{}` |
+| `fleet.reset` | `{ confirm: "reset" }` | `{ peerId? }`: the identity removed, absent if the machine was not enrolled |
 
 While a `*.wait` runs, its client also gets `stage { stage }` events as the daemon
 reaches `reading directory`, `notifying peers` and `publishing` ([07](07-cli.md)). A `*.wait` without its

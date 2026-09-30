@@ -367,19 +367,20 @@ assertion by any other credential is `wrong-passkey`.
 
 Daemon-owned recovery for a lost passkey or a compromised fleet: closes every tunnel,
 deletes `fleet.json`, `key.json` and all peers from `state.db`, and with them the
-mailbox: queued mail to and from old peers and the message counters.
-`key.json` goes because a compromised fleet recovers from copied node keys too: the
-next `init` or `join` makes a new key, so a new `peerId`, which peers count their mail
-to from 1. A re-join into the same fleet
-enrols that new identity; the old one's entry stays valid there until it is revoked,
-which it should be if its key may have been copied. It keeps the
-revocations and pending writes too: the next enrolment keeps those its credential
-signed, a re-join into the same fleet, and deletes the rest and any entry of the old key. A revocation not yet in the
-directory, of a machine that was offline, may exist nowhere else, and a re-join that
-forgot it would admit that machine again. It ends the ceremony under way,
-and one already past its tap commits nothing (`ceremony-cancelled`): a ceremony commits
-only if the enrolment it began under is unchanged. Prompts for confirmation. Then
-`beam init` or `beam join` as appropriate.
+mailbox: queued mail to and from old peers and the message counters. `key.json` goes
+because a compromised fleet recovers from copied node keys too: the next `init` or
+`join` makes a new key, so a new `peerId`, which peers count their mail to from 1. A
+re-join into the same fleet enrols that new identity; the old one's entry stays valid
+there until it is revoked, which it should be if its key may have been copied: the reset
+prints the old `peerId` to revoke. Until then the label names both on every peer
+(`ambiguous-peer`); once the old one is revoked, it names the new one (07, Peer
+arguments). It keeps the revocations and pending writes too: the next enrolment keeps
+those its credential signed, a re-join into the same fleet, and deletes the rest and any
+entry of the old key. A revocation not yet in the directory, of a machine that was
+offline, may exist nowhere else, and a re-join that forgot it would admit that machine
+again. It ends the ceremony under way, and one already past its tap commits nothing
+(`ceremony-cancelled`): a ceremony commits only if the enrolment it began under is
+unchanged. Prompts for confirmation. Then `beam init` or `beam join` as appropriate.
 
 ## The peer table
 
