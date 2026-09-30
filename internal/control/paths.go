@@ -129,8 +129,8 @@ func (p Paths) loadFleet() (*identity.Fleet, error) {
 }
 
 // owned refuses a path another user owns (docs/06): a starting daemon takes
-// over no socket someone else put at a shared path. A path with nothing at it
-// is left for the listen.
+// over no socket someone else put at a shared path, and a client says so
+// rather than spawn one. A path with nothing at it is left for the listen.
 func owned(path string) error {
 	st, err := os.Stat(path)
 	if err != nil {

@@ -9,7 +9,8 @@ Linux, 103 on macOS) is refused before anything else, naming `BEAM_SOCKET`. Wher
 `BEAM_SOCKET` names a shared directory, whoever listened there first is not this user's
 daemon: a client refuses a connection whose listener runs as another user, by the
 kernel's credentials for it (`SO_PEERCRED` on Linux, `LOCAL_PEERCRED` on macOS), and a
-starting daemon refuses a socket path another user owns.
+starting daemon refuses a socket path another user owns. A client that finds no listener
+at such a path says so rather than spawn a daemon that would refuse it.
 
 ## Lifecycle
 

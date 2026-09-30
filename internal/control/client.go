@@ -46,6 +46,9 @@ func Connect(p Paths, env []string) (*Client, error) {
 	if !errors.Is(err, syscall.ECONNREFUSED) && !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
 	}
+	if err := owned(p.Socket); err != nil {
+		return nil, err // the daemon it would spawn refuses the path too; say why here
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return nil, err
