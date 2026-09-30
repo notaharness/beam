@@ -426,6 +426,33 @@ func TestResetNewKey(t *testing.T) {
 	}
 }
 
+// docs/02 reset: a machine re-joined under a new peer id takes a peer's mail
+// from its first message; the counts it saw under the old id are gone.
+func TestResetMail(t *testing.T) {
+	a := initFleet(t, "alpha")
+	b := join(t, "beta")
+	connectedAll(t, a, b)
+	for i := 0; i < 3; i++ {
+		if r := a.beam("", "msg", "send", "beta", "before"); r.code != 0 {
+			t.Fatalf("send: %+v", r)
+		}
+	}
+	if r := b.beam("reset\n", "fleet", "reset"); r.code != 0 {
+		t.Fatalf("reset: %+v", r)
+	}
+	if r := b.beam("", "join", "--label", "beta"); r.code != 0 {
+		t.Fatalf("join: %+v", r)
+	}
+	nb := b.status(t).PeerID
+	waitFor(t, 30*time.Second, "alpha to connect to the new beta", func() bool { return a.peers(t)[nb].State == "connected" })
+	if r := a.beam("", "msg", "send", nb, "after reset"); r.code != 0 {
+		t.Fatalf("send after the reset: %+v", r)
+	}
+	if lines := queue(t, b, "--which", "inbound"); len(lines) != 1 {
+		t.Fatalf("beta's inbound after the reset: %q", lines)
+	}
+}
+
 // docs/02 reset: a reset ends the ceremony under way, and one whose result is
 // already being handled commits nothing; one committing finishes first. The
 // machine ends reset.
