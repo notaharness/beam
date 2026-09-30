@@ -99,7 +99,8 @@ func loginShell(env []string) string {
 }
 
 // loginEnv is the part of env a login would give (docs/04): who and where
-// the user is, the path, the terminal type, the time zone and the locale. The
+// the user is, the path, the terminal type, the time zone, the locale and
+// the user's runtime directory, which the user's services are reached by. The
 // rest belongs to whatever started the daemon (a tmux pane, an SSH session, a
 // script holding a token) and stays with it.
 func loginEnv(env []string) []string {
@@ -113,7 +114,7 @@ func loginEnv(env []string) []string {
 }
 
 var loginVars = map[string]bool{"HOME": true, "USER": true, "LOGNAME": true, "SHELL": true, "PATH": true,
-	"TERM": true, "TZ": true, "TMPDIR": true, "LANG": true}
+	"TERM": true, "TZ": true, "TMPDIR": true, "LANG": true, "XDG_RUNTIME_DIR": true}
 
 // mergeEnv is base with over applied, then inject.
 func mergeEnv(base []string, over, inject map[string]string) []string {
