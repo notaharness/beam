@@ -12,7 +12,7 @@ import (
 // docs/06: a client talks only to a daemon its own user runs, by the
 // credentials of the process listening, not the owner of the path: one
 // another user listens with, where BEAM_SOCKET names a shared directory, is
-// not this user's daemon.
+// not this user's daemon. dial is how Dial and Attach connect.
 func TestDialOwnListenerOnly(t *testing.T) {
 	dir, err := os.MkdirTemp("", "beam") // short enough for a socket path
 	if err != nil {
@@ -25,18 +25,17 @@ func TestDialOwnListenerOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ln.Close()
-	c, err := Dial(Paths{Socket: path})
+	if c, err := dial(path, os.Getuid()+1); !errors.Is(err, fs.ErrPermission) {
+		t.Errorf("dial a listener of another uid: %v, want a permission error", err)
+		if c != nil {
+			c.Close()
+		}
+	}
+	c, err := dial(path, os.Getuid())
 	if err != nil {
 		t.Fatalf("dial this user's listener: %v", err)
 	}
-	defer c.Close()
-	conn := c.c.(*net.UnixConn)
-	if err := listenedBy(conn, os.Getuid()+1); !errors.Is(err, fs.ErrPermission) {
-		t.Errorf("a listener of another uid: %v, want a permission error", err)
-	}
-	if err := listenedBy(conn, os.Getuid()); err != nil {
-		t.Errorf("a listener of this uid: %v", err)
-	}
+	c.Close()
 }
 
 // docs/06: a starting daemon takes over no socket path another user owns.
