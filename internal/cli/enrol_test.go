@@ -453,6 +453,36 @@ func TestResetMail(t *testing.T) {
 	}
 }
 
+// docs/07 Peer arguments: after a re-join into the same fleet the label names
+// both identities until the old one is revoked, and then only the new one;
+// the revoked one is still reached by its id.
+func TestRejoinLabel(t *testing.T) {
+	a := initFleet(t, "alpha")
+	b := join(t, "beta")
+	connectedAll(t, a, b)
+	old := b.id()
+	if r := b.beam("reset\n", "fleet", "reset"); r.code != 0 || !strings.Contains(r.out, "beam revoke "+old) {
+		t.Fatalf("reset: %+v, want the old identity's revoke", r)
+	}
+	if r := b.beam("", "join", "--label", "beta"); r.code != 0 {
+		t.Fatalf("join: %+v", r)
+	}
+	nb := b.status(t).PeerID
+	waitFor(t, 30*time.Second, "alpha to connect to the new beta", func() bool { return a.peers(t)[nb].State == "connected" })
+	if r := a.beam("", "exec", "beta", "--", "true"); r.code != 1 || !strings.HasPrefix(r.err, "ambiguous-peer") {
+		t.Fatalf("exec beta, both identities current: %+v", r)
+	}
+	if r := a.beam("", "revoke", old); r.code != 0 {
+		t.Fatalf("revoke the old identity: %+v", r)
+	}
+	if r := a.beam("", "exec", "beta", "--", "true"); r.code != 0 {
+		t.Errorf("exec beta after revoking the old identity: %+v", r)
+	}
+	if r := a.beam("", "exec", old, "--", "true"); r.code != 1 || !strings.HasPrefix(r.err, "revoked-peer") {
+		t.Errorf("exec the old identity: %+v, want revoked-peer", r)
+	}
+}
+
 // docs/02 reset: a reset ends the ceremony under way, and one whose result is
 // already being handled commits nothing; one committing finishes first. The
 // machine ends reset.
