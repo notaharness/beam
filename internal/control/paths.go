@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -125,4 +126,18 @@ func (p Paths) loadKey() (*transport.Key, error) {
 func (p Paths) loadFleet() (*identity.Fleet, error) {
 	f := new(identity.Fleet)
 	return f, readJSON(p.file(fleetFile), f)
+}
+
+// owned refuses a path another user owns (docs/06): a starting daemon takes
+// over no socket someone else put at a shared path. A path with nothing at it
+// is left for the listen.
+func owned(path string) error {
+	st, err := os.Stat(path)
+	if err != nil {
+		return nil
+	}
+	if uid := st.Sys().(*syscall.Stat_t).Uid; int(uid) != os.Getuid() {
+		return fmt.Errorf("%s belongs to another user (uid %d): %w", path, uid, fs.ErrPermission)
+	}
+	return nil
 }

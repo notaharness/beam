@@ -61,29 +61,39 @@ func Connect(p Paths, env []string) (*Client, error) {
 	return nil, errors.Join(spawnErr, err)
 }
 
-// Dial connects to the daemon at p if one listens there and its socket is
-// this user's.
+// Dial connects to the daemon at p if one listens there and it runs as this
+// user.
 func Dial(p Paths) (*Client, error) {
-	if err := owned(p.Socket); err != nil {
-		return nil, err
-	}
 	c, err := net.Dial("unix", p.Socket)
 	if err != nil {
 		return nil, err
 	}
+	if err := listenedBy(c.(*net.UnixConn), os.Getuid()); err != nil {
+		c.Close()
+		return nil, fmt.Errorf("%s: %w", p.Socket, err)
+	}
 	return newClient(c), nil
 }
 
-// owned refuses a path another user owns (docs/06): where BEAM_SOCKET names
-// a shared directory, whoever listened there first is not this user's
-// daemon. A path with nothing at it is left for the dial to report.
-func owned(path string) error {
-	st, err := os.Stat(path)
+// listenedBy refuses a connection whose listener runs as another user than
+// uid (docs/06): where BEAM_SOCKET names a shared directory, whoever listens
+// there is not this user's daemon. It asks the kernel about the connection,
+// so neither the path's owner nor a socket swapped in after a check counts.
+func listenedBy(c *net.UnixConn, uid int) error {
+	raw, err := c.SyscallConn()
 	if err != nil {
-		return nil
+		return err
 	}
-	if uid := st.Sys().(*syscall.Stat_t).Uid; int(uid) != os.Getuid() {
-		return fmt.Errorf("%s belongs to another user (uid %d): %w", path, uid, fs.ErrPermission)
+	var peer int
+	var credErr error
+	if err := raw.Control(func(fd uintptr) { peer, credErr = peerUID(int(fd)) }); err != nil {
+		return err
+	}
+	if credErr != nil {
+		return credErr
+	}
+	if peer != uid {
+		return fmt.Errorf("listened on by another user (uid %d): %w", peer, fs.ErrPermission)
 	}
 	return nil
 }
