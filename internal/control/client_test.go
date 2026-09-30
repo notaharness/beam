@@ -38,3 +38,13 @@ func TestDialOwnListenerOnly(t *testing.T) {
 		t.Errorf("a listener of this uid: %v", err)
 	}
 }
+
+// docs/06: a starting daemon takes over no socket path another user owns.
+func TestListenOwnPathOnly(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root owns /dev/null")
+	}
+	if _, err := listen("/dev/null"); !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("listen on a path root owns: %v, want a permission error", err)
+	}
+}
