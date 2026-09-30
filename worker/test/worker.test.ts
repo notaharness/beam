@@ -14,8 +14,10 @@ beforeAll(async () => {
   await env.DB.batch(schema.split(";").filter((s) => s.trim()).map((s) => env.DB.prepare(s)));
 });
 
-function call(method: string, path: string, body?: unknown, token?: Uint8Array | string): Promise<Response> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+// call makes a request, by default from an address of its own, so rates do
+// not add up across tests.
+function call(method: string, path: string, body?: unknown, token?: Uint8Array | string, ip = crypto.randomUUID()): Promise<Response> {
+  const headers: Record<string, string> = { "Content-Type": "application/json", "CF-Connecting-IP": ip };
   if (token !== undefined) headers.Authorization = "Bearer " + (typeof token === "string" ? token : b64(token));
   return exports.default.fetch(new Request("https://beam.n10.is" + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }));
 }
@@ -35,9 +37,9 @@ async function entry(auth: Authenticator, kind: string, blob = random(200), flag
   return { kind, statementHash: b64(hash), blob: b64(blob), assertion: await auth.assert(challenge, flags, as) };
 }
 
-async function register(f: Awaited<ReturnType<typeof fleet>>, first?: Awaited<ReturnType<typeof entry>>) {
+async function register(f: Awaited<ReturnType<typeof fleet>>, first?: Awaited<ReturnType<typeof entry>>, ip?: string) {
   first ??= await entry(f.auth, "member");
-  return call("POST", "/v1/fleets", { credentialId: f.auth.credentialId, credentialPublicKey: b64(f.auth.cose), readToken: b64(f.token), first });
+  return call("POST", "/v1/fleets", { credentialId: f.auth.credentialId, credentialPublicKey: b64(f.auth.cose), readToken: b64(f.token), first }, undefined, ip);
 }
 
 describe("docs/09 routes", () => {
@@ -89,6 +91,7 @@ describe("docs/09 routes", () => {
     expect((await append(await entry((await fleet()).auth, "member"))).status).toBe(403);
     expect((await append(await entry(f.auth, "member", random(8193)))).status).toBe(413);
     expect((await append(await entry(f.auth, "member", random(10), 0x01))).status).toBe(403); // no user verification
+    expect((await append(await entry(f.auth, "member", random(10), 0x04))).status).toBe(403); // no user presence
     expect((await append({ ...member, kind: undefined })).status).toBe(400);
     expect((await append(member, (await fleet()).id)).status).toBe(404);
   });
@@ -107,6 +110,7 @@ describe("docs/09 routes", () => {
       await entry(f.auth, "member", undefined, undefined, { type: "webauthn.create" }),
       await entry(f.auth, "member", undefined, undefined, { origin: "https://beam.n10.is.example" }),
       await entry(f.auth, "member", undefined, undefined, { rpId: "n10.is" }),
+      await entry(f.auth, "member", undefined, undefined, { crossOrigin: true }), // the page cannot be framed
       await entry(impostor, "member"),
     ]) {
       expect(await append(e)).toBe(403);
@@ -194,12 +198,42 @@ describe("docs/09 caps", () => {
 });
 
 describe("docs/09 rate", () => {
-  it("allows 120 requests a minute per fleet", async () => {
+  it("allows 120 directory requests a minute per client address", async () => {
     const f = await fleet();
     await register(f);
     const codes = [];
-    for (let i = 0; i < 121; i++) codes.push((await call("GET", "/v1/entries", undefined, f.token)).status);
+    for (let i = 0; i < 121; i++) codes.push((await call("GET", "/v1/entries", undefined, f.token, "192.0.2.1")).status);
     expect(codes.slice(0, 119).every((c) => c === 200)).toBe(true);
     expect(codes[120]).toBe(429);
+    expect((await call("GET", "/v1/entries", undefined, f.token, "192.0.2.2")).status).toBe(200);
+  }, 30_000); // 123 requests, which a slow runner takes over the default 5 s for
+
+  // An IPv6 client holds a /64 at least: its addresses share one rate.
+  it("counts an IPv6 client by its /64", async () => {
+    for (let i = 0; i < 120; i++) await call("GET", "/v1/entries", undefined, random(32), "2001:db8:0:1::1");
+    expect((await call("GET", "/v1/entries", undefined, random(32), "2001:DB8:0:1:ffff:0:0:2")).status).toBe(429);
+    expect((await call("GET", "/v1/entries", undefined, random(32), "2001:db8:0:2::1")).status).toBe(401);
+  }, 30_000);
+
+  // Anyone can register a fleet with a key of their own, each fleet a store of
+  // up to 5,000 entries: an address creates a few a minute, which a person
+  // starting a fleet never needs more than.
+  it("allows 10 fleet registrations a minute per client address", async () => {
+    const codes = [];
+    for (let i = 0; i < 11; i++) codes.push((await register(await fleet(), undefined, "192.0.2.10")).status);
+    expect(codes.slice(0, 10).every((c) => c === 201)).toBe(true);
+    expect(codes[10]).toBe(429);
+    expect((await call("GET", "/v1/entries", undefined, random(32), "192.0.2.10")).status).toBe(401);
   });
+
+  // A fleetId is no secret: every member, revoked ones included, holds it.
+  // Requests that prove nothing must not spend the owner's budget.
+  it("does not let junk from one address lock a fleet's owner out", async () => {
+    const f = await fleet();
+    await register(f);
+    const junk = { kind: "revoke", statementHash: b64(random(32)), blob: "", assertion: { credentialId: "x", clientDataJSON: "", authenticatorData: "", signature: "" } };
+    for (let i = 0; i < 121; i++) await call("POST", `/v1/fleets/${f.id}/entries`, junk, undefined, "203.0.113.66");
+    expect((await call("POST", `/v1/fleets/${f.id}/entries`, await entry(f.auth, "revoke"), undefined, "198.51.100.7")).status).toBe(201);
+    expect((await call("GET", "/v1/entries", undefined, f.token, "198.51.100.7")).status).toBe(200);
+  }, 30_000);
 });

@@ -5,7 +5,11 @@ port is the only other thing it listens on; a ceremony's result comes back throu
 worker, [02](02-identity.md).) Override with `BEAM_SOCKET`, which is also what the
 daemon injects into remote processes; `BEAM_CONFIG_DIR` selects the directory and
 therefore the default path. A path longer than a Unix socket address holds (107 bytes on
-Linux, 103 on macOS) is refused before anything else, naming `BEAM_SOCKET`.
+Linux, 103 on macOS) is refused before anything else, naming `BEAM_SOCKET`. Where
+`BEAM_SOCKET` names a shared directory, whoever listened there first is not this user's
+daemon: a client refuses a connection whose listener runs as another user, by the
+kernel's credentials for it (`SO_PEERCRED` on Linux, `LOCAL_PEERCRED` on macOS), and a
+starting daemon refuses a socket path another user owns.
 
 ## Lifecycle
 
@@ -70,7 +74,7 @@ pinnedAt, queue: { outbound, inbound, refused } }` (counts, not lists).
 | op | request | result |
 |---|---|---|
 | `peers` | `{ cursor?, limit? ≤ 200 }` | `{ peers: PeerView[], next? }` |
-| `peer.resolve` | `{ peer }` | `{ peerId }`; `peer` is a full id, a ≥ 8-char hex prefix, or an alias/label; hex-looking input is tried as prefix first; `ambiguous-peer` lists candidates in `detail` |
+| `peer.resolve` | `{ peer }` | `{ peerId }`; `peer` is a full id, a ≥ 8-char hex prefix, or an alias/label; hex-looking input is tried as prefix first; an alias or label matches a revoked peer only if it matches no other; `ambiguous-peer` lists candidates in `detail` |
 | `peer.alias` | `{ peer, alias \| null }` | `{}` |
 | `peer.grant` | `{ peer, grant: "all" \| "msg" \| "none" }` | `{}`; an open stream from that peer outside the new grant is terminated |
 
@@ -90,14 +94,17 @@ while the daemon waits on the ceremony's slot. One ceremony at a time (`busy`).
 | `revoke.start` | `{ peer }` | `{ ceremonyUrl }` |
 | `revoke.wait` | | `{ local: true, published: true \| "pending", acknowledgedBy: n }`; `n` as [02](02-identity.md) defines it |
 | `ceremony.cancel` | | `{}` |
-| `fleet.reset` | `{ confirm: "reset" }` | `{}` |
+| `fleet.reset` | `{ confirm: "reset" }` | `{ peerId? }`: the identity removed, absent if the machine was not enrolled |
 
 While a `*.wait` runs, its client also gets `stage { stage }` events as the daemon
 reaches `reading directory`, `notifying peers` and `publishing` ([07](07-cli.md)). A `*.wait` without its
 `*.start` under way is `ceremony-state`, and so is a slot answered with a result that
 does not open under the ceremony's key ([02](02-identity.md)). `published: "pending"`
 means the directory append is queued in `state.db` and retried (a write the worker
-refuses outright is dropped from the queue and logged); event `directory.published {
+refuses outright, with one of its own reasons ([09](09-build-and-distribution.md)), is
+dropped from the queue and logged; any other refusal came from the path to the worker,
+and the write stays queued, as does one whose statement the directory holds with another
+blob ([02](02-identity.md))); event `directory.published {
 kind, peerId }` fires when it lands. `join` fails outright with `directory-unavailable`
 because it cannot proceed without the read.
 

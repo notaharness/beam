@@ -117,13 +117,14 @@ bare member node (transport only) stands in for a daemon:
 | grants | `msg` refuses `pty` on a live tunnel; `none` still syncs |
 | mailbox | stored/delivered/rejected; crash between store and ack → duplicate suppressed; subscriber defer/ack; `send` while connected flushes immediately |
 | junk in the log | valid assertion, unrelated blob → ignored |
+| junk first | a copy of a revocation's assertion appended with junk before its writer publishes: the writer reports it pending and keeps it queued, the retry too |
 | test authenticator, no browser | on a machine with a display, `beam init` opens the browser, and with `BEAM_TEST_AUTHENTICATOR` in its environment does not |
 | test kit | `beam testkit --exit-with-parent` prints its JSON line; a daemon on it inits, a second joins, and the two connect, through the test authenticator; the kit exits 0 at once when its stdin ends, a slot read still waiting; with a stdin that is no pipe it is a usage error |
 | daemon lock | second daemon exits 1; connect-or-spawn loser connects to winner |
 | shutdown ends sessions | an enrolled daemon in a process of its own (`beam daemon --directory`, a beamtest-only flag naming the fake worker) serves a pty and an exec whose processes ignore SIGHUP; after SIGTERM, both are dead when the daemon has exited |
 | inherited descriptors | a daemon started with an extra descriptor open does not pass it to a pty it serves |
 | exit with parent | a parent process spawns `beam daemon --exit-with-parent` with a stdin pipe and is killed with SIGKILL: the daemon exits; a terminal, `/dev/null` or `--detach` with the flag is a usage error |
-| reset | tunnels closed, fleet state gone, key kept, re-join works |
+| reset | tunnels closed, fleet state and key gone, re-join works under a new key; a revocation not yet published still refuses its machine after a re-join into the same fleet, and one from another fleet revokes nothing in a new one |
 
 ## Test kit
 

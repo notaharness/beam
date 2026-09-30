@@ -36,7 +36,8 @@ func (d *daemon) publish(ctx context.Context, e *enrolment, cc *clientConn, r id
 
 // appendRecord seals r and appends it. This machine's own first entry,
 // whose fleet the directory does not know yet, registers the fleet instead:
-// that is init's request, retried.
+// that is init's request, retried. A statement the directory held already
+// counts only if a reader finds r in it.
 func (d *daemon) appendRecord(ctx context.Context, e *enrolment, r identity.Record) error {
 	f, cred := e.fleet, e.cred
 	kDir, err1 := base64.RawURLEncoding.DecodeString(f.KDir)
@@ -45,11 +46,31 @@ func (d *daemon) appendRecord(ctx context.Context, e *enrolment, r identity.Reco
 		return err
 	}
 	c, entry := d.directory(), directory.NewEntry(kDir, f.FleetID, r)
-	_, err := c.Append(ctx, f.FleetID, entry)
+	_, held, err := c.Append(ctx, f.FleetID, entry)
 	if errors.Is(err, directory.ErrNoFleet) && r.Kind == identity.Member && r.PeerID == e.self() {
 		err = c.Register(ctx, cred, tRead, entry)
 	}
+	if err == nil && held {
+		err = holds(ctx, c, cred, tRead, kDir, r)
+	}
 	return err
+}
+
+// holds is nil if the directory serves r as a reader takes it: the worker
+// keeps the first blob appended for a statement, and whoever had r before it
+// was published could have appended another under its assertion (docs/02).
+func holds(ctx context.Context, c directory.Client, cred identity.Credential, tRead, kDir []byte, r identity.Record) error {
+	p, err := c.Read(ctx, tRead)
+	if err != nil {
+		return err
+	}
+	h := r.StatementHash()
+	for _, got := range p.Records(kDir) {
+		if got.StatementHash() == h && cred.Verify(got, func(string) bool { return false }) == nil {
+			return nil
+		}
+	}
+	return directory.ErrConflict
 }
 
 func (d *daemon) directory() directory.Client { return directory.Client{URL: d.o.Directory} }
@@ -80,7 +101,9 @@ func (d *daemon) retryPending(e *enrolment) {
 
 // flushPending appends every queued record once and reports whether the
 // directory was unavailable. A record the directory refuses outright is
-// dropped: retrying cannot change the answer.
+// dropped: retrying cannot change the answer. One whose statement it holds
+// with another blob stays queued, for the log and beam status, and is tried
+// again at the next start or publish.
 func (d *daemon) flushPending(e *enrolment) (unavailable bool) {
 	e.writing.Lock()
 	defer e.writing.Unlock()
@@ -93,6 +116,8 @@ func (d *daemon) flushPending(e *enrolment) (unavailable bool) {
 			d.emit("directory.published", map[string]string{"kind": r.Kind, "peerId": r.PeerID})
 		case errors.Is(err, directory.ErrUnavailable):
 			unavailable = true
+		case errors.Is(err, directory.ErrConflict):
+			d.o.Logf("directory: %s %s: %v; kept queued", r.Kind, short(r.PeerID), err)
 		default:
 			d.o.Logf("directory: dropping %s %s: %v", r.Kind, short(r.PeerID), err)
 			_ = e.store.DonePending(r) // a refusal stands

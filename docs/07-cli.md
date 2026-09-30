@@ -63,7 +63,13 @@ The publication line is `Published to directory`, or while the append is queued
 ([06](06-control-socket.md)) `Saved on this machine. Directory publication is pending;
 beam will retry while it runs.`
 
-`beam fleet reset` asks `type "reset" to confirm`.
+`beam fleet reset` asks `type "reset" to confirm`, and ends, when the machine was
+enrolled:
+
+```
+fleet state and this machine's key removed; its next beam init or beam join makes a new one.
+after a join into the same fleet, revoke the old identity from a machine in it: beam revoke 3b27e4b6c8d1bd84928f52ed007a6db5
+```
 
 A ceremony shows:
 
@@ -80,7 +86,10 @@ scan with your phone or open the link; approve only a page that shows what you r
 
 Action, Machine and Machine fingerprint are read from the URL's fragment and are what
 the page shows for it, the Action in the page's words ([02](02-identity.md),
-Ceremonies).
+Ceremonies). The CLI shows, draws and opens only a request on the ceremony page: a URL
+that is not printable ASCII, not under `https://beam.n10.is/#`, or whose action, label,
+fingerprint or fleet name is not one, is refused as `internal` and the ceremony
+cancelled, whatever answered on the socket.
 
 The QR code encodes the URL byte for byte at error correction level L. Each character
 cell is a braille pattern (U+2800–U+28FF) holding 2 × 4 modules, a light module a raised
@@ -115,7 +124,7 @@ fails while it stops ([06](06-control-socket.md)).
 | `busy` | Another passkey request is already running. Finish or cancel it where you started it, then try again. |
 | `already-enrolled` | This machine already belongs to a fleet. Run beam status to inspect it. |
 | `not-enrolled` | This machine is not in a fleet. Create or join a fleet first (beam init or beam join). |
-| `revoked-peer` | This machine identity has been revoked. Resetting its fleet will not make that identity eligible to rejoin. |
+| `revoked-peer` | This machine identity has been revoked. beam fleet reset gives this machine a new identity, which joins with a new approval. |
 | `unknown-peer` | This machine is no longer in the local peer list. Check beam peers before trying again. |
 | `ambiguous-peer` | More than one machine matches. Select a machine by its fingerprint. |
 | `params` | beam rejected these details. Check the machine and fleet names. |
@@ -190,4 +199,6 @@ Peers given filter by sender.
 ## Peer arguments
 
 Resolved by the daemon (`peer.resolve`): full id, ≥ 8-hex prefix, alias, or label. The
-error for ambiguity lists candidates.
+error for ambiguity lists candidates. An alias or label names a revoked machine only if
+no other machine has it, so once a re-joined machine's old identity is revoked, its
+label names the new one; the old one is still reached by its id.

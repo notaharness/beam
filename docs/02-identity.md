@@ -80,7 +80,10 @@ $BEAM_DIR/
 
 The signed statement is `canonical(entry without assertion)`: JSON per RFC 8785 (JCS),
 keys sorted, no whitespace, integers only (safe integers; a duplicate key or any other
-number is `bad-entry`). The WebAuthn challenge commits to its hash, so the directory
+number is `bad-entry`). A record's JSON, assertion included, is at most 8 KiB, what a
+directory blob holds ([09](09-build-and-distribution.md)); a longer one, or one with a
+field a record does not have, is `bad-entry` before it is canonicalised, since a record
+arrives in a hello before anything is verified. The WebAuthn challenge commits to its hash, so the directory
 worker can recompute it without the plaintext:
 
 ```
@@ -98,7 +101,7 @@ challenge     = SHA-256( "beam-member:v1" ‖ statementHash )
 4. `assertion.credentialId == fleet.credentialId`.
 5. Recompute the challenge. Verify the assertion with a WebAuthn library
    (`go-webauthn/webauthn`): `type == "webauthn.get"`, `origin == "https://beam.n10.is"`,
-   `rpIdHash == SHA-256("beam.n10.is")`, UV flag set, signature valid under
+   `rpIdHash == SHA-256("beam.n10.is")`, UP and UV flags set, `crossOrigin` not true, signature valid under
    `fleet.credentialPublicKey`, sign count ignored.
 6. `peerId` has no revocation.
 
@@ -136,9 +139,16 @@ assertion under the fleet's registered credential with `challenge = SHA-256(doma
 statementHash)` for the domain of `kind`, which it can compute without the plaintext, and
 stores the last three. So **appending needs a
 tap**; a revoked machine holding `K_dir` and `T_read` can read forever and never write.
-Readers decrypt, check that the statement inside hashes to `statementHash` (a compromised
-daemon could append a valid assertion with an unrelated blob; that costs one slot and is
-discarded), then verify the record as in "The membership entry".
+Readers decrypt, check that the statement inside hashes to `statementHash`, then verify
+the record as in "The membership entry". The worker keeps the first blob appended for a
+statement, and the assertion does not cover the blob: whoever holds a signed record
+before it is published (a member it was pushed to, a compromised daemon) can append its
+assertion with another blob, which readers discard, and the statement's place in the
+directory is lost. So a writer whose append finds its statement held already reads the
+directory, and dequeues the write only if a reader finds the record there; otherwise the
+write stays queued, logged as a conflict, and a fresh statement (another `beam revoke`)
+takes a place of its own. Binding the blob to the assertion is an open question
+([11](11-decisions.md)).
 
 The directory is read at join and at daemon start, written at init, join and revoke
 with retry from `state.db` while the daemon runs, and never polled. No runtime behaviour
@@ -346,8 +356,9 @@ assertion by any other credential is `wrong-passkey`.
 2. Apply locally: store the revocation and queue it for the directory in one
    transaction; terminate the peer's tunnels and streams.
 3. Push it on every live `sync` stream. Append it to the directory and dequeue it once
-   the worker has it, or held it already; otherwise it stays queued and is retried with
-   backoff while the daemon runs, a restart included.
+   the worker has it, or held it already with this record (see "The directory");
+   otherwise it stays queued and is retried with backoff while the daemon runs, a
+   restart included.
 4. Report `{ local: true, published: true | "pending", acknowledgedBy: n }`. `n` counts the
    peers whose sync answered, within 5 s, a ping sent right after the revocation: the
    stream is ordered, so that pong proves the peer read the revocation first.
@@ -355,13 +366,21 @@ assertion by any other credential is `wrong-passkey`.
 ### `beam fleet reset`
 
 Daemon-owned recovery for a lost passkey or a compromised fleet: closes every tunnel,
-deletes `fleet.json` and all peers, revocations and pending writes from `state.db`,
-keeps `key.json` (the machine's identity is not the problem) and the mailbox tables
-(queued mail to old peers is deleted with the peers; the message counters, which belong
-to the keys, stay). It ends the ceremony under way,
-and one already past its tap commits nothing (`ceremony-cancelled`): a ceremony commits
-only if the enrolment it began under is unchanged. Prompts for confirmation. Then
-`beam init` or `beam join` as appropriate.
+deletes `fleet.json`, `key.json` and all peers from `state.db`, and with them the
+mailbox: queued mail to and from old peers and the message counters. `key.json` goes
+because a compromised fleet recovers from copied node keys too: the next `init` or
+`join` makes a new key, so a new `peerId`, which peers count their mail to from 1. A
+re-join into the same fleet enrols that new identity; the old one's entry stays valid
+there until it is revoked, which it should be if its key may have been copied: the reset
+prints the old `peerId` to revoke. Until then the label names both on every peer
+(`ambiguous-peer`); once the old one is revoked, it names the new one (07, Peer
+arguments). It keeps the revocations and pending writes too: the next enrolment keeps
+those its credential signed, a re-join into the same fleet, and deletes the rest and any
+entry of the old key. A revocation not yet in the directory, of a machine that was
+offline, may exist nowhere else, and a re-join that forgot it would admit that machine
+again. It ends the ceremony under way, and one already past its tap commits nothing
+(`ceremony-cancelled`): a ceremony commits only if the enrolment it began under is
+unchanged. Prompts for confirmation. Then `beam init` or `beam join` as appropriate.
 
 ## The peer table
 

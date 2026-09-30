@@ -5,7 +5,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
+	"runtime"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -116,6 +118,25 @@ func TestParseRecordRejects(t *testing.T) {
 		if _, err := ParseRecord([]byte(in)); err != BadEntry {
 			t.Errorf("%s: %v, want bad-entry", in, err)
 		}
+	}
+}
+
+// A record reaches ParseRecord from a hello before anything is verified, so
+// refusing one costs little whatever it holds: here 500 nested objects under
+// a field no record has, 130 KB that canonicalising copied into some 35 MB.
+func TestParseRecordBounded(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(`{"v":1,"kind":"member","peerId":"a","issuedAt":1,"extra":`)
+	for range 500 {
+		b.WriteString(`{"` + strings.Repeat("k", 250) + `":`)
+	}
+	b.WriteString(`0` + strings.Repeat("}", 501))
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	_, err := ParseRecord([]byte(b.String()))
+	runtime.ReadMemStats(&after)
+	if n := after.TotalAlloc - before.TotalAlloc; err != BadEntry || n > 1<<20 {
+		t.Fatalf("%d bytes of nested objects: %v after %d bytes allocated, want bad-entry within 1 MiB", b.Len(), err, n)
 	}
 }
 

@@ -162,7 +162,8 @@ user. That user can read `$BEAM_DIR` on that machine. So a member that is stolen
 directory key. Revoking the stolen machine then evicts its key, not an attacker who
 already holds others. The honest statement is: a shell-capable member is transitively
 the owner's account across the fleet, and a fleet that has been compromised that way is
-recovered by starting a new one. The per-machine grant `msg` exists for a machine that
+recovered by starting a new one, with `beam fleet reset` on every machine, which gives
+each a new node key. The per-machine grant `msg` exists for a machine that
 should only report; it is a real restriction on *that* machine's opens on the machines
 that set it, and nothing more.
 

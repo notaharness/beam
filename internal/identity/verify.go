@@ -101,7 +101,8 @@ func sameID(a, b string) bool {
 }
 
 // VerifyAssertion checks a get assertion over challenge for this relying
-// party with user verification, ignoring the sign count.
+// party with user presence and verification, not cross-origin, ignoring the
+// sign count.
 func (c Credential) VerifyAssertion(a *Assertion, challenge []byte) error {
 	raw := func(s string) []byte {
 		b, _ := base64.RawURLEncoding.DecodeString(s)
@@ -123,5 +124,5 @@ func (c Credential) VerifyAssertion(a *Assertion, challenge []byte) error {
 		return err
 	}
 	return p.Verify(base64.RawURLEncoding.EncodeToString(challenge), RPID, "", []string{Origin}, nil, nil,
-		protocol.TopOriginDefaultVerificationMode, false, true, false, c.PublicKey, protocol.SignaturePolicy{})
+		protocol.TopOriginDefaultVerificationMode, false, true, true, c.PublicKey, protocol.SignaturePolicy{})
 }

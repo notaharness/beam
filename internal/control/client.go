@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net"
 	"os"
@@ -60,13 +61,41 @@ func Connect(p Paths, env []string) (*Client, error) {
 	return nil, errors.Join(spawnErr, err)
 }
 
-// Dial connects to the daemon at p if one listens.
+// Dial connects to the daemon at p if one listens there and it runs as this
+// user.
 func Dial(p Paths) (*Client, error) {
 	c, err := net.Dial("unix", p.Socket)
 	if err != nil {
 		return nil, err
 	}
+	if err := listenedBy(c.(*net.UnixConn), os.Getuid()); err != nil {
+		c.Close()
+		return nil, fmt.Errorf("%s: %w", p.Socket, err)
+	}
 	return newClient(c), nil
+}
+
+// listenedBy refuses a connection whose listener runs as another user than
+// uid (docs/06): where BEAM_SOCKET names a shared directory, whoever listens
+// there is not this user's daemon. It asks the kernel about the connection,
+// so neither the path's owner nor a socket swapped in after a check counts.
+func listenedBy(c *net.UnixConn, uid int) error {
+	raw, err := c.SyscallConn()
+	if err != nil {
+		return err
+	}
+	var peer int
+	var credErr error
+	if err := raw.Control(func(fd uintptr) { peer, credErr = peerUID(int(fd)) }); err != nil {
+		return err
+	}
+	if credErr != nil {
+		return credErr
+	}
+	if peer != uid {
+		return fmt.Errorf("listened on by another user (uid %d): %w", peer, fs.ErrPermission)
+	}
+	return nil
 }
 
 func newClient(c net.Conn) *Client {
