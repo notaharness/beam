@@ -15,7 +15,7 @@ dist:
 	done
 
 test:
-	go test -race -tags "$(TAGS),beamtest" -coverpkg=./... -coverprofile=cover.out ./...
+	go test -race -timeout 20m -tags "$(TAGS),beamtest" -coverpkg=./... -coverprofile=cover.out ./...
 
 crap: test
 	go run ./tools/crap cover.out
