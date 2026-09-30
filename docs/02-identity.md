@@ -366,10 +366,11 @@ assertion by any other credential is `wrong-passkey`.
 ### `beam fleet reset`
 
 Daemon-owned recovery for a lost passkey or a compromised fleet: closes every tunnel,
-deletes `fleet.json`, `key.json` and all peers from `state.db`, and keeps the mailbox
-tables (queued mail to old peers is deleted with the peers; the message counters stay).
+deletes `fleet.json`, `key.json` and all peers from `state.db`, and with them the
+mailbox: queued mail to and from old peers and the message counters.
 `key.json` goes because a compromised fleet recovers from copied node keys too: the
-next `init` or `join` makes a new key, so a new `peerId`. A re-join into the same fleet
+next `init` or `join` makes a new key, so a new `peerId`, which peers count their mail
+to from 1. A re-join into the same fleet
 enrols that new identity; the old one's entry stays valid there until it is revoked,
 which it should be if its key may have been copied. It keeps the
 revocations and pending writes too: the next enrolment keeps those its credential

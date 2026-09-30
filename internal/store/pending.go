@@ -75,16 +75,16 @@ func pendingKey(r identity.Record) string {
 // the pending directory writes stay, for the next enrolment to keep those its
 // credential signed (Keep): a re-join into the same fleet goes on refusing a
 // machine revoked here, whose revocation may exist nowhere else yet. The
-// message counters stay: they belong to the keys, which outlive the fleet,
-// and one restarted at 1 would make a peer that remembers it drop new mail as
-// duplicates.
+// message counters go too: the machine comes back under a new peer id, which
+// peers count their mail to from 1, and a high-water mark kept from the old id
+// would drop that mail as duplicates.
 func (s *Store) Reset() error {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }() // a no-op once committed
-	for _, table := range []string{"peers", "outbound", "inbound", "quarantine"} {
+	for _, table := range []string{"peers", "outbound", "inbound", "quarantine", "seen", "send_seq"} {
 		if _, err := tx.Exec(`DELETE FROM ` + table); err != nil {
 			return err
 		}
