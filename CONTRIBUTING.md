@@ -53,16 +53,22 @@ the work, and docs/09 describes it. A release is a bump, a tag and a push of the
    canonical semver, builds the four binaries and the four of the test kit, packs the five
    npm packages, checks npm would publish each at the binary's version, and creates the
    GitHub release with all eight and `SHA256SUMS`. Job `publish`, in the `npm`
-   environment, checks that npm takes the workflow as every package's trusted publisher,
-   then publishes the four platform packages and `@notaharness/beam`, with provenance.
+   environment, checks that npm takes the workflow as every package's trusted publisher
+   (and lets it move `latest`, for a beta while `LATEST_FOLLOWS_BETA` is on), then
+   publishes the four platform packages and `@notaharness/beam`, with provenance.
 4. Check: `gh release view vX.Y.Z`; `npm view @notaharness/beam dist-tags`; and on a
    machine without beam, `npx @notaharness/beam@X.Y.Z version` prints `X.Y.Z`.
 
 A tag with a prerelease, `v0.2.0-beta.1`, makes a GitHub prerelease and publishes every
-package under npm's `beta` dist-tag; a tag without one publishes under `latest`. So
-`npm install -g @notaharness/beam` gets the last release and `@notaharness/beam@beta`
-the last beta. The shim depends on each platform package at its own exact version, so
-either installs the platform package of the same release.
+package under npm's `beta` dist-tag; a tag without one publishes under `latest`. While
+beam is beta-only, `LATEST_FOLLOWS_BETA: true` at the top of `release.yml` also moves
+every package's `latest` to the beta, the platform packages' first and the shim's last,
+so `npm install -g @notaharness/beam` gets it. At 1.0, set it to `false`: from then on
+`@notaharness/beam` is the last release and `@notaharness/beam@beta` the last beta. The
+shim depends on each platform package at its own exact version, so either tag installs
+the platform packages of the same release. If `publish` fails after the publish and
+before `latest` has moved, move it by hand (`npm dist-tag add
+@notaharness/<package>@X.Y.Z latest`, platform packages first).
 
 After a change to `release.yml` or to a trusted publisher, rehearse from `main` before
 the next tag: `gh workflow run release.yml -f version=vX.Y.Z`, then `gh run watch`. The
@@ -88,7 +94,7 @@ The workflow holds no npm token. Each of `@notaharness/beam`,
 `@notaharness/beam-linux-x64` and `@notaharness/beam-linux-arm64` has a trusted
 publisher on npmjs.com (the package's Settings, Trusted Publisher, GitHub Actions):
 organization `notaharness`, repository `beam`, workflow filename `release.yml`,
-environment `npm`. Each package's publishing access requires two-factor authentication
+environment `npm`, with "Allow npm dist-tag" on. Each package's publishing access requires two-factor authentication
 and disallows tokens. npm sets a trusted publisher only on a package that exists, so a
 new platform package is first published by hand at `0.0.0`, a version no release uses;
 then set its trusted publisher and publishing access.

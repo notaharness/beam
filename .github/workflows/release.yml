@@ -1,7 +1,8 @@
 name: Release
 
 # A vX.Y.Z tag releases X.Y.Z, under npm's beta for a prerelease and latest
-# otherwise. Run by hand from main with a version, it rehearses that release:
+# otherwise; while LATEST_FOLLOWS_BETA is true, a prerelease moves latest too.
+# Run by hand from main with a version, it rehearses that release:
 # everything but the GitHub release and the npm publish. CONTRIBUTING.md
 # "Releasing" has the steps.
 on:
@@ -14,6 +15,11 @@ on:
         required: true
 
 permissions: {}
+
+env:
+  # beam is beta-only: a prerelease also becomes npm's latest, so that
+  # npm install gets it. false from 1.0, when latest is the last release.
+  LATEST_FOLLOWS_BETA: true
 
 jobs:
   release:
@@ -87,7 +93,10 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24 # npm 11.5.1 or later publishes through trusted publishing
+          node-version: 24
+      # npm 11.21.0 or later moves a dist-tag through trusted publishing, which
+      # Node 24's own npm predates.
+      - run: npm install -g npm@11.21.0
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: binaries
@@ -102,9 +111,24 @@ jobs:
             npm publish --dry-run --loglevel verbose --tag "$DIST_TAG" "$p" 2> npm.log || { cat npm.log; exit 1; }
             grep -q 'oidc Successfully retrieved and set token' npm.log || { grep oidc npm.log; echo "$p: no trusted publisher took this workflow"; exit 1; }
           done
+      # Pointing latest at the version it is on changes nothing, and fails
+      # unless the trusted publisher allows npm dist-tag.
+      - if: env.LATEST_FOLLOWS_BETA == 'true' && env.DIST_TAG == 'beta'
+        name: npm lets this workflow move every package's latest
+        run: |
+          for p in dist/npm/beam-*/ dist/npm/beam/; do
+            name=$(jq -r .name "$p/package.json")
+            npm dist-tag add "$name@$(npm view "$name" dist-tags.latest)" latest
+          done
       - if: github.event_name == 'push'
         name: publish the platform packages, then the shim
         run: |
           for p in dist/npm/beam-*/ dist/npm/beam/; do
             npm publish --provenance --access public --tag "$DIST_TAG" "$p"
+          done
+      - if: github.event_name == 'push' && env.LATEST_FOLLOWS_BETA == 'true' && env.DIST_TAG == 'beta'
+        name: latest follows beta, the platform packages', then the shim's
+        run: |
+          for p in dist/npm/beam-*/ dist/npm/beam/; do
+            npm dist-tag add "$(jq -r .name "$p/package.json")@$VERSION" latest
           done
