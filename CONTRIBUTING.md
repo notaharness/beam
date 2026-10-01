@@ -43,27 +43,31 @@ from the code that uses them.
 ## Releasing
 
 Hermann tags; nothing else releases or publishes. `.github/workflows/release.yml` does
-the work, and docs/09 describes it.
+the work, and docs/09 describes it. A release is a bump, a tag and a push of the tag:
 
 1. Every PR of the stack is merged and `main` is green.
-2. Rehearse from `main`: `gh workflow run release.yml -f version=vX.Y.Z`, then
-   `gh run watch`. The whole workflow runs without a GitHub release or an npm publish,
-   and checks that npm takes it as every package's trusted publisher.
+2. Bump: pick the version after the last tag (`git describe --tags --abbrev=0 main`),
+   `vX.Y.Z-beta.N` for a beta or `vX.Y.Z` for a release. The tag is the version;
+   nothing in the repository carries it.
 3. `git tag vX.Y.Z main && git push origin vX.Y.Z`. Job `release` checks the tag is
    canonical semver, builds the four binaries and the four of the test kit, packs the five
    npm packages, checks npm would publish each at the binary's version, and creates the
-   GitHub release with all eight and `SHA256SUMS`. Job
-   `publish` publishes the four platform packages, then `@notaharness/beam`, with
-   provenance.
-4. Check: `gh release view vX.Y.Z`; `npm view @notaharness/beam version`; and on a
+   GitHub release with all eight and `SHA256SUMS`. Job `publish`, in the `npm`
+   environment, checks that npm takes the workflow as every package's trusted publisher,
+   then publishes the four platform packages and `@notaharness/beam`, with provenance.
+4. Check: `gh release view vX.Y.Z`; `npm view @notaharness/beam dist-tags`; and on a
    machine without beam, `npx @notaharness/beam@X.Y.Z version` prints `X.Y.Z`.
 
 A tag with a prerelease, `v0.2.0-beta.1`, makes a GitHub prerelease and publishes every
 package under npm's `beta` dist-tag; a tag without one publishes under `latest`. So
 `npm install -g @notaharness/beam` gets the last release and `@notaharness/beam@beta`
-the last beta: `npm view @notaharness/beam dist-tags`. The shim depends on each platform
-package at its own exact version, so either installs the platform package of the same
-release.
+the last beta. The shim depends on each platform package at its own exact version, so
+either installs the platform package of the same release.
+
+After a change to `release.yml` or to a trusted publisher, rehearse from `main` before
+the next tag: `gh workflow run release.yml -f version=vX.Y.Z`, then `gh run watch`. The
+whole workflow runs without a GitHub release or an npm publish, and checks that npm
+takes it as every package's trusted publisher.
 
 When a job fails part-way:
 
