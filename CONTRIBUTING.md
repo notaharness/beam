@@ -71,9 +71,11 @@ before `latest` has moved, move it by hand (`npm dist-tag add
 @notaharness/<package>@X.Y.Z latest`, platform packages first).
 
 After a change to `release.yml` or to a trusted publisher, rehearse from `main` before
-the next tag: `gh workflow run release.yml -f version=vX.Y.Z`, then `gh run watch`. The
-whole workflow runs without a GitHub release or an npm publish, and checks that npm
-takes it as every package's trusted publisher.
+the next tag, with the next, unpublished version (npm's dry run refuses one it has):
+`gh workflow run release.yml -f version=vX.Y.Z`, then `gh run watch`. The whole
+workflow runs without a GitHub release or an npm publish, and checks that npm takes it
+as every package's trusted publisher. For a beta while `LATEST_FOLLOWS_BETA` is on, it
+also adds and removes the throwaway dist-tag `release-check` on every package.
 
 When a job fails part-way:
 
@@ -85,7 +87,7 @@ When a job fails part-way:
   fix to `release.yml` itself needs the next version.
 - `publish` published some packages and not others: npm never takes a version twice, so
   the version is spent. Delete its GitHub release (`gh release delete vX.Y.Z`) and
-  release the next patch.
+  release the next patch, or the next `beta.N`.
 
 ### npm trusted publishing
 
@@ -94,12 +96,14 @@ The workflow holds no npm token. Each of `@notaharness/beam`,
 `@notaharness/beam-linux-x64` and `@notaharness/beam-linux-arm64` has a trusted
 publisher on npmjs.com (the package's Settings, Trusted Publisher, GitHub Actions):
 organization `notaharness`, repository `beam`, workflow filename `release.yml`,
-environment `npm`, with "Allow npm dist-tag" on. Each package's publishing access requires two-factor authentication
-and disallows tokens. npm sets a trusted publisher only on a package that exists, so a
-new platform package is first published by hand at `0.0.0`, a version no release uses;
-then set its trusted publisher and publishing access.
+environment `npm`, with "Allow npm dist-tag" on. Each package's publishing access
+requires two-factor authentication and disallows tokens. npm sets a trusted publisher
+only on a package that exists, so a new platform package is first published by hand at
+`0.0.0`, a version no release uses; then set its trusted publisher and publishing
+access.
 
 The `npm` environment takes deployments from `v*` tags and `main` alone, and the
-repository's tag ruleset lets only an admin create, move or delete a `v*` tag. So a
-package publishes only from `release.yml` at a tag an admin pushed, and the rehearsal
-from `main` exchanges a token but publishes nothing.
+repository's tag ruleset lets only an admin create, move or delete a `v*` tag. So npm
+takes a publish only from `release.yml` run at a `v*` tag or on `main`, whose
+`release.yml` publishes on a tag push alone: whoever can push a `v*` tag or change
+`main` can publish.
