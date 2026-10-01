@@ -1,6 +1,7 @@
 // version reads a release tag (docs/09): v and a canonical semver without
-// build metadata, which npm publishes as spelled. It prints the version and
-// whether it is a prerelease, as the release job's step outputs.
+// build metadata, which npm publishes as spelled. It prints the version,
+// whether it is a prerelease and the npm dist-tag it publishes under, beta for
+// a prerelease and latest otherwise, as the release job's step outputs.
 //
 //	node npm/version.mjs v1.2.3-rc.1
 import { fileURLToPath } from "node:url";
@@ -18,5 +19,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     console.error("usage: node npm/version.mjs v<semver without build metadata>");
     process.exit(2);
   }
-  console.log(`version=${v}\nprerelease=${v.includes("-")}`);
+  const prerelease = v.includes("-");
+  console.log(`version=${v}\nprerelease=${prerelease}\ndist-tag=${prerelease ? "beta" : "latest"}`);
 }

@@ -58,9 +58,12 @@ the work, and docs/09 describes it.
 4. Check: `gh release view vX.Y.Z`; `npm view @notaharness/beam version`; and on a
    machine without beam, `npx @notaharness/beam@X.Y.Z version` prints `X.Y.Z`.
 
-A tag with a prerelease, `v0.2.0-rc.1`, makes a GitHub prerelease and publishes under
-npm's `next` dist-tag, so `latest` stays on the last release:
-`npm view @notaharness/beam dist-tags`, `npx @notaharness/beam@next version`.
+A tag with a prerelease, `v0.2.0-beta.1`, makes a GitHub prerelease and publishes every
+package under npm's `beta` dist-tag; a tag without one publishes under `latest`. So
+`npm install -g @notaharness/beam` gets the last release and `@notaharness/beam@beta`
+the last beta: `npm view @notaharness/beam dist-tags`. The shim depends on each platform
+package at its own exact version, so either installs the platform package of the same
+release.
 
 When a job fails part-way:
 

@@ -55,6 +55,19 @@ test("writes the shim and a package per platform at the version", (t) => {
   }
 });
 
+test("the shim pins each platform package at its own version, a prerelease too", (t) => {
+  // An exact version resolves without a dist-tag, so @beta and @latest each
+  // install the platform packages of the shim's own release.
+  const dir = inDist(t);
+  const r = spawnSync(process.execPath, [pack, "1.2.3-beta.1"], { cwd: dir, encoding: "utf8" });
+  assert.strictEqual(r.status, 0, r.stderr);
+  const deps = read(dir, "beam/package.json").optionalDependencies;
+  assert.deepStrictEqual(Object.values(deps), ["1.2.3-beta.1", "1.2.3-beta.1", "1.2.3-beta.1", "1.2.3-beta.1"]);
+  for (const name of Object.keys(deps)) {
+    assert.strictEqual(read(dir, `${name.slice("@notaharness/".length)}/package.json`).version, "1.2.3-beta.1", name);
+  }
+});
+
 test("every package is MIT and carries LICENSE", (t) => {
   const dir = inDist(t);
   const r = spawnSync(process.execPath, [pack, "1.2.3"], { cwd: dir, encoding: "utf8" });
@@ -79,7 +92,7 @@ test("npm publishes each package whole, at the version pack wrote", (t) => {
   const r = spawnSync(process.execPath, [pack, "1.2.3-rc.1"], { cwd: dir, encoding: "utf8" });
   assert.strictEqual(r.status, 0, r.stderr);
   for (const p of ["beam", "beam-darwin-arm64", "beam-darwin-x64", "beam-linux-x64", "beam-linux-arm64"]) {
-    const dry = spawnSync("npm", ["publish", "--dry-run", "--json", "--offline", "--tag", "next"], { cwd: path.join(dir, "dist", "npm", p), encoding: "utf8" });
+    const dry = spawnSync("npm", ["publish", "--dry-run", "--json", "--offline", "--tag", "beta"], { cwd: path.join(dir, "dist", "npm", p), encoding: "utf8" });
     const out = JSON.parse(dry.stdout); // keyed by the package's name since npm 11.19
     const got = out[`@notaharness/${p}`] ?? out;
     assert.strictEqual(got.version, "1.2.3-rc.1", p);

@@ -43,6 +43,8 @@ Linux, arm64 or x64):
 npm install -g @notaharness/beam
 ```
 
+`@notaharness/beam@beta` installs the newest beta instead.
+
 You also need a passkey with the WebAuthn PRF extension, which the browser, operating
 system and passkey provider must all support, and a browser with X25519 in Web Crypto:
 for example Apple Passwords with Safari on iOS 18.4 or later, or Firefox 139 or later

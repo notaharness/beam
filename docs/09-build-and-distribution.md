@@ -57,7 +57,8 @@ beam has its own semver from the git tag: tag `vX.Y.Z` releases `X.Y.Z`, which
 `beam version`, `status.version` and the five npm packages carry without the `v`. The
 version is canonical semver without build metadata (`npm/version.mjs`): no leading
 zeros, no empty prerelease identifier, no `+build`, the spellings npm would publish
-differently or not at all. One with a prerelease (`v1.2.3-rc.1`) is a prerelease.
+differently or not at all. One with a prerelease (`v1.2.3-beta.1`) is a prerelease,
+on GitHub and on npm.
 `status.version` on the socket is how clients check; the peer stream header's `v` is the wire protocol version and is separate. n10
 pins `@notaharness/beam` with a caret range.
 
@@ -191,10 +192,12 @@ four `beamtest-*` binaries of the test kit and `SHA256SUMS` over all eight, mark
 prerelease for a prerelease tag. The test kit goes to the GitHub release alone, never to
 npm. `publish`, its own job so that it can be re-run alone:
 packs the same binaries, handed over as a workflow artifact, and publishes the platform
-packages and last the shim, with provenance, under `next` for a prerelease. It
-authenticates through npm's trusted publishing (OIDC: `id-token: write`, npm 11.5.1 or
-later, which Node 24 has), each package naming `notaharness/beam` and `release.yml` as
-its trusted publisher. Before it publishes any package, a dry run of each checks that npm
+packages and last the shim, with provenance, under the dist-tag `beta` for a prerelease
+and `latest` otherwise; the shim names each platform package at its exact version, so
+both resolve the platform packages of their own release. It authenticates through
+npm's trusted publishing (OIDC: `id-token: write`, npm 11.5.1 or later, which Node 24
+has), each package naming `notaharness/beam` and `release.yml` as its trusted
+publisher. Before it publishes any package, a dry run of each checks that npm
 took the job's OIDC token for it, so a missing trusted publisher stops the job before a
 version is spent. Run by hand from `main`
 (`workflow_dispatch`) with a version, the workflow rehearses that release: no GitHub
