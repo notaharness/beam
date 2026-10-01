@@ -43,6 +43,12 @@ Linux, arm64 or x64):
 npm install -g @notaharness/beam
 ```
 
+You also need a passkey with the WebAuthn PRF extension, which the browser, operating
+system and passkey provider must all support, and a browser with X25519 in Web Crypto:
+for example Apple Passwords with Safari on iOS 18.4 or later, or Firefox 139 or later
+on the desktop. The approval page says when the browser lacks X25519. A passkey without
+PRF fails the command with `prf-unsupported`, which lists what vendors document.
+
 On the first machine, create your fleet and its passkey:
 
 ```sh
@@ -121,6 +127,8 @@ Read in order. Each file owns one concern and cross-references the others.
 | 9 | [docs/09-build-and-distribution.md](docs/09-build-and-distribution.md) | Module layout, build flags, platform matrix, npm packages, the worker and its API, versioning, CI. |
 | 10 | [docs/10-testing.md](docs/10-testing.md) | Unit tests, the in-process dev DERP, the software authenticator, the fake worker, and how n10's e2e suites drive a real daemon. |
 | 11 | [docs/11-decisions.md](docs/11-decisions.md) | The decision register, the milestone gate, and the open questions. |
+
+Report vulnerabilities privately: [SECURITY.md](SECURITY.md).
 
 ## Licence
 

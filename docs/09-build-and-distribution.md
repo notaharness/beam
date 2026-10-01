@@ -57,7 +57,8 @@ beam has its own semver from the git tag: tag `vX.Y.Z` releases `X.Y.Z`, which
 `beam version`, `status.version` and the five npm packages carry without the `v`. The
 version is canonical semver without build metadata (`npm/version.mjs`): no leading
 zeros, no empty prerelease identifier, no `+build`, the spellings npm would publish
-differently or not at all. One with a prerelease (`v1.2.3-rc.1`) is a prerelease.
+differently or not at all. One with a prerelease (`v1.2.3-beta.1`) is a prerelease,
+on GitHub and on npm.
 `status.version` on the socket is how clients check; the peer stream header's `v` is the wire protocol version and is separate. n10
 pins `@notaharness/beam` with a caret range.
 
@@ -189,13 +190,22 @@ reads the tag, and the job stops at one that is not canonical. Then `make dist`,
 the version the binary prints; only then a GitHub release with the four binaries, the
 four `beamtest-*` binaries of the test kit and `SHA256SUMS` over all eight, marked a
 prerelease for a prerelease tag. The test kit goes to the GitHub release alone, never to
-npm. `publish`, its own job so that it can be re-run alone:
-packs the same binaries, handed over as a workflow artifact, and publishes the platform
-packages and last the shim, with provenance, under `next` for a prerelease. It
+npm. `publish`, its own job so that it can be re-run alone: packs the same binaries,
+handed over as a workflow artifact, and publishes the platform packages and last the
+shim, with provenance, under the dist-tag `beta` for a prerelease and `latest`
+otherwise. While beam is beta-only, the workflow's `LATEST_FOLLOWS_BETA` is true and a
+prerelease then moves every package's `latest` to it too, in the same order; it is false
+from 1.0. The shim names each platform package at its exact version, so either tag
+resolves the platform packages of its own release. It runs in the environment `npm`, one
+publish at a time, which takes deployments only from `v*` tags and `main`, and
 authenticates through npm's trusted publishing (OIDC: `id-token: write`, npm 11.5.1 or
-later, which Node 24 has), each package naming `notaharness/beam` and `release.yml` as
-its trusted publisher. A package with none yet, at the first release, is published with
-the `NPM_TOKEN` secret, which npm falls back to while it is set. Run by hand from `main`
-(`workflow_dispatch`) with a version, the workflow rehearses that release: no GitHub
-release, whose the token is if there is one, and `npm publish --dry-run`. CONTRIBUTING.md
-has the steps.
+later, which Node 24 has), each package naming `notaharness/beam`, `release.yml` and the
+environment `npm` as its trusted publisher, which may also move its dist-tags (npm
+11.21.0 or later, which the job installs); no npm token exists. A tag ruleset lets only
+an admin create a `v*` tag. Before it publishes any package, a dry run of each checks
+that npm took the job's OIDC token for it, and, when `latest` will follow, adding and
+removing a throwaway `release-check` dist-tag on each checks the dist-tag permission, so
+a missing trusted publisher or dist-tag permission stops the job before a version is
+spent. Run by hand from `main` (`workflow_dispatch`) with an unpublished version, the
+workflow rehearses that release: no GitHub release, and those checks in place of the
+publish. CONTRIBUTING.md has the steps.
