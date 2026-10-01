@@ -81,6 +81,10 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     environment: npm
+    # One publish at a time, so that two betas cannot race for latest.
+    concurrency:
+      group: npm-publish
+      cancel-in-progress: false
     permissions:
       contents: read
       id-token: write # trusted publishing and provenance
@@ -119,7 +123,9 @@ jobs:
         run: |
           for p in ./dist/npm/beam-*/ ./dist/npm/beam/; do
             name=$(jq -r .name "$p/package.json")
-            npm dist-tag add "$name@$(npm view "$name" dist-tags.latest)" release-check
+            latest=$(npm view "$name" dist-tags.latest)
+            [ -n "$latest" ] || { echo "$name: npm has no latest"; exit 1; }
+            npm dist-tag add "$name@$latest" release-check
             npm dist-tag rm "$name" release-check
           done
       - if: github.event_name == 'push'
