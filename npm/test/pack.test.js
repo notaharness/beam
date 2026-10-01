@@ -23,18 +23,20 @@ function inDist(t) {
 
 const read = (dir, file) => JSON.parse(fs.readFileSync(path.join(dir, "dist", "npm", file)));
 
-test("writes the shim and a package per platform at the version", (t) => {
+// The shim pins each platform package at its exact version, which npm resolves
+// without a dist-tag, so @beta and @latest each install their own release's.
+for (const v of ["1.2.3", "1.2.3-beta.1"]) test(`writes the shim and a package per platform at ${v}`, (t) => {
   const dir = inDist(t);
-  const r = spawnSync(process.execPath, [pack, "1.2.3"], { cwd: dir, encoding: "utf8" });
+  const r = spawnSync(process.execPath, [pack, v], { cwd: dir, encoding: "utf8" });
   assert.strictEqual(r.status, 0, r.stderr);
 
   const shim = read(dir, "beam/package.json");
-  assert.strictEqual(shim.version, "1.2.3");
+  assert.strictEqual(shim.version, v);
   assert.deepStrictEqual(shim.optionalDependencies, {
-    "@notaharness/beam-darwin-arm64": "1.2.3",
-    "@notaharness/beam-darwin-x64": "1.2.3",
-    "@notaharness/beam-linux-x64": "1.2.3",
-    "@notaharness/beam-linux-arm64": "1.2.3",
+    "@notaharness/beam-darwin-arm64": v,
+    "@notaharness/beam-darwin-x64": v,
+    "@notaharness/beam-linux-x64": v,
+    "@notaharness/beam-linux-arm64": v,
   });
   for (const file of ["index.js", "bin/beam.js"]) {
     assert.ok(fs.existsSync(path.join(dir, "dist", "npm", "beam", file)), file);
@@ -48,23 +50,10 @@ test("writes the shim and a package per platform at the version", (t) => {
   ]) {
     const pkg = read(dir, `beam-${platform}/package.json`);
     const [os_, cpu] = platform.split("-");
-    assert.deepStrictEqual([pkg.name, pkg.version, pkg.os, pkg.cpu], [`@notaharness/beam-${platform}`, "1.2.3", [os_], [cpu]]);
+    assert.deepStrictEqual([pkg.name, pkg.version, pkg.os, pkg.cpu], [`@notaharness/beam-${platform}`, v, [os_], [cpu]]);
     const bin = path.join(dir, "dist", "npm", `beam-${platform}`, "beam");
     assert.strictEqual(fs.readFileSync(bin, "utf8"), target);
     assert.strictEqual(fs.statSync(bin).mode & 0o777, 0o755);
-  }
-});
-
-test("the shim pins each platform package at its own version, a prerelease too", (t) => {
-  // An exact version resolves without a dist-tag, so @beta and @latest each
-  // install the platform packages of the shim's own release.
-  const dir = inDist(t);
-  const r = spawnSync(process.execPath, [pack, "1.2.3-beta.1"], { cwd: dir, encoding: "utf8" });
-  assert.strictEqual(r.status, 0, r.stderr);
-  const deps = read(dir, "beam/package.json").optionalDependencies;
-  assert.deepStrictEqual(Object.values(deps), ["1.2.3-beta.1", "1.2.3-beta.1", "1.2.3-beta.1", "1.2.3-beta.1"]);
-  for (const name of Object.keys(deps)) {
-    assert.strictEqual(read(dir, `${name.slice("@notaharness/".length)}/package.json`).version, "1.2.3-beta.1", name);
   }
 });
 
