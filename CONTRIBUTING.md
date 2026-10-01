@@ -83,8 +83,13 @@ The workflow holds no npm token. Each of `@notaharness/beam`,
 `@notaharness/beam-darwin-arm64`, `@notaharness/beam-darwin-x64`,
 `@notaharness/beam-linux-x64` and `@notaharness/beam-linux-arm64` has a trusted
 publisher on npmjs.com (the package's Settings, Trusted Publisher, GitHub Actions):
-organization `notaharness`, repository `beam`, workflow filename `release.yml`, no
-environment. Each package's publishing access requires two-factor authentication and
-disallows tokens. npm sets a trusted publisher only on a package that exists, so a new
-platform package is first published by hand at `0.0.0`, a version no release uses; then
-set its trusted publisher and publishing access.
+organization `notaharness`, repository `beam`, workflow filename `release.yml`,
+environment `npm`. Each package's publishing access requires two-factor authentication
+and disallows tokens. npm sets a trusted publisher only on a package that exists, so a
+new platform package is first published by hand at `0.0.0`, a version no release uses;
+then set its trusted publisher and publishing access.
+
+The `npm` environment takes deployments from `v*` tags and `main` alone, and the
+repository's tag ruleset lets only an admin create, move or delete a `v*` tag. So a
+package publishes only from `release.yml` at a tag an admin pushed, and the rehearsal
+from `main` exchanges a token but publishes nothing.

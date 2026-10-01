@@ -194,10 +194,12 @@ npm. `publish`, its own job so that it can be re-run alone:
 packs the same binaries, handed over as a workflow artifact, and publishes the platform
 packages and last the shim, with provenance, under the dist-tag `beta` for a prerelease
 and `latest` otherwise; the shim names each platform package at its exact version, so
-both resolve the platform packages of their own release. It authenticates through
+both resolve the platform packages of their own release. It runs in the environment
+`npm`, which takes deployments only from `v*` tags and `main`, and authenticates through
 npm's trusted publishing (OIDC: `id-token: write`, npm 11.5.1 or later, which Node 24
-has), each package naming `notaharness/beam` and `release.yml` as its trusted
-publisher. Before it publishes any package, a dry run of each checks that npm
+has), each package naming `notaharness/beam`, `release.yml` and the environment `npm` as
+its trusted publisher; no npm token exists. A tag ruleset lets only an admin create a
+`v*` tag. Before it publishes any package, a dry run of each checks that npm
 took the job's OIDC token for it, so a missing trusted publisher stops the job before a
 version is spent. Run by hand from `main`
 (`workflow_dispatch`) with a version, the workflow rehearses that release: no GitHub

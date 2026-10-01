@@ -25,6 +25,8 @@ jobs:
       dist-tag: ${{ steps.tag.outputs.dist-tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -66,10 +68,13 @@ jobs:
           PRERELEASE: ${{ steps.tag.outputs.prerelease }}
 
   # Its own job, so that a publish that fails after the GitHub release exists
-  # can be re-run alone. It packs the binaries the release job built.
+  # can be re-run alone. It packs the binaries the release job built. Each
+  # package's trusted publisher names the npm environment, which only v* tags
+  # and main deploy to.
   publish:
     needs: release
     runs-on: ubuntu-latest
+    environment: npm
     permissions:
       contents: read
       id-token: write # trusted publishing and provenance
@@ -78,6 +83,8 @@ jobs:
       DIST_TAG: ${{ needs.release.outputs.dist-tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24 # npm 11.5.1 or later publishes through trusted publishing
