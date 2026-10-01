@@ -203,8 +203,9 @@ has), each package naming `notaharness/beam`, `release.yml` and the environment 
 its trusted publisher, which may also move its dist-tags (npm 11.21.0 or later, which
 the job installs); no npm token exists. A tag ruleset lets only an admin create a
 `v*` tag. Before it publishes any package, a dry run of each checks that npm
-took the job's OIDC token for it, and, when `latest` will follow, pointing each `latest`
-at the version it is on checks the dist-tag permission, so a missing trusted publisher
+took the job's OIDC token for it, and, when `latest` will follow, adding and removing a
+throwaway `release-check` dist-tag on each checks the dist-tag permission, so a missing
+trusted publisher
 stops the job before a version is spent. Run by hand from `main`
 (`workflow_dispatch`) with a version, the workflow rehearses that release: no GitHub
 release, and that check in place of the publish. CONTRIBUTING.md has the steps.

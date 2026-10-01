@@ -52,7 +52,7 @@ jobs:
       - name: npm would publish every package at the binary's version
         run: |
           built=$(dist/beam-linux-amd64 version)
-          for p in dist/npm/*/; do
+          for p in ./dist/npm/*/; do
             name=$(jq -r .name "$p/package.json")
             got=$(npm publish --dry-run --offline --json --tag "$DIST_TAG" "$p" | jq -r --arg n "$name" '(.[$n] // .).version')
             if [ "$got" != "$built" ]; then echo "$p: npm has $got, the binary $built"; exit 1; fi
@@ -107,28 +107,30 @@ jobs:
       # before any is published: a publish that stops part-way spends the version.
       - name: npm takes this workflow as every package's trusted publisher
         run: |
-          for p in dist/npm/beam-*/ dist/npm/beam/; do
+          for p in ./dist/npm/beam-*/ ./dist/npm/beam/; do
             npm publish --dry-run --loglevel verbose --tag "$DIST_TAG" "$p" 2> npm.log || { cat npm.log; exit 1; }
             grep -q 'oidc Successfully retrieved and set token' npm.log || { grep oidc npm.log; echo "$p: no trusted publisher took this workflow"; exit 1; }
           done
-      # Pointing latest at the version it is on changes nothing, and fails
-      # unless the trusted publisher allows npm dist-tag.
+      # Adding and removing a throwaway tag fails unless the trusted publisher
+      # allows npm dist-tag. (npm sends nothing for a tag already on that
+      # version, so re-pointing latest at itself would check nothing.)
       - if: env.LATEST_FOLLOWS_BETA == 'true' && env.DIST_TAG == 'beta'
         name: npm lets this workflow move every package's latest
         run: |
-          for p in dist/npm/beam-*/ dist/npm/beam/; do
+          for p in ./dist/npm/beam-*/ ./dist/npm/beam/; do
             name=$(jq -r .name "$p/package.json")
-            npm dist-tag add "$name@$(npm view "$name" dist-tags.latest)" latest
+            npm dist-tag add "$name@$(npm view "$name" dist-tags.latest)" release-check
+            npm dist-tag rm "$name" release-check
           done
       - if: github.event_name == 'push'
         name: publish the platform packages, then the shim
         run: |
-          for p in dist/npm/beam-*/ dist/npm/beam/; do
+          for p in ./dist/npm/beam-*/ ./dist/npm/beam/; do
             npm publish --provenance --access public --tag "$DIST_TAG" "$p"
           done
       - if: github.event_name == 'push' && env.LATEST_FOLLOWS_BETA == 'true' && env.DIST_TAG == 'beta'
         name: latest follows beta, the platform packages', then the shim's
         run: |
-          for p in dist/npm/beam-*/ dist/npm/beam/; do
+          for p in ./dist/npm/beam-*/ ./dist/npm/beam/; do
             npm dist-tag add "$(jq -r .name "$p/package.json")@$VERSION" latest
           done
