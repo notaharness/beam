@@ -120,10 +120,13 @@ func startGroup(cmd *exec.Cmd) (g *group, stdin io.WriteCloser, stdout, stderr i
 	return newGroup(cmd), stdin, stdout, stderr, nil
 }
 
-// loginCommand is the login shell, invoked as a login (docs/04).
-func loginCommand(env []string) (*exec.Cmd, *refusal) {
-	shell := loginShell(env)
-	return &exec.Cmd{Path: shell, Args: []string{"-" + filepath.Base(shell)}}, nil
+// login builds the login shell for h, whose argv is empty, invoked as a
+// login (docs/04).
+func (sp Spawn) login(h Header) (*exec.Cmd, *refusal) {
+	return sp.in(h, func(env []string) (*exec.Cmd, *refusal) {
+		shell := loginShell(env)
+		return &exec.Cmd{Path: shell, Args: []string{"-" + filepath.Base(shell)}}, nil
+	})
 }
 
 // loginShell is $SHELL if it names an executable, else /bin/sh.

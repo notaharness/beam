@@ -66,7 +66,11 @@ func startPTY(c *Conn, h Header, sp Spawn) (*exec.Cmd, *os.File, *refusal) {
 	if !validSize(h.Cols, h.Rows) {
 		return nil, nil, &refusal{"params", "cols and rows must be 2–500"}
 	}
-	cmd, ref := sp.command(h)
+	build := sp.command
+	if len(h.Argv) == 0 {
+		build = sp.login
+	}
+	cmd, ref := build(h)
 	if ref != nil {
 		return nil, nil, ref
 	}

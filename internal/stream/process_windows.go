@@ -36,10 +36,6 @@ var loginVars = map[string]bool{"ALLUSERSPROFILE": true, "APPDATA": true, "COMMO
 	"PROGRAMFILES(X86)": true, "PROGRAMW6432": true, "PUBLIC": true, "SYSTEMDRIVE": true, "SYSTEMROOT": true,
 	"TEMP": true, "TMP": true, "USERDOMAIN": true, "USERNAME": true, "USERPROFILE": true, "WINDIR": true}
 
-// loginCommand refuses an empty argv: a Windows acceptor runs no login
-// shell, which only a pty, which it does not serve, asks for.
-func loginCommand([]string) (*exec.Cmd, *refusal) { return nil, &refusal{"params", "argv is required"} }
-
 // envKey is a variable's name as Windows compares it, ignoring case.
 func envKey(k string) string { return strings.ToUpper(k) }
 

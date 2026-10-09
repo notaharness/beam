@@ -48,25 +48,28 @@ func checkHeader(h Header) *refusal {
 	return nil
 }
 
-// command builds the process for h. An empty argv is the login shell.
+// command builds the process for h's argv, which is not empty.
 func (sp Spawn) command(h Header) (*exec.Cmd, *refusal) {
+	return sp.in(h, func([]string) (*exec.Cmd, *refusal) {
+		path, err := exec.LookPath(h.Argv[0])
+		if err != nil {
+			return nil, &refusal{"spawn", err.Error()}
+		}
+		return &exec.Cmd{Path: path, Args: h.Argv}, nil
+	})
+}
+
+// in builds the process program makes, given its environment, in h's
+// directory and with that environment.
+func (sp Spawn) in(h Header, program func(env []string) (*exec.Cmd, *refusal)) (*exec.Cmd, *refusal) {
 	dir, ok := resolveCwd(h.Cwd, sp.Home)
 	if !ok {
 		return nil, &refusal{"params", "cwd must be absolute or ~/-relative"}
 	}
 	env := mergeEnv(loginEnv(sp.Env), h.Env, sp.Inject)
-	var cmd *exec.Cmd
-	if len(h.Argv) == 0 {
-		var ref *refusal
-		if cmd, ref = loginCommand(env); ref != nil {
-			return nil, ref
-		}
-	} else {
-		path, err := exec.LookPath(h.Argv[0])
-		if err != nil {
-			return nil, &refusal{"spawn", err.Error()}
-		}
-		cmd = &exec.Cmd{Path: path, Args: h.Argv}
+	cmd, ref := program(env)
+	if ref != nil {
+		return nil, ref
 	}
 	cmd.Dir, cmd.Env = dir, env
 	return cmd, nil
