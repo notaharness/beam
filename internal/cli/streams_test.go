@@ -133,23 +133,6 @@ func TestSyncEndRetiresTunnel(t *testing.T) {
 	waitGone(t, pid)
 }
 
-// waitPid waits for the process a remote shell wrote to file and returns it.
-func waitPid(t *testing.T, file string) int {
-	t.Helper()
-	var pid int
-	waitFor(t, 10*time.Second, "the remote process", func() bool {
-		b, err := os.ReadFile(file)
-		pid, _ = strconv.Atoi(strings.TrimSpace(string(b)))
-		return err == nil && pid > 0
-	})
-	return pid
-}
-
-func waitGone(t *testing.T, pid int) {
-	t.Helper()
-	waitFor(t, 10*time.Second, "the remote process to end", func() bool { return ended(pid) })
-}
-
 // docs/04 Input: the acceptor always reads on, so however much input a
 // process leaves untaken, the opener's end reaches it. A close behind a full
 // window ends the process; one behind more than the window overruns it, which
@@ -311,22 +294,6 @@ func openPTY(t *testing.T, m *machine, peer string, argv ...string) (*stream.Con
 	}
 	t.Cleanup(func() { ac.Close() })
 	return ac, res.StreamID
-}
-
-// readUntil reads a pty's output until it contains want.
-func readUntil(t *testing.T, ac *stream.Conn, want string) {
-	t.Helper()
-	ac.SetReadDeadline(time.Now().Add(20 * time.Second))
-	var out strings.Builder
-	for !strings.Contains(out.String(), want) {
-		typ, p, err := ac.ReadFrame()
-		if err != nil || typ == stream.Close {
-			t.Fatalf("pty ended before %q; output %q, %v", want, out.String(), err)
-		}
-		if typ == stream.Data {
-			out.Write(p)
-		}
-	}
 }
 
 // The opener detaching hangs up the remote session at once.
