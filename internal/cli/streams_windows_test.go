@@ -5,11 +5,17 @@ package cli_test
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
 
 	"github.com/notaharness/beam/internal/control"
 	"github.com/notaharness/beam/internal/stream"
@@ -99,6 +105,37 @@ func TestExecBatchRefused(t *testing.T) {
 	if r := a.beam("", "exec", "beta", "--", "cmd.exe", "/d", "/c", "echo ran"); r.code != 0 || strings.TrimSpace(r.out) != "ran" {
 		t.Errorf("cmd.exe: %+v", r)
 	}
+}
+
+// docs/04 exec on Windows: a process inherits its standard streams and no
+// other handle of the daemon's, inheritable or not. The child verb sets an
+// event it inherits, as one started with the handle does.
+func TestExecInheritsStdioOnly(t *testing.T) {
+	ms := fleet(t, "alpha", "beta")
+	a, b := ms[0], ms[1]
+	waitState(t, a, b, "connected")
+	sa := &windows.SecurityAttributes{InheritHandle: 1}
+	sa.Length = uint32(unsafe.Sizeof(*sa))
+	ev, err := windows.CreateEvent(sa, 1, 0, nil) // manual reset: it stays set
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer windows.CloseHandle(ev)
+	argv := childArgv("signal", strconv.FormatUint(uint64(ev), 10))
+	given := exec.Command(argv[0], argv[1:]...)
+	given.SysProcAttr = &syscall.SysProcAttr{AdditionalInheritedHandles: []syscall.Handle{syscall.Handle(ev)}}
+	if out, err := given.Output(); err != nil || len(out) != 0 || !set(ev) {
+		t.Fatalf("a child given the handle: %q, %v, set %v", out, err, set(ev))
+	}
+	windows.ResetEvent(ev)
+	if r := a.beam("", append([]string{"exec", "beta", "--"}, argv...)...); r.code != 0 || set(ev) {
+		t.Errorf("exec: %+v, set %v; want the event unset", r, set(ev))
+	}
+}
+
+func set(ev windows.Handle) bool {
+	s, err := windows.WaitForSingleObject(ev, 0)
+	return err == nil && s == windows.WAIT_OBJECT_0
 }
 
 // docs/04 exec on Windows: no process leaves its job, so none outlives the

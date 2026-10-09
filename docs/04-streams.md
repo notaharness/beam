@@ -90,7 +90,8 @@ sent. A batch file (`.bat`, `.cmd`, by the extension of its full path, where the
 spaces a name trails are gone) is refused with `spawn` before anything runs: cmd.exe runs
 it and parses its command line by rules of its own; `cmd.exe /c` runs one explicitly, as
 it does an npm `.cmd` shim, whose package a native `.exe` may also start. The process has
-no console window, and its standard streams are pipes. The
+no console window, and it inherits its standard streams, which are pipes, and no other
+handle. The
 login's part of the environment is `ALLUSERSPROFILE`, `APPDATA`, `COMMONPROGRAMFILES`,
 `COMMONPROGRAMFILES(X86)`, `COMMONPROGRAMW6432`, `COMPUTERNAME`, `COMSPEC`, `HOMEDRIVE`,
 `HOMEPATH`, `LOCALAPPDATA`, `NUMBER_OF_PROCESSORS`, `OS`, `PATH`, `PATHEXT`,
