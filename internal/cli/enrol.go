@@ -9,8 +9,6 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"os/exec"
-	"runtime"
 	"strings"
 
 	"github.com/notaharness/beam/internal/ceremony"
@@ -185,8 +183,8 @@ func (e *env) show(ceremonyURL, kind string) error {
 		_ = drawQR(e.stdout, ceremonyURL) // the URL follows either way
 	}
 	fmt.Fprintf(e.stdout, "%s\nscan with your phone or open the link; approve only a page that shows what you ran\n", ceremonyURL)
-	if browser := e.browser(); browser != "" {
-		_ = exec.Command(browser, ceremonyURL).Start() // the URL is printed
+	if open := e.browser(); open != nil {
+		_ = open(ceremonyURL) // the URL is printed
 	}
 	return nil
 }
@@ -212,18 +210,13 @@ func wellFormed(f url.Values) bool {
 		(o != ceremony.Create || identity.ValidLabel(f.Get("n")))
 }
 
-// browser is the command that opens a URL here, or "" on a machine without
+// browser opens a URL in this machine's browser; nil on a machine without
 // a display or whose ceremonies the test authenticator answers.
-func (e *env) browser() string {
-	switch {
-	case e.getenv("SSH_CONNECTION") != "" || answersItself(e.getenv):
-		return ""
-	case runtime.GOOS == "darwin":
-		return "open"
-	case e.getenv("DISPLAY") != "" || e.getenv("WAYLAND_DISPLAY") != "":
-		return "xdg-open"
+func (e *env) browser() func(url string) error {
+	if e.getenv("SSH_CONNECTION") != "" || answersItself(e.getenv) {
+		return nil
 	}
-	return ""
+	return desktop(e.getenv)
 }
 
 // label is this machine's label, from the daemon.

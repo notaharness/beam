@@ -6,10 +6,8 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/signal"
 	"strings"
 	"sync"
-	"syscall"
 
 	"github.com/notaharness/beam/internal/control"
 	"github.com/notaharness/beam/internal/stream"
@@ -188,7 +186,7 @@ func runConnect(e *env) int {
 	tty, isTTY := e.stdin.(*os.File)
 	isTTY = isTTY && term.IsTerminal(int(tty.Fd()))
 	if isTTY {
-		if w, h, err := term.GetSize(int(tty.Fd())); err == nil {
+		if w, h, err := termSize(tty); err == nil {
 			cols, rows = w, h
 		}
 	}
@@ -199,8 +197,8 @@ func runConnect(e *env) int {
 	}
 	defer f.c.Close()
 	if isTTY {
-		if old, err := term.MakeRaw(int(tty.Fd())); err == nil {
-			defer func() { _ = term.Restore(int(tty.Fd()), old) }() // nowhere to report it
+		if restore, err := makeRaw(tty); err == nil {
+			defer restore()
 		}
 		stop := forwardResize(tty, f)
 		defer stop()
@@ -209,18 +207,4 @@ func runConnect(e *env) int {
 	return e.relay(f, true, func(p []byte) {
 		_, _ = e.stdout.Write(p) // nowhere to report it
 	})
-}
-
-// forwardResize sends the terminal's size on every SIGWINCH.
-func forwardResize(tty *os.File, f *frames) func() {
-	ch := make(chan os.Signal, 1)
-	signal.Notify(ch, syscall.SIGWINCH)
-	go func() {
-		for range ch {
-			if w, h, err := term.GetSize(int(tty.Fd())); err == nil {
-				_ = f.control(stream.Ctl{Kind: "resize", Cols: w, Rows: h}) // a lost stream shows in relay
-			}
-		}
-	}()
-	return func() { signal.Stop(ch); close(ch) }
 }
