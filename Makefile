@@ -1,16 +1,17 @@
 VERSION ?= $(patsubst v%,%,$(shell git describe --tags --always --dirty))
 TAGS    := $(shell cat build-tags.txt)
-TARGETS := darwin/arm64 darwin/amd64 linux/amd64 linux/arm64
+TARGETS := darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64
 LINT    := github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2
 
-# dist builds beam and the test kit, beamtest-* (docs/10), for each target.
+# dist builds beam and the test kit, beamtest-* (docs/10), for each target,
+# a Windows binary named .exe.
 dist:
 	@for t in $(TARGETS); do \
-		os=$${t%/*}; arch=$${t#*/}; \
+		os=$${t%/*}; arch=$${t#*/}; ext=; [ $$os = windows ] && ext=.exe; \
 		for b in "beam:$(TAGS)" "beamtest:$(TAGS),beamtest"; do \
-			name=$${b%%:*}; echo "dist/$$name-$$os-$$arch"; \
+			name=$${b%%:*}; echo "dist/$$name-$$os-$$arch$$ext"; \
 			GOOS=$$os GOARCH=$$arch CGO_ENABLED=0 go build -trimpath -buildvcs=false -tags "$${b#*:}" \
-				-ldflags "-s -w -X main.version=$(VERSION)" -o dist/$$name-$$os-$$arch ./cmd/beam || exit 1; \
+				-ldflags "-s -w -X main.version=$(VERSION)" -o dist/$$name-$$os-$$arch$$ext ./cmd/beam || exit 1; \
 		done; \
 	done
 
