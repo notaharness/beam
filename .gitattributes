@@ -1,0 +1,2 @@
+# Go's formatting, and the scripts, want LF on every checkout, Windows' too.
+* text=auto eol=lf

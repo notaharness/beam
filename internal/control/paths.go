@@ -5,12 +5,8 @@ package control
 
 import (
 	"encoding/json"
-	"errors"
-	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 
 	"github.com/notaharness/beam/internal/identity"
@@ -23,30 +19,23 @@ type Paths struct {
 	Socket string
 }
 
-// maxSocket is the longest socket path a Unix socket address holds here: 107
-// bytes on Linux, 103 on macOS.
-var maxSocket = len(syscall.RawSockaddrUnix{}.Path) - 1
-
-// ResolvePaths applies docs/02 and docs/06: $BEAM_CONFIG_DIR, else
-// $XDG_CONFIG_HOME/beam, else ~/.config/beam; the socket is $BEAM_SOCKET, else
-// run/beam.sock in that directory, and no longer than a socket address holds.
+// ResolvePaths applies docs/02 and docs/06: $BEAM_CONFIG_DIR, else this
+// system's per-user configuration directory; the socket is $BEAM_SOCKET, else
+// this system's default for that directory, and one this system can listen on.
 func ResolvePaths(getenv func(string) string) (Paths, error) {
 	dir := getenv("BEAM_CONFIG_DIR")
-	switch {
-	case dir != "":
-	case getenv("XDG_CONFIG_HOME") != "":
-		dir = filepath.Join(getenv("XDG_CONFIG_HOME"), "beam")
-	case getenv("HOME") != "":
-		dir = filepath.Join(getenv("HOME"), ".config", "beam")
-	default:
-		return Paths{}, errors.New("no BEAM_CONFIG_DIR, XDG_CONFIG_HOME or HOME")
+	if dir == "" {
+		var err error
+		if dir, err = configDir(getenv); err != nil {
+			return Paths{}, err
+		}
 	}
 	sock := getenv("BEAM_SOCKET")
 	if sock == "" {
-		sock = filepath.Join(dir, "run", "beam.sock")
+		sock = defaultSocket(dir)
 	}
-	if len(sock) > maxSocket {
-		return Paths{}, fmt.Errorf("socket path too long (%d bytes, at most %d): %s; set BEAM_SOCKET to a shorter one", len(sock), maxSocket, sock)
+	if err := checkSocket(sock); err != nil {
+		return Paths{}, err
 	}
 	return Paths{Dir: dir, Socket: sock}, nil
 }
@@ -126,18 +115,4 @@ func (p Paths) loadKey() (*transport.Key, error) {
 func (p Paths) loadFleet() (*identity.Fleet, error) {
 	f := new(identity.Fleet)
 	return f, readJSON(p.file(fleetFile), f)
-}
-
-// owned refuses a path another user owns (docs/06): a starting daemon takes
-// over no socket someone else put at a shared path. A path with nothing at it
-// is left for the listen.
-func owned(path string) error {
-	st, err := os.Stat(path)
-	if err != nil {
-		return nil
-	}
-	if uid := st.Sys().(*syscall.Stat_t).Uid; int(uid) != os.Getuid() {
-		return fmt.Errorf("%s belongs to another user (uid %d): %w", path, uid, fs.ErrPermission)
-	}
-	return nil
 }

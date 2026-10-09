@@ -23,6 +23,7 @@ beam exec    <peer> [--cwd PATH] [--env K=V]... -- argv...
 beam msg send   <peer> [--topic T] [--base64] [--json] <payload|->
 beam msg listen [--topic T] [<peer>...]
 beam msg queue  [<peer>] [--which outbound|inbound|refused|quarantine]
+beam control --stdio
 
 beam version
 ```
@@ -152,10 +153,13 @@ beam needs WebAuthn PRF from the browser, the operating system and the passkey p
 
 ## The daemon
 
-`beam daemon` runs in the foreground until `daemon.shutdown`, SIGTERM or SIGINT;
+`beam daemon` runs in the foreground until `daemon.shutdown`, SIGTERM or SIGINT (on
+Windows, Ctrl+C, Ctrl+Break, or the console closing, logging off or shutting down);
 `--detach` is connect-or-spawn's ([06](06-control-socket.md)). It first marks every
 descriptor it inherited above stderr close-on-exec, so no process it starts, for a peer
-or as the detached daemon, inherits one from whatever started beam.
+or as the detached daemon, inherits one from whatever started beam. On Windows a
+process inherits only the handles its creator lists for it, and the daemon lists none
+but the child's own standard handles.
 
 `--exit-with-parent` ties the daemon to the process that started it, through its stdin:
 
@@ -170,7 +174,8 @@ or as the detached daemon, inherits one from whatever started beam.
   (the daemon ignores SIGPIPE), so the shutdown still completes.
 - The parent holds the write end and never writes to it. When the parent exits, however
   it exits (quits, crashes, is killed), the kernel closes its descriptors, and the
-  daemon sees end of file, on Linux and macOS alike (D53).
+  daemon sees end of file, on Linux and macOS alike (D53), and on Windows, where the
+  pipe's write handle closes with the process that held it.
 - The write end must stay in the parent alone: a process that inherits it keeps the
   daemon alive.
 
@@ -178,7 +183,10 @@ or as the detached daemon, inherits one from whatever started beam.
 
 `connect` puts the terminal in raw mode, forwards `SIGWINCH`, restores the terminal on
 every exit path, shows `connecting to homebox…` while dialing, and distinguishes `remote
-shell exited (0)`, `killed by SIGKILL`, `connection lost`.
+shell exited (0)`, `killed by SIGKILL`, `connection lost`. In a Windows console, raw mode
+also has the console send keys as VT sequences and read output as them, and the window's
+size is read every 250 ms and sent when it changes: the console reports a resize only
+among the input records that stdin carries.
 
 `exec` pipes stdin, streams stdout and stderr, exits with the remote status.
 
@@ -195,6 +203,19 @@ Peers given filter by sender.
 
 `msg queue` prints one `{ envelope, reason? }` per line from `msg.queue`, all pages,
 `outbound` unless `--which` says otherwise.
+
+## Control
+
+`control --stdio` is a control connection ([06](06-control-socket.md)) on stdin and
+stdout, for a client that has no other way to the socket: a Windows client, which
+cannot open a named pipe from a shell, or a script on either system. It connects (or
+spawns) as every command does, then copies stdin to the connection and the connection
+to stdout, bytes as they are, requests, replies, events and attaches alike. It reads no
+line, so it settles no mail: an envelope a `msg.subscribe` on it delivers waits for the
+client's own `msg.ack` or `msg.defer`, and goes back to the inbox if the connection
+ends first. It lasts until stdin ends, which closes the connection and exits 0, or the
+daemon closes it, exit 1 with `the daemon closed the connection`. A client reads its
+replies before it ends stdin.
 
 ## Peer arguments
 

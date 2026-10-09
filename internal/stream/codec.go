@@ -31,6 +31,11 @@ const (
 	Close   Type = 2
 )
 
+// InputWindow is how many of the opener's input frames on pty and exec, data
+// or control, may be outstanding: sent and not yet answered taken (docs/04,
+// Input).
+const InputWindow = 4
+
 var (
 	ErrTooLarge  = errors.New("stream: over the size limit")
 	ErrFrameType = errors.New("stream: unknown frame type")
@@ -128,18 +133,6 @@ func (c *Conn) Close() error {
 	c.closed = true
 	c.mu.Unlock()
 	return c.Conn.Close()
-}
-
-// unlessClosed runs start unless the stream has been closed here, holding
-// Close off until it returns: a stream closed before its process starts never
-// starts it.
-func (c *Conn) unlessClosed(start func() error) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed {
-		return net.ErrClosed
-	}
-	return start()
 }
 
 func (c *Conn) Read(p []byte) (int, error)  { return c.r.Read(p) }

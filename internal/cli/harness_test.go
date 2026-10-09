@@ -10,10 +10,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -26,6 +24,7 @@ import (
 	"github.com/notaharness/beam/internal/fakeworker"
 	"github.com/notaharness/beam/internal/identity"
 	"github.com/notaharness/beam/internal/store"
+	"github.com/notaharness/beam/internal/stream"
 	"github.com/notaharness/beam/internal/transport"
 	"tailscale.com/types/logger"
 )
@@ -166,8 +165,13 @@ func (m *machine) knows(t *testing.T, others ...*machine) {
 	}
 }
 
+// paths are m's as its daemon and the CLI resolve them.
 func (m *machine) paths() control.Paths {
-	return control.Paths{Dir: m.dir, Socket: filepath.Join(m.dir, "run", "beam.sock")}
+	p, err := control.ResolvePaths(func(k string) string { return map[string]string{"BEAM_CONFIG_DIR": m.dir}[k] })
+	if err != nil {
+		panic(err)
+	}
+	return p
 }
 
 // start runs m's daemon in this process until the test ends.
@@ -192,24 +196,8 @@ func (m *machine) start(t *testing.T) {
 
 // answering reports whether m's daemon answers on its socket; unlike
 // control.Connect, it never spawns one.
-// process runs m's daemon in a process of its own, on the dev relay and the
-// fake worker, with extra as its descriptors from 3 on; exited closes once it
-// has exited, and the test's end kills it.
-func (m *machine) process(t *testing.T, extra ...*os.File) (d *exec.Cmd, exited <-chan struct{}) {
-	t.Helper()
-	d = exec.Command(os.Args[0], "daemon", "--derp-map", relay.MapURL, "--directory", dirURL)
-	d.Env, d.Stderr, d.ExtraFiles = append(os.Environ(), "BEAM_CONFIG_DIR="+m.dir), os.Stderr, extra
-	if err := d.Start(); err != nil {
-		t.Fatal(err)
-	}
-	done := make(chan struct{})
-	go func() { d.Wait(); close(done) }()
-	t.Cleanup(func() { d.Process.Kill(); <-done })
-	return d, done
-}
-
 func answering(m *machine) bool {
-	c, err := net.Dial("unix", m.paths().Socket)
+	c, err := control.OpenSocket(m.paths().Socket)
 	if err == nil {
 		c.Close()
 	}
@@ -249,9 +237,11 @@ func (m *machine) beam(stdin string, args ...string) result {
 	return result{out.String(), errb.String(), code}
 }
 
-// run is beam on m with the given streams.
+// run is beam on m with the given streams, as from an SSH session: a
+// ceremony opens no browser, which would load the real page (docs/07).
 func (m *machine) run(stdin io.Reader, stdout, stderr io.Writer, args ...string) int {
-	vars := []string{"BEAM_CONFIG_DIR=" + m.dir, "HOME=" + os.Getenv("HOME"), "PATH=" + os.Getenv("PATH")}
+	vars := []string{"BEAM_CONFIG_DIR=" + m.dir, "HOME=" + os.Getenv("HOME"), "PATH=" + os.Getenv("PATH"),
+		"SSH_CONNECTION=127.0.0.1 22 127.0.0.1 22"}
 	return cli.Main(args, vars, stdin, stdout, stderr)
 }
 
@@ -309,5 +299,20 @@ func await(t *testing.T, ch <-chan struct{}, what string) {
 	case <-ch:
 	case <-time.After(30 * time.Second):
 		t.Fatalf("timed out waiting for %s", what)
+	}
+}
+
+// readClose reads an attach connection's frames up to its close.
+func readClose(t *testing.T, ac *stream.Conn) stream.CloseMsg {
+	t.Helper()
+	ac.SetReadDeadline(time.Now().Add(20 * time.Second))
+	for {
+		typ, p, err := ac.ReadFrame()
+		if err != nil {
+			t.Fatalf("no close frame: %v", err)
+		}
+		if typ == stream.Close {
+			return stream.ParseClose(p)
+		}
 	}
 }

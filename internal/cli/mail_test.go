@@ -3,7 +3,6 @@
 package cli_test
 
 import (
-	"context"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -11,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"net"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -24,7 +22,6 @@ import (
 	"github.com/notaharness/beam/internal/mailbox"
 	"github.com/notaharness/beam/internal/store"
 	"github.com/notaharness/beam/internal/stream"
-	"github.com/notaharness/beam/internal/transport"
 )
 
 // subscribeMail subscribes to m's mail; next waits for the next envelope.
@@ -389,7 +386,7 @@ func TestSubscribeRacingDisconnect(t *testing.T) {
 	a, b := ms[0], ms[1]
 	waitState(t, a, b, "connected")
 	reached, release := pauseAt(t, b, "subscribing", "")
-	c, err := net.Dial("unix", b.paths().Socket)
+	c, err := control.OpenSocket(b.paths().Socket)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -564,34 +561,6 @@ func TestMsgListen(t *testing.T) {
 	if code := <-done; code != 1 {
 		t.Errorf("listen exited %d when the daemon went away, want 1", code)
 	}
-}
-
-// docs/04 msg: one msg stream per tunnel, so envelopes from one sender are
-// stored in order. A second is refused limit while the first is open, and
-// one opened after it closed is admitted; exec and pty streams count apart.
-func TestMsgOneStreamPerTunnel(t *testing.T) {
-	b := fleet(t, "beta")[0]
-	tun, _ := rawTunnel(t, b)
-	defer rawOpen(t, tun, stream.Header{V: 1, Kind: stream.KindExec, Argv: []string{"sleep", "30"}}).Close()
-	h := stream.Header{V: 1, Kind: stream.KindMsg}
-	first := rawOpen(t, tun, h)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	var ref *transport.Refused
-	if sc, err := tun.Open(ctx, h); !errors.As(err, &ref) || ref.Reason != "limit" {
-		if sc != nil {
-			sc.Close()
-		}
-		t.Fatalf("a second msg stream: %v, want limit", err)
-	}
-	first.Close()
-	waitFor(t, 5*time.Second, "a msg stream after the first closed", func() bool {
-		sc, err := tun.Open(ctx, h)
-		if err == nil {
-			sc.Close()
-		}
-		return err == nil
-	})
 }
 
 // D34: a payload of markup or line separators travels as it is stored,

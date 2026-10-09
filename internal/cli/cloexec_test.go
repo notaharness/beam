@@ -1,4 +1,4 @@
-//go:build beamtest
+//go:build beamtest && unix
 
 package cli_test
 

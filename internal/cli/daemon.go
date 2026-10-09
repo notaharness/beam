@@ -105,13 +105,13 @@ func detached(fs *flag.FlagSet) []string {
 	return args
 }
 
-// detach starts beam with args in a new session.
+// detach starts beam with args on its own, as detachedAttr says.
 func (e *env) detach(p control.Paths, args []string) error {
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(p.Dir, 0o700); err != nil {
+	if err := control.MkdirPrivate(p.Dir); err != nil {
 		return err
 	}
 	logFile, err := os.OpenFile(filepath.Join(p.Dir, "daemon.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
@@ -121,7 +121,7 @@ func (e *env) detach(p control.Paths, args []string) error {
 	defer logFile.Close()
 	cmd := exec.Command(exe, args...)
 	cmd.Env, cmd.Stdout, cmd.Stderr = e.vars, logFile, logFile
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.SysProcAttr = detachedAttr()
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("starting daemon: %w", err)
 	}

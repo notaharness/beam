@@ -1,4 +1,4 @@
-//go:build beamtest
+//go:build beamtest && unix
 
 package cli_test
 
@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -388,7 +387,7 @@ func TestPTYResize(t *testing.T) {
 // events subscribes to m's events; next returns the next one named name.
 func events(t *testing.T, m *machine) (next func(name string) json.RawMessage) {
 	t.Helper()
-	c, err := net.Dial("unix", m.paths().Socket)
+	c, err := control.OpenSocket(m.paths().Socket)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -478,21 +477,6 @@ func TestStreamClose(t *testing.T) {
 	var oe *control.OpError
 	if err := c.Call("stream.close", map[string]any{"streamId": res.StreamID}, nil); !errors.As(err, &oe) || oe.Code != "params" {
 		t.Errorf("closing it again: %v, want params", err)
-	}
-}
-
-// readClose reads an attach connection's frames up to its close.
-func readClose(t *testing.T, ac *stream.Conn) stream.CloseMsg {
-	t.Helper()
-	ac.SetReadDeadline(time.Now().Add(20 * time.Second))
-	for {
-		typ, p, err := ac.ReadFrame()
-		if err != nil {
-			t.Fatalf("no close frame: %v", err)
-		}
-		if typ == stream.Close {
-			return stream.ParseClose(p)
-		}
 	}
 }
 

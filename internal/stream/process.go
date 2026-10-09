@@ -1,6 +1,9 @@
+//go:build unix
+
 package stream
 
 import (
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,22 +25,6 @@ const (
 	maxWinSize = 500
 	killGrace  = 5 * time.Second // SIGHUP to SIGKILL, and close to reset
 )
-
-// Spawn is how the acceptor runs a stream's process.
-type Spawn struct {
-	Env    []string          // the daemon's environment, of which a login's part is passed on
-	Inject map[string]string // BEAM_* variables, set last
-	Home   string            // what ~ means
-}
-
-// refusal is why a header is refused before anything runs.
-type refusal struct{ reason, detail string }
-
-// refuse answers the header with r and closes the stream.
-func refuse(c *Conn, r *refusal) {
-	_ = c.WriteLine(Response{Reason: r.reason, Detail: r.detail}) // closing either way
-	c.Close()
-}
 
 func checkHeader(h Header) *refusal {
 	if len(h.Argv) > maxArgv || len(h.Env) > maxEnv {
@@ -267,4 +254,16 @@ func (w *writer) finish(msg CloseMsg, openerDone <-chan struct{}) {
 	case <-time.After(killGrace):
 	}
 	w.c.Close()
+}
+
+// unlessClosed runs start unless the stream has been closed here, holding
+// Close off until it returns: a stream closed before its process starts never
+// starts it.
+func (c *Conn) unlessClosed(start func() error) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return net.ErrClosed
+	}
+	return start()
 }

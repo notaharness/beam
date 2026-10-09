@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/notaharness/beam/internal/directory"
@@ -73,10 +72,8 @@ func Run(ctx context.Context, o Options) error {
 	if o.Directory == "" {
 		o.Directory = directory.DefaultURL
 	}
-	for _, dir := range []string{filepath.Join(o.Paths.Dir, "run"), filepath.Dir(o.Paths.Socket)} {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return err
-		}
+	if err := MkdirPrivate(filepath.Join(o.Paths.Dir, "run")); err != nil {
+		return err
 	}
 	unlock, err := lock(o.Paths.file("run/beam.lock"))
 	if err != nil {
@@ -110,36 +107,6 @@ func Run(ctx context.Context, o Options) error {
 	ln.Close() // no client starts anything on a daemon that is stopping
 	d.close()
 	return nil
-}
-
-func lock(path string) (func(), error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		f.Close()
-		return nil, ErrLocked
-	}
-	return func() { f.Close() }, nil
-}
-
-// listen serves the socket with mode 0600, removing a file no one listens on.
-// It takes over no path another user owns.
-func listen(path string) (net.Listener, error) {
-	if err := owned(path); err != nil {
-		return nil, err
-	}
-	if c, err := net.Dial("unix", path); err == nil {
-		c.Close()
-		return nil, fmt.Errorf("%s: another daemon is listening", path)
-	}
-	os.Remove(path)
-	ln, err := net.Listen("unix", path)
-	if err != nil {
-		return nil, err
-	}
-	return ln, os.Chmod(path, 0o600)
 }
 
 // enroll enrolls with f, key.json and state.db: it starts the transport and

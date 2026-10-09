@@ -2,9 +2,10 @@ package control
 
 import (
 	"bufio"
+	"cmp"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"os"
@@ -64,42 +65,38 @@ func Connect(p Paths, env []string) (*Client, error) {
 // Dial connects to the daemon at p if one listens there and it runs as this
 // user.
 func Dial(p Paths) (*Client, error) {
-	c, err := net.Dial("unix", p.Socket)
+	c, err := dial(p.Socket)
 	if err != nil {
 		return nil, err
-	}
-	if err := listenedBy(c.(*net.UnixConn), os.Getuid()); err != nil {
-		c.Close()
-		return nil, fmt.Errorf("%s: %w", p.Socket, err)
 	}
 	return newClient(c), nil
 }
 
-// listenedBy refuses a connection whose listener runs as another user than
-// uid (docs/06): where BEAM_SOCKET names a shared directory, whoever listens
-// there is not this user's daemon. It asks the kernel about the connection,
-// so neither the path's owner nor a socket swapped in after a check counts.
-func listenedBy(c *net.UnixConn, uid int) error {
-	raw, err := c.SyscallConn()
-	if err != nil {
-		return err
-	}
-	var peer int
-	var credErr error
-	if err := raw.Control(func(fd uintptr) { peer, credErr = peerUID(int(fd)) }); err != nil {
-		return err
-	}
-	if credErr != nil {
-		return credErr
-	}
-	if peer != uid {
-		return fmt.Errorf("listened on by another user (uid %d): %w", peer, fs.ErrPermission)
-	}
-	return nil
-}
-
 func newClient(c net.Conn) *Client {
 	return &Client{c: c, r: bufio.NewReader(c)}
+}
+
+// ErrDaemonClosed is the end of a connection the daemon closed.
+var ErrDaemonClosed = errors.New("the daemon closed the connection")
+
+// Proxy copies in to the daemon and what the daemon sends to out, bytes as
+// they are, until in ends, which closes the connection and returns nil, or
+// the daemon closes it (ErrDaemonClosed). It is for a client of its own,
+// which owns every request, reply and event on the connection, mail
+// included: Proxy acknowledges nothing.
+func (c *Client) Proxy(in io.Reader, out io.Writer) error {
+	ended := make(chan error, 2)
+	go func() {
+		_, err := io.Copy(out, c.r)
+		ended <- cmp.Or(err, ErrDaemonClosed)
+	}()
+	go func() {
+		_, err := io.Copy(c.c, in)
+		ended <- err
+	}()
+	err := <-ended
+	c.c.Close()
+	return err
 }
 
 // Close closes the connection.
@@ -172,7 +169,7 @@ func (c *Client) Next() (Event, error) {
 // Attach opens the attach connection for a reserved stream; frames follow in
 // both directions.
 func Attach(p Paths, streamID string) (*stream.Conn, error) {
-	c, err := net.Dial("unix", p.Socket)
+	c, err := openSocket(p.Socket)
 	if err != nil {
 		return nil, err
 	}
