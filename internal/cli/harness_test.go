@@ -12,7 +12,9 @@ import (
 	"io"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -37,6 +39,12 @@ var (
 )
 
 func TestMain(m *testing.M) {
+	if watched() {
+		os.Exit(0)
+	}
+	if len(os.Args) > 1 && os.Args[1] == "child" {
+		os.Exit(child(os.Args[2:]))
+	}
 	// Connect-or-spawn runs this binary as `beam daemon --detach`.
 	if len(os.Args) > 1 && os.Args[1] == "daemon" {
 		devderp.Isolate()
@@ -315,4 +323,67 @@ func readClose(t *testing.T, ac *stream.Conn) stream.CloseMsg {
 			return stream.ParseClose(p)
 		}
 	}
+}
+
+// readUntil reads a pty's output until it contains want.
+func readUntil(t *testing.T, ac *stream.Conn, want string) {
+	t.Helper()
+	ac.SetReadDeadline(time.Now().Add(20 * time.Second))
+	var out strings.Builder
+	for !strings.Contains(out.String(), want) {
+		typ, p, err := ac.ReadFrame()
+		if err != nil || typ == stream.Close {
+			t.Fatalf("pty ended before %q; output %q, %v", want, out.String(), err)
+		}
+		if typ == stream.Data {
+			out.Write(p)
+		}
+	}
+}
+
+// process runs m's daemon in a process of its own, on the dev relay and the
+// fake worker, with extra as its descriptors from 3 on; exited closes once it
+// has exited, and the test's end kills it.
+func (m *machine) process(t *testing.T, extra ...*os.File) (d *exec.Cmd, exited <-chan struct{}) {
+	t.Helper()
+	d = exec.Command(os.Args[0], "daemon", "--derp-map", relay.MapURL, "--directory", dirURL)
+	d.Env, d.Stderr, d.ExtraFiles = append(os.Environ(), "BEAM_CONFIG_DIR="+m.dir), os.Stderr, extra
+	if err := d.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { d.Wait(); close(done) }()
+	t.Cleanup(func() { d.Process.Kill(); <-done })
+	return d, done
+}
+
+// pair is alpha, a daemon in this process, connected to beta, an enrolled
+// daemon in a process of its own (machine.process) with extra from fd 3.
+func pair(t *testing.T, extra ...*os.File) (a, b *machine, d *exec.Cmd, exited <-chan struct{}) {
+	t.Helper()
+	a, b = newMachine(t, "alpha"), newMachine(t, "beta")
+	a.knows(t, b)
+	b.knows(t, a)
+	a.start(t)
+	d, exited = b.process(t, extra...)
+	waitFor(t, 10*time.Second, "beta's socket", func() bool { return answering(b) })
+	waitState(t, a, b, "connected")
+	return a, b, d, exited
+}
+
+// waitPid waits for the process a remote shell wrote to file and returns it.
+func waitPid(t *testing.T, file string) int {
+	t.Helper()
+	var pid int
+	waitFor(t, 10*time.Second, "the remote process", func() bool {
+		b, err := os.ReadFile(file)
+		pid, _ = strconv.Atoi(strings.TrimSpace(string(b)))
+		return err == nil && pid > 0
+	})
+	return pid
+}
+
+func waitGone(t *testing.T, pid int) {
+	t.Helper()
+	waitFor(t, 10*time.Second, "the remote process to end", func() bool { return ended(pid) })
 }

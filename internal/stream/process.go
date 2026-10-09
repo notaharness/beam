@@ -3,133 +3,16 @@
 package stream
 
 import (
-	"net"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
-	"time"
 
 	"golang.org/x/sys/unix"
 )
-
-// Limits on a pty or exec header (docs/04).
-const (
-	maxArgv    = 1024
-	maxArg     = 64 << 10
-	maxEnv     = 256
-	minWinSize = 2
-	maxWinSize = 500
-	killGrace  = 5 * time.Second // SIGHUP to SIGKILL, and close to reset
-)
-
-func checkHeader(h Header) *refusal {
-	if len(h.Argv) > maxArgv || len(h.Env) > maxEnv {
-		return &refusal{"params", "too many arguments or variables"}
-	}
-	for _, a := range h.Argv {
-		if len(a) > maxArg {
-			return &refusal{"params", "argument over 64 KiB"}
-		}
-	}
-	return nil
-}
-
-// command builds the process for h. An empty argv is the login shell.
-func (sp Spawn) command(h Header) (*exec.Cmd, *refusal) {
-	dir, ok := resolveCwd(h.Cwd, sp.Home)
-	if !ok {
-		return nil, &refusal{"params", "cwd must be absolute or ~/-relative"}
-	}
-	env := mergeEnv(loginEnv(sp.Env), h.Env, sp.Inject)
-	var cmd *exec.Cmd
-	if len(h.Argv) == 0 {
-		shell := loginShell(env)
-		cmd = &exec.Cmd{Path: shell, Args: []string{"-" + filepath.Base(shell)}}
-	} else {
-		path, err := exec.LookPath(h.Argv[0])
-		if err != nil {
-			return nil, &refusal{"spawn", err.Error()}
-		}
-		cmd = &exec.Cmd{Path: path, Args: h.Argv}
-	}
-	cmd.Dir, cmd.Env = dir, env
-	return cmd, nil
-}
-
-func resolveCwd(cwd, home string) (string, bool) {
-	switch {
-	case cwd == "" || cwd == "~":
-		return home, true
-	case strings.HasPrefix(cwd, "~/"):
-		return filepath.Join(home, cwd[2:]), true
-	case filepath.IsAbs(cwd):
-		return cwd, true
-	}
-	return "", false
-}
-
-// loginShell is $SHELL if it names an executable, else /bin/sh.
-func loginShell(env []string) string {
-	for i := len(env) - 1; i >= 0; i-- {
-		if v, ok := strings.CutPrefix(env[i], "SHELL="); ok {
-			if st, err := os.Stat(v); err == nil && filepath.IsAbs(v) && st.Mode().IsRegular() && st.Mode()&0o111 != 0 {
-				return v
-			}
-			break
-		}
-	}
-	return "/bin/sh"
-}
-
-// loginEnv is the part of env a login would give (docs/04): who and where
-// the user is, the path, the terminal type, the time zone, the locale and
-// the user's runtime directory, which the user's services are reached by. The
-// rest belongs to whatever started the daemon (a tmux pane, an SSH session, a
-// script holding a token) and stays with it.
-func loginEnv(env []string) []string {
-	var out []string
-	for _, kv := range env {
-		if k, _, _ := strings.Cut(kv, "="); loginVars[k] || strings.HasPrefix(k, "LC_") {
-			out = append(out, kv)
-		}
-	}
-	return out
-}
-
-var loginVars = map[string]bool{"HOME": true, "USER": true, "LOGNAME": true, "SHELL": true, "PATH": true,
-	"TERM": true, "TZ": true, "TMPDIR": true, "LANG": true, "XDG_RUNTIME_DIR": true}
-
-// mergeEnv is base with over applied, then inject.
-func mergeEnv(base []string, over, inject map[string]string) []string {
-	m := map[string]string{}
-	var order []string
-	set := func(k, v string) {
-		if _, ok := m[k]; !ok {
-			order = append(order, k)
-		}
-		m[k] = v
-	}
-	for _, kv := range base {
-		if k, v, ok := strings.Cut(kv, "="); ok {
-			set(k, v)
-		}
-	}
-	for k, v := range over {
-		set(k, v)
-	}
-	for k, v := range inject {
-		set(k, v)
-	}
-	env := make([]string, len(order))
-	for i, k := range order {
-		env[i] = k + "=" + m[k]
-	}
-	return env
-}
 
 // exitMsg is the close frame for a finished process. A process killed by a
 // signal reports 128+signal as its exit code, as a shell does.
@@ -209,61 +92,52 @@ func (g *group) reap() {
 	}
 }
 
-// ended is the close of a stream whose leader exited with ws: "window" if the
-// opener overran its window, which ended it, else the exit.
-func ended(ws syscall.WaitStatus, overrun *atomic.Bool) CloseMsg {
-	if overrun.Load() {
-		return CloseMsg{Reason: "window"}
+// exitStatus is how a process ended: its wait status.
+type exitStatus = syscall.WaitStatus
+
+// loginVar reports whether a login sets the variable named k (docs/04).
+func loginVar(k string) bool { return loginVars[k] || strings.HasPrefix(k, "LC_") }
+
+var loginVars = map[string]bool{"HOME": true, "USER": true, "LOGNAME": true, "SHELL": true, "PATH": true,
+	"TERM": true, "TZ": true, "TMPDIR": true, "LANG": true, "XDG_RUNTIME_DIR": true}
+
+// envKey is a variable's name as the system compares it: as it is.
+func envKey(k string) string { return k }
+
+// kill ends the group at once.
+func (g *group) kill() { g.signal(syscall.SIGKILL) }
+
+// startGroup starts cmd in a process group of its own, with pipes for its
+// standard streams.
+func startGroup(cmd *exec.Cmd) (g *group, stdin io.WriteCloser, stdout, stderr io.Reader, err error) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	stdin, _ = cmd.StdinPipe()
+	stdout, _ = cmd.StdoutPipe()
+	stderr, _ = cmd.StderrPipe()
+	if err := cmd.Start(); err != nil {
+		return nil, nil, nil, nil, err
 	}
-	return exitMsg(ws)
+	return newGroup(cmd), stdin, stdout, stderr, nil
 }
 
-// writer serialises frames from several goroutines.
-type writer struct {
-	mu sync.Mutex
-	c  *Conn
+// login builds the login shell for h, whose argv is empty, invoked as a
+// login (docs/04).
+func (sp Spawn) login(h Header) (*exec.Cmd, *refusal) {
+	return sp.in(h, func(env []string) (*exec.Cmd, *refusal) {
+		shell := loginShell(env)
+		return &exec.Cmd{Path: shell, Args: []string{"-" + filepath.Base(shell)}}, nil
+	})
 }
 
-// taken writes a taken frame, calling release under the lock first.
-func (w *writer) taken(release func()) error {
-	b, _ := Marshal(Ctl{Kind: "taken"})
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	release()
-	return w.c.WriteFrame(Control, b)
-}
-
-func (w *writer) frame(t Type, p []byte) error {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.c.WriteFrame(t, p)
-}
-
-// finish sends the close frame, half-closes, and waits for the opener to close
-// its side (or for done) before closing, so the close frame is not lost to a
-// reset.
-func (w *writer) finish(msg CloseMsg, openerDone <-chan struct{}) {
-	w.mu.Lock()
-	_ = w.c.WriteJSON(Close, msg) // closing either way
-	w.mu.Unlock()
-	if cw, ok := w.c.Conn.(interface{ CloseWrite() error }); ok {
-		_ = cw.CloseWrite() // closing either way
+// loginShell is $SHELL if it names an executable, else /bin/sh.
+func loginShell(env []string) string {
+	for i := len(env) - 1; i >= 0; i-- {
+		if v, ok := strings.CutPrefix(env[i], "SHELL="); ok {
+			if st, err := os.Stat(v); err == nil && filepath.IsAbs(v) && st.Mode().IsRegular() && st.Mode()&0o111 != 0 {
+				return v
+			}
+			break
+		}
 	}
-	select {
-	case <-openerDone:
-	case <-time.After(killGrace):
-	}
-	w.c.Close()
-}
-
-// unlessClosed runs start unless the stream has been closed here, holding
-// Close off until it returns: a stream closed before its process starts never
-// starts it.
-func (c *Conn) unlessClosed(start func() error) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.closed {
-		return net.ErrClosed
-	}
-	return start()
+	return "/bin/sh"
 }

@@ -69,8 +69,6 @@ leader has already exited.
 
 ## `exec`
 
-A Windows acceptor refuses `exec` with `kind`, detail `exec is not supported on windows`.
-
 `argv` (required), `cwd?`, `env?`. Data payloads carry a channel byte: `0` stdin
 (opener→acceptor), `1` stdout, `2` stderr. `control {"kind":"stdin-eof"}` ends stdin.
 Exit as for `pty`, after stdout and stderr drain. Opener close or connection loss closes
@@ -82,6 +80,29 @@ For both, the process group ends with the stream: descendants still running afte
 leader exited get the same teardown once the opener closes (after `close "exit"` or not).
 A process meant to outlive the stream starts its own session. An acceptor that cannot
 watch the leader's exit kills the group and closes with the status the reap gives.
+
+**Windows.** An `exec`'s group is a job object of its own, the process created in it
+(`PROC_THREAD_ATTRIBUTE_JOB_LIST`) so that nothing it creates runs outside it, and none of
+those processes may leave it (D73).
+`argv[0]` is found on the daemon's `PATH` with `PATHEXT`, and the command line is `argv`
+quoted as `CommandLineToArgvW` and the C runtime parse it, so a program gets `argv` as
+sent. A batch file (`.bat`, `.cmd`, by the extension of its full path, where the dots and
+spaces a name trails are gone) is refused with `spawn` before anything runs: cmd.exe runs
+it and parses its command line by rules of its own; `cmd.exe /c` runs one explicitly, as
+it does an npm `.cmd` shim, whose package a native `.exe` may also start. The process has
+no console window, and it inherits its standard streams, which are pipes, and no other
+handle. The
+login's part of the environment is `ALLUSERSPROFILE`, `APPDATA`, `COMMONPROGRAMFILES`,
+`COMMONPROGRAMFILES(X86)`, `COMMONPROGRAMW6432`, `COMPUTERNAME`, `COMSPEC`, `HOMEDRIVE`,
+`HOMEPATH`, `LOCALAPPDATA`, `NUMBER_OF_PROCESSORS`, `OS`, `PATH`, `PATHEXT`,
+`PROCESSOR_ARCHITECTURE`, `PROGRAMDATA`, `PROGRAMFILES`, `PROGRAMFILES(X86)`,
+`PROGRAMW6432`, `PUBLIC`, `SYSTEMDRIVE`, `SYSTEMROOT`, `TEMP`, `TMP`, `USERDOMAIN`,
+`USERNAME`, `USERPROFILE` and `WINDIR`, and names compare without case, as Windows
+compares them: an opener's `path` replaces the daemon's `Path`. Where Unix sends SIGKILL
+to the group, Windows terminates the job: its processes exit 1, so a stream ended that way
+closes `exit` with `exitCode` 1 and no `signal`. The job also ends with the daemon, however
+the daemon ends, since its last handle closes with it. Nothing in it outlives the stream:
+`CREATE_BREAKAWAY_FROM_JOB` is refused.
 
 **Input.** On `pty` and `exec` the opener's data and control frames are input, and at most
 4 of them may be outstanding: sent and not yet answered by the acceptor's
