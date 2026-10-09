@@ -1,3 +1,5 @@
+//go:build beamtest
+
 package control
 
 import (
@@ -9,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -57,6 +60,56 @@ func TestDialOwnPipeOnly(t *testing.T) {
 	me, _ := userSID()
 	if err := listenedBy(c.c.(*pipeConn), me); err != nil {
 		t.Errorf("a pipe this user owns: %v", err)
+	}
+	sd, err := windows.GetSecurityInfo(c.c.(*pipeConn).h, windows.SE_KERNEL_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner, _, _ := sd.Owner(); !owner.Equals(me) {
+		t.Errorf("the pipe is owned by %s, want this user", owner)
+	}
+	if err := userOnlyDACL(sd, 0); err != nil {
+		t.Errorf("the pipe's DACL: %v", err)
+	}
+}
+
+// docs/06: a client connects at identification level, so the pipe's server
+// can tell who it is and not act as it.
+func TestClientIdentifiesOnly(t *testing.T) {
+	path := testPipe(t)
+	ln := serve(t, path)
+	accepted := make(chan net.Conn, 1)
+	go func() { c, _ := ln.Accept(); accepted <- c }()
+	c, err := openSocket(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	s := <-accepted
+	defer s.Close()
+	c.Write([]byte("x")) // the server impersonates the writer of what it last read
+	if _, err := s.Read(make([]byte, 1)); err != nil {
+		t.Fatal(err)
+	}
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	impersonate := windows.NewLazySystemDLL("advapi32.dll").NewProc("ImpersonateNamedPipeClient")
+	if ok, _, err := impersonate.Call(uintptr(s.(*pipeConn).h)); ok == 0 {
+		t.Fatalf("ImpersonateNamedPipeClient: %v", err)
+	}
+	defer windows.RevertToSelf()
+	var tok windows.Token
+	if err := windows.OpenThreadToken(windows.CurrentThread(), windows.TOKEN_QUERY, true, &tok); err != nil {
+		t.Fatal(err)
+	}
+	defer tok.Close()
+	var level, n uint32
+	if err := windows.GetTokenInformation(tok, windows.TokenImpersonationLevel, (*byte)(unsafe.Pointer(&level)), 4, &n); err != nil {
+		t.Fatal(err)
+	}
+	if level != windows.SecurityIdentification {
+		t.Errorf("the client's impersonation level is %d, want identification (%d)", level, windows.SecurityIdentification)
 	}
 }
 
@@ -218,25 +271,9 @@ func TestMkdirPrivate(t *testing.T) {
 	if err := MkdirPrivate(dir); err != nil {
 		t.Fatal(err)
 	}
-	me, _ := userSID()
 	for _, d := range []string{filepath.Dir(dir), dir} {
-		sd, err := windows.GetNamedSecurityInfo(d, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
-		if err != nil {
-			t.Fatal(err)
-		}
-		control, _, _ := sd.Control()
-		dacl, _, _ := sd.DACL()
-		if control&windows.SE_DACL_PROTECTED == 0 || dacl == nil || dacl.AceCount != 1 {
-			t.Fatalf("%s: control %#x, %v ACEs; want a protected DACL with one", d, control, dacl)
-		}
-		var ace *windows.ACCESS_ALLOWED_ACE
-		if err := windows.GetAce(dacl, 0, &ace); err != nil {
-			t.Fatal(err)
-		}
-		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
-		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE || !sid.Equals(me) ||
-			ace.Header.AceFlags&(windows.OBJECT_INHERIT_ACE|windows.CONTAINER_INHERIT_ACE) == 0 {
-			t.Errorf("%s: ACE %+v for %s, want this user's, inherited", d, ace.Header, sid)
+		if err := CheckPrivate(d); err != nil {
+			t.Errorf("%s: %v", d, err)
 		}
 	}
 	if err := MkdirPrivate(dir); err != nil {
