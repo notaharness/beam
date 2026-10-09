@@ -192,8 +192,11 @@ them, then the CRAP gate), `make dist`
 (cross-compile four targets), and the `directory` and `ceremony` packages' tests again
 against the worker under `wrangler dev`, the Go directory client and the slot reader
 held to the real routes. Job `darwin`: `make test` on macOS, where the process
-lifetimes (kqueue, not waitid) and the in-process daemons run for real. The `ci` job also
-runs the npm packages' node tests.
+lifetimes (kqueue, not waitid) and the in-process daemons run for real. Job `windows`:
+`make lint` and `make crap` on Windows, so the Windows files are held to the same lint
+budgets and CRAP gate, and the in-process daemons run on the named pipe; the scenarios
+that run Unix commands on a peer are Unix-only. The `ci` job also runs the npm packages'
+node tests.
 
 Tag (`.github/workflows/release.yml`, on `v*`), two jobs. `release`: `npm/version.mjs`
 reads the tag, and the job stops at one that is not canonical. Then `make dist`,

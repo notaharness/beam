@@ -94,7 +94,9 @@ prefix alone.
 
 ## Integration
 
-Two to four daemons, temp `$BEAM_DIR`s, dev DERP, fake worker, test authenticator. The
+Two to four daemons, temp `$BEAM_DIR`s, dev DERP, fake worker, test authenticator, on
+Linux, macOS and Windows; the scenarios whose peers run Unix commands, `exec` and
+`pty` among them, on Linux and macOS. The
 daemons run in the test process (`control.Run`, built with the `beamtest` tag) and the CLI
 is called as `cli.Main`; where a scenario needs a dialer that misbehaves or falls silent, a
 bare member node (transport only) stands in for a daemon:
@@ -123,7 +125,9 @@ bare member node (transport only) stands in for a daemon:
 | daemon lock | second daemon exits 1; connect-or-spawn loser connects to winner |
 | shutdown ends sessions | an enrolled daemon in a process of its own (`beam daemon --directory`, a beamtest-only flag naming the fake worker) serves a pty and an exec whose processes ignore SIGHUP; after SIGTERM, both are dead when the daemon has exited |
 | inherited descriptors | a daemon started with an extra descriptor open does not pass it to a pty it serves |
-| exit with parent | a parent process spawns `beam daemon --exit-with-parent` with a stdin pipe and is killed with SIGKILL: the daemon exits; a terminal, `/dev/null` or `--detach` with the flag is a usage error |
+| exit with parent | a parent process spawns `beam daemon --exit-with-parent` with a stdin pipe and is killed with SIGKILL (on Windows, terminated): the daemon shuts down, removing its socket (on Windows, exiting 0); a terminal, `/dev/null` or `--detach` with the flag is a usage error |
+| control proxy | `beam control --stdio` carries a `msg.subscribe` and the `mail` it delivers, and the envelope stays inbound until the client's own `msg.ack` through it; the end of stdin exits 0, the daemon's close of the connection 1 |
+| own listener | a client refuses a socket whose listener runs as another user (Unix) or a pipe another user owns (Windows); a starting daemon takes over no socket path another user owns, nor a pipe name anyone holds |
 | reset | tunnels closed, fleet state and key gone, re-join works under a new key; a revocation not yet published still refuses its machine after a re-join into the same fleet, and one from another fleet revokes nothing in a new one |
 
 ## Test kit
