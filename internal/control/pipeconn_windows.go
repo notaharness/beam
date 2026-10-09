@@ -34,7 +34,7 @@ type pipeIO struct {
 	kick     windows.Handle // set when the deadline changes
 	deadline atomic.Int64   // in Unix nanoseconds; 0 for none
 	buf      []byte
-	n        uint32 // what an operation that completes at once reports; the result says
+	n        uint32 // a count x/sys reads under the race detector; GetOverlappedResult's is the one used
 }
 
 func newPipeIO() (*pipeIO, error) {
