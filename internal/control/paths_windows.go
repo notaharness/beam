@@ -31,7 +31,8 @@ const maxPipe = 256
 
 // defaultSocket is the pipe named for dir (docs/06): beam- and the first 16
 // bytes of the SHA-256 of its absolute path, lowercased, in hex: a pipe per
-// directory, and one for every spelling of a directory, as NTFS ignores case.
+// directory, the same in any case, as NTFS ignores it. Another spelling of
+// one directory (a short name, a junction, a \\?\ prefix) names another pipe.
 func defaultSocket(dir string) string {
 	if abs, err := filepath.Abs(dir); err == nil {
 		dir = abs

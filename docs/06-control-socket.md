@@ -15,9 +15,10 @@ starting daemon refuses a socket path another user owns.
 (D68). `BEAM_SOCKET` is a pipe name, `\\.\pipe\<name>`, at most 256 characters, with
 no `\` in `<name>`; anything else is refused before anything else, naming
 `BEAM_SOCKET`. The default is `\\.\pipe\beam-` followed by the first 16 bytes of the
-SHA-256 of the absolute, lowercased `$BEAM_DIR` in hex, so each directory has its pipe
-and every spelling of one directory the same. Every instance of the pipe is owned by
-the user and has a protected DACL granting the user alone, and refuses remote clients.
+SHA-256 of the absolute, lowercased `$BEAM_DIR` in hex, so each directory has its pipe,
+the same in every case. A short name, a junction or a `\\?\` prefix spells a directory
+another way, and names another pipe: clients of one daemon spell `$BEAM_DIR` alike.
+Every instance of the pipe is owned by the user and has a protected DACL granting the user alone, and refuses remote clients.
 The daemon makes the pipe's first instance or none: a name another process already
 holds is not taken over (`another daemon is listening`, or a permission error when its
 owner is another user), and an instance stays open while the daemon serves, so the name
