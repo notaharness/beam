@@ -2,8 +2,10 @@ package control
 
 import (
 	"bufio"
+	"cmp"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"net"
 	"os"
@@ -72,6 +74,29 @@ func Dial(p Paths) (*Client, error) {
 
 func newClient(c net.Conn) *Client {
 	return &Client{c: c, r: bufio.NewReader(c)}
+}
+
+// ErrDaemonClosed is the end of a connection the daemon closed.
+var ErrDaemonClosed = errors.New("the daemon closed the connection")
+
+// Proxy copies in to the daemon and what the daemon sends to out, bytes as
+// they are, until in ends, which closes the connection and returns nil, or
+// the daemon closes it (ErrDaemonClosed). It is for a client of its own,
+// which owns every request, reply and event on the connection, mail
+// included: Proxy acknowledges nothing.
+func (c *Client) Proxy(in io.Reader, out io.Writer) error {
+	ended := make(chan error, 2)
+	go func() {
+		_, err := io.Copy(out, c.r)
+		ended <- cmp.Or(err, ErrDaemonClosed)
+	}()
+	go func() {
+		_, err := io.Copy(c.c, in)
+		ended <- err
+	}()
+	err := <-ended
+	c.c.Close()
+	return err
 }
 
 // Close closes the connection.

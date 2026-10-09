@@ -23,6 +23,7 @@ beam exec    <peer> [--cwd PATH] [--env K=V]... -- argv...
 beam msg send   <peer> [--topic T] [--base64] [--json] <payload|->
 beam msg listen [--topic T] [<peer>...]
 beam msg queue  [<peer>] [--which outbound|inbound|refused|quarantine]
+beam control --stdio
 
 beam version
 ```
@@ -202,6 +203,19 @@ Peers given filter by sender.
 
 `msg queue` prints one `{ envelope, reason? }` per line from `msg.queue`, all pages,
 `outbound` unless `--which` says otherwise.
+
+## Control
+
+`control --stdio` is a control connection ([06](06-control-socket.md)) on stdin and
+stdout, for a client that has no other way to the socket: a Windows client, which
+cannot open a named pipe from a shell, or a script on either system. It connects (or
+spawns) as every command does, then copies stdin to the connection and the connection
+to stdout, bytes as they are, requests, replies, events and attaches alike. It reads no
+line, so it settles no mail: an envelope a `msg.subscribe` on it delivers waits for the
+client's own `msg.ack` or `msg.defer`, and goes back to the inbox if the connection
+ends first. It lasts until stdin ends, which closes the connection and exits 0, or the
+daemon closes it, exit 1 with `the daemon closed the connection`. A client reads its
+replies before it ends stdin.
 
 ## Peer arguments
 

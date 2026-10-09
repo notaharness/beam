@@ -66,6 +66,7 @@ var commands = map[string]func(*env) int{
 	"join":    runJoin,
 	"revoke":  runRevoke,
 	"fleet":   runFleet,
+	"control": runControl,
 	"version": func(e *env) int { fmt.Fprintln(e.stdout, Version); return 0 },
 }
 
@@ -87,6 +88,7 @@ const usage = `usage:
   beam msg send   <peer> [--topic T] [--base64] [--json] <payload|->
   beam msg listen [--topic T] [<peer>...]
   beam msg queue  [<peer>] [--which outbound|inbound|refused|quarantine]
+  beam control --stdio
   beam version
 `
 
