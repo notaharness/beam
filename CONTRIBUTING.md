@@ -47,10 +47,10 @@ the work, and docs/09 describes it.
    `gh run watch`. The whole workflow runs without a GitHub release and with
    `npm publish --dry-run`, and its log says whose npm token would publish, if any.
 3. `git tag vX.Y.Z main && git push origin vX.Y.Z`. Job `release` checks the tag is
-   canonical semver, builds the four binaries and the four of the test kit, packs the five
+   canonical semver, builds the five binaries and the five of the test kit, packs the six
    npm packages, checks npm would publish each at the binary's version, and creates the
-   GitHub release with all eight and `SHA256SUMS`. Job
-   `publish` publishes the four platform packages, then `@notaharness/beam`, with
+   GitHub release with all ten and `SHA256SUMS`. Job
+   `publish` publishes the five platform packages, then `@notaharness/beam`, with
    provenance.
 4. Check: `gh release view vX.Y.Z`; `npm view @notaharness/beam version`; and on a
    machine without beam, `npx @notaharness/beam@X.Y.Z version` prints `X.Y.Z`.
@@ -81,11 +81,19 @@ only be set on a package that exists, so that one release publishes with a token
    on the `@notaharness` scope. It exists for this release only.
 3. Release `v0.1.0` as above; the `publish` job's log names the token's user.
 4. On npmjs.com, for each of `@notaharness/beam`, `@notaharness/beam-darwin-arm64`,
-   `@notaharness/beam-darwin-x64`, `@notaharness/beam-linux-x64` and
-   `@notaharness/beam-linux-arm64`: Settings, Trusted Publisher, GitHub Actions, with
+   `@notaharness/beam-darwin-x64`, `@notaharness/beam-linux-x64`,
+   `@notaharness/beam-linux-arm64` and `@notaharness/beam-win32-x64`: Settings, Trusted Publisher, GitHub Actions, with
    organization `notaharness`, repository `beam`, workflow filename `release.yml` and
    no environment. Then set its publishing access to require two-factor authentication
    and disallow tokens.
 5. Delete the token on npmjs.com, and the secret: `gh secret delete NPM_TOKEN`. Every
    later release publishes through trusted publishing, and the `publish` job's log says
    so.
+
+### A new platform package
+
+A platform added to the shim's `optionalDependencies` is a package npm does not have
+yet, so the first release that carries it publishes with a token, as the first release
+did: steps 2 to 5 above, for that package alone in step 4. Without the token, `publish`
+fails at that package after publishing those before it, and the version is spent.
+`@notaharness/beam-win32-x64` is one such package.
