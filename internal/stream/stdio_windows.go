@@ -8,8 +8,8 @@ import (
 )
 
 // stdio is a process's standard streams: three anonymous pipes, the child's
-// ends inheritable. A write the process is not reading ends with the
-// process, which the stream's end kills.
+// ends inheritable. Closing the daemon's end cancels a write the process is
+// not reading, as Go closes a pipe with CancelIoEx first.
 type stdio struct {
 	stdin          *os.File
 	stdout, stderr *os.File
