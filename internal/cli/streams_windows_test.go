@@ -79,15 +79,22 @@ func argvIs(out string, want []string) bool {
 }
 
 // docs/04 exec on Windows: a batch file is refused before anything runs, as
-// cmd.exe would not take its argv as sent; cmd.exe itself runs.
+// cmd.exe would not take its argv as sent, however its name is spelled;
+// cmd.exe itself runs.
 func TestExecBatchRefused(t *testing.T) {
 	ms := fleet(t, "alpha", "beta")
 	a, b := ms[0], ms[1]
 	waitState(t, a, b, "connected")
-	bat := filepath.Join(t.TempDir(), "run.cmd")
-	os.WriteFile(bat, []byte("@echo ran\r\n"), 0o600)
-	if r := a.beam("", "exec", "beta", "--", bat); r.code != 1 || !strings.Contains(r.err, "spawn: a batch file") {
-		t.Errorf("a batch file: %+v, want spawn", r)
+	dir := t.TempDir()
+	for _, name := range []string{"run.cmd", "run.BAT"} {
+		os.WriteFile(filepath.Join(dir, name), []byte("@echo ran\r\n"), 0o600)
+	}
+	// CreateProcess drops the dots and spaces a name trails: run.cmd. is run.cmd.
+	for _, name := range []string{"run.cmd", "run.BAT", "run.cmd.", "run.cmd ", "run.cmd. .", "run.BAT..."} {
+		r := a.beam("", "exec", "beta", "--", filepath.Join(dir, name))
+		if r.code != 1 || !strings.Contains(r.err, "spawn: a batch file") || strings.Contains(r.out, "ran") {
+			t.Errorf("%q: %+v, want spawn", name, r)
+		}
 	}
 	if r := a.beam("", "exec", "beta", "--", "cmd.exe", "/d", "/c", "echo ran"); r.code != 0 || strings.TrimSpace(r.out) != "ran" {
 		t.Errorf("cmd.exe: %+v", r)

@@ -97,7 +97,7 @@ func (g *group) reap() {
 // streams. A batch file is refused: cmd.exe runs it, and parses its command
 // line by rules of its own, so its arguments would not arrive as sent.
 func startGroup(cmd *exec.Cmd) (g *group, stdin io.WriteCloser, stdout, stderr io.Reader, err error) {
-	if ext := strings.ToLower(filepath.Ext(cmd.Path)); ext == ".bat" || ext == ".cmd" {
+	if batch(cmd.Path) {
 		return nil, nil, nil, nil, errors.New("a batch file takes no argv as sent; run cmd.exe /c with its command line")
 	}
 	job, err := newJob()
@@ -114,6 +114,17 @@ func startGroup(cmd *exec.Cmd) (g *group, stdin io.WriteCloser, stdout, stderr i
 		return nil, nil, nil, nil, errors.Join(err, pipes.closeParent(), windows.CloseHandle(job))
 	}
 	return watch(job, proc), pipes.stdin, pipes.stdout, pipes.stderr, nil
+}
+
+// batch reports whether CreateProcess would run path as a batch file: by
+// the extension of its full path, which, as CreateProcess takes it, has lost
+// the dots and spaces a name may trail (run.bat. is run.bat).
+func batch(path string) bool {
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+	}
+	ext := strings.ToLower(filepath.Ext(path))
+	return ext == ".bat" || ext == ".cmd"
 }
 
 // newJob is a job whose last handle's close kills what is in it, and which
