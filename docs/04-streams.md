@@ -57,7 +57,9 @@ merged over a login's part of the daemon's environment (`HOME`, `USER`, `LOGNAME
 variables last. `XDG_RUNTIME_DIR` is the user's, not one session's (`pam_systemd` sets it
 for every login), and `systemctl --user` and the session bus need it. The rest of the
 daemon's environment belongs to whatever started it, a tmux pane, an SSH session or a
-script holding a token, and no peer's process sees it. Unix: `creack/pty`.
+script holding a token, and no peer's process sees it. Unix: `creack/pty`. A Windows
+acceptor serves no `pty`: it refuses one with `kind`, detail `pty is not supported on
+windows` (D72). A Windows opener still opens one on a Unix peer.
 
 Control from the opener: `{"kind":"resize","cols":…,"rows":…}` (2–500). Data both ways
 raw. Process exit → `close {"reason":"exit","exitCode":n,"signal"?:s}`; a process ended
@@ -66,6 +68,8 @@ connection loss → SIGHUP then SIGKILL to the process group after 5 s, whether 
 leader has already exited.
 
 ## `exec`
+
+A Windows acceptor refuses `exec` with `kind`, detail `exec is not supported on windows`.
 
 `argv` (required), `cwd?`, `env?`. Data payloads carry a channel byte: `0` stdin
 (opener→acceptor), `1` stdout, `2` stderr. `control {"kind":"stdin-eof"}` ends stdin.
