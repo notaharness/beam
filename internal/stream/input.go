@@ -1,14 +1,11 @@
+//go:build unix
+
 package stream
 
 import (
 	"io"
 	"sync"
 )
-
-// InputWindow is how many of the opener's input frames on pty and exec, data
-// or control, may be outstanding: sent and not yet answered taken (docs/04,
-// Input).
-const InputWindow = 4
 
 // window counts an opener's outstanding input frames and answers them. A
 // frame holds its place until its taken is written, so at most a window of
