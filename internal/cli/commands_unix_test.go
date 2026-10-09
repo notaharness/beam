@@ -23,3 +23,6 @@ func openShell(t *testing.T, m *machine, peer string) *stream.Conn {
 	ac, _ := openPTY(t, m, peer, "sh", "-c", "echo up; exec sleep 300")
 	return ac
 }
+
+// systemVerb is a child verb of this system's alone: none on Unix.
+func systemVerb(string, []string) int { return 2 }

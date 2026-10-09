@@ -28,6 +28,8 @@ import (
 //	spawn file       starts `child sleep`, writes its pid to file, waits
 //	spawn-exit file  starts `child sleep`, writes its pid to file, exits 0
 //	sleep            waits to be killed
+//
+// and, on Windows, the verbs of systemVerb.
 func child(args []string) int {
 	if len(args) == 0 {
 		return 2
@@ -79,7 +81,7 @@ func waiting(verb string, rest []string) int {
 		}
 	case "sleep":
 	default:
-		return 2
+		return systemVerb(verb, rest)
 	}
 	time.Sleep(time.Hour)
 	return 0

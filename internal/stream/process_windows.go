@@ -39,12 +39,11 @@ var loginVars = map[string]bool{"ALLUSERSPROFILE": true, "APPDATA": true, "COMMO
 // envKey is a variable's name as Windows compares it, ignoring case.
 func envKey(k string) string { return strings.ToUpper(k) }
 
-// group is a stream's process and every process it starts: a job object of
-// its own, which the process is created in, so nothing it starts runs
-// outside it. Its end terminates the job; closing the job's last handle
-// kills what is left in it, the daemon's exit included. A process leaves it
-// only by asking to (CREATE_BREAKAWAY_FROM_JOB), as a Unix process leaves its
-// group by starting a session.
+// group is a stream's process and every process it creates: a job object
+// of its own, which the process is created in, so nothing it creates runs
+// outside it, and which none of them may leave. Its end terminates the job;
+// closing the job's last handle kills what is left in it, the daemon's exit
+// included.
 type group struct {
 	job, proc windows.Handle
 	output    [2]io.Closer  // the daemon's ends of stdout and stderr
@@ -135,14 +134,14 @@ func batch(path string) bool {
 }
 
 // newJob is a job whose last handle's close kills what is in it, and which
-// a process may leave by asking to.
+// no process leaves.
 func newJob() (windows.Handle, error) {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return 0, err
 	}
 	info := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{BasicLimitInformation: windows.JOBOBJECT_BASIC_LIMIT_INFORMATION{
-		LimitFlags: windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | windows.JOB_OBJECT_LIMIT_BREAKAWAY_OK}}
+		LimitFlags: windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE}}
 	_, err = windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation,
 		uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info)))
 	if err != nil {

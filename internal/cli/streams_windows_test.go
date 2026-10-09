@@ -101,6 +101,17 @@ func TestExecBatchRefused(t *testing.T) {
 	}
 }
 
+// docs/04 exec on Windows: no process leaves its job, so none outlives the
+// stream.
+func TestExecNoBreakaway(t *testing.T) {
+	ms := fleet(t, "alpha", "beta")
+	a, b := ms[0], ms[1]
+	waitState(t, a, b, "connected")
+	if r := a.beam("", append([]string{"exec", "beta", "--"}, childArgv("breakaway")...)...); r.code != 0 || r.out != "refused\n" {
+		t.Errorf("breakaway: %+v, want refused", r)
+	}
+}
+
 // docs/04 exec on Windows: the opener's departure ends the process and what
 // it started, which its job holds.
 func TestExecJobEndsWithStream(t *testing.T) {
