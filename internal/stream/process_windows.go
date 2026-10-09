@@ -47,6 +47,7 @@ func envKey(k string) string { return strings.ToUpper(k) }
 // group by starting a session.
 type group struct {
 	job, proc windows.Handle
+	output    [2]io.Closer  // the daemon's ends of stdout and stderr
 	exited    chan struct{} // the process has exited
 	status    exitStatus    // its exit code, once exited
 
@@ -80,14 +81,18 @@ func (g *group) kill() {
 	}
 }
 
-// reap closes the group once its process has exited: the job's last handle
-// with it, which kills what is left in it.
+// reap closes the group once its process has exited: the daemon's ends of
+// its output, as a Unix reap does, and the job's last handle, which kills
+// what is left in it.
 func (g *group) reap() {
 	<-g.exited
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if !g.reaped {
-		_ = windows.CloseHandle(g.proc) // nothing to report it to
+		for _, c := range g.output {
+			_ = c.Close() // nothing to report it to
+		}
+		_ = windows.CloseHandle(g.proc)
 		_ = windows.CloseHandle(g.job)
 		g.reaped = true
 	}
@@ -113,7 +118,9 @@ func startGroup(cmd *exec.Cmd) (g *group, stdin io.WriteCloser, stdout, stderr i
 	if err != nil {
 		return nil, nil, nil, nil, errors.Join(err, pipes.closeParent(), windows.CloseHandle(job))
 	}
-	return watch(job, proc), pipes.stdin, pipes.stdout, pipes.stderr, nil
+	g = watch(job, proc)
+	g.output = [2]io.Closer{pipes.stdout, pipes.stderr}
+	return g, pipes.stdin, pipes.stdout, pipes.stderr, nil
 }
 
 // batch reports whether CreateProcess would run path as a batch file: by
