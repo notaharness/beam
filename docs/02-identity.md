@@ -46,8 +46,11 @@ fleetId = lowercase hex of SHA-256(credentialPublicKey COSE bytes)      64 chara
 
 ## `$BEAM_DIR`
 
-`$BEAM_CONFIG_DIR`, else `$XDG_CONFIG_HOME/beam`, else `~/.config/beam`. Config files are
-written temp → `0600` → rename. The database is SQLite with WAL.
+`$BEAM_CONFIG_DIR`, else `$XDG_CONFIG_HOME/beam`, else `~/.config/beam`; on Windows
+`$BEAM_CONFIG_DIR`, else `%LOCALAPPDATA%\beam`. Config files are written temp → `0600` →
+rename. The database is SQLite with WAL. Directories beam makes are `0700`; on Windows
+each has a protected DACL with one entry, granting the user everything and inherited by
+what is made in it, and no one else anything (D70).
 
 ```
 $BEAM_DIR/
@@ -55,7 +58,7 @@ $BEAM_DIR/
   fleet.json         { v, fleetId, credentialId, credentialPublicKey, kDir, tRead, entry } 0600
   state.db           peers, revocations, mailbox, pending directory writes             0600
   derpmap.json       last fetched DERP map
-  run/beam.sock      control socket                                                     0600
+  run/beam.sock      control socket (Unix; a named pipe on Windows, 06)                 0600
   run/beam.lock      exclusive lock held by the running daemon
   daemon.log         the output of a daemon started with --detach
 ```

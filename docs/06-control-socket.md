@@ -11,20 +11,45 @@ daemon: a client refuses a connection whose listener runs as another user, by th
 kernel's credentials for it (`SO_PEERCRED` on Linux, `LOCAL_PEERCRED` on macOS), and a
 starting daemon refuses a socket path another user owns.
 
+**Windows.** The socket is a local named pipe in byte mode, the same bytes both ways
+(D68). `BEAM_SOCKET` is a pipe name, `\\.\pipe\<name>`, at most 256 characters, with
+no `\` in `<name>`; anything else is refused before anything else, naming
+`BEAM_SOCKET`. The default is `\\.\pipe\beam-` followed by the first 16 bytes of the
+SHA-256 of the absolute, lowercased `$BEAM_DIR` in hex, so each directory has its pipe
+and every spelling of one directory the same. Every instance of the pipe is owned by
+the user and has a protected DACL granting the user alone, and refuses remote clients.
+The daemon makes the pipe's first instance or none: a name another process already
+holds is not taken over (`another daemon is listening`, or a permission error when its
+owner is another user), and an instance stays open while the daemon serves, so the name
+stays the user's. A client refuses a pipe whose owner, which the kernel reports for the
+connection, is another user, and connects at identification level, so the server can
+tell who it is but not act as it. A connection that finds every instance taken waits up
+to 5 s for one.
+
+| `BEAM_SOCKET` (Windows) | |
+|---|---|
+| unset | `\\.\pipe\beam-<hash of $BEAM_DIR>` |
+| `\\.\pipe\mine` | that pipe |
+| a path, `C:\beam.sock` | refused |
+| a remote pipe, `\\host\pipe\mine` | refused |
+| `\\.\pipe\a\b`, `\\.\pipe\` | refused |
+| over 256 characters | refused |
+
 ## Lifecycle
 
-- The daemon takes an exclusive lock on `run/beam.lock` first; a second daemon exits 1
-  with `another daemon holds $BEAM_DIR`. A socket file with no listener is removed after
-  a failed connect.
+- The daemon takes an exclusive lock on `run/beam.lock` first (`flock`, `LockFileEx` on
+  Windows); a second daemon exits 1 with `another daemon holds $BEAM_DIR`. A socket file
+  with no listener is removed after a failed connect; a pipe has no file to leave.
 - **Unenrolled state.** With no `fleet.json` the daemon serves the socket and answers
   `status`, `events.subscribe`, the ceremony ops, `fleet.reset` and `daemon.shutdown`;
   everything else is `not-enrolled`.
   The socket is ready before transport starts; `status.ready` reports transport state.
   `status` answers at once; every other op waits until the daemon has started.
 - **Connect-or-spawn**, one shared helper used by the CLI and n10's TUI: connect; on
-  `ECONNREFUSED`/`ENOENT` run `beam daemon --detach`, wait ≤ 5 s for the socket, connect.
-  `--detach` starts `beam daemon` with the same options but `--detach` in a new session,
-  its output appended to `$BEAM_DIR/daemon.log`, and returns 0 without waiting for it. A
+  `ECONNREFUSED`/`ENOENT` (no such pipe, on Windows) run `beam daemon --detach`, wait
+  ≤ 5 s for the socket, connect. `--detach` starts `beam daemon` with the same options
+  but `--detach` in a new session (on Windows a new process group with no console), its
+  output appended to `$BEAM_DIR/daemon.log`, and returns 0 without waiting for it. A
   daemon that loses the lock race logs `another daemon holds $BEAM_DIR` there and exits
   1; the helper connects to the winner either way.
 - **Shutdown.** `daemon.shutdown`, SIGTERM or SIGINT stop the daemon, whoever started
