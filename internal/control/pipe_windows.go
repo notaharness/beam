@@ -25,13 +25,16 @@ func lock(path string) (func(), error) {
 	if err != nil {
 		return nil, err
 	}
-	err = windows.LockFileEx(windows.Handle(f.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY,
-		0, 1, 0, new(windows.Overlapped))
+	h := windows.Handle(f.Fd())
+	err = windows.LockFileEx(h, windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, new(windows.Overlapped))
 	if err != nil {
 		f.Close()
 		return nil, ErrLocked
 	}
-	return func() { f.Close() }, nil
+	return func() {
+		_ = windows.UnlockFileEx(h, 0, 1, 0, new(windows.Overlapped)) // released by the close at the latest
+		f.Close()
+	}, nil
 }
 
 // listen serves the pipe at path, its every instance this user's alone and
@@ -42,7 +45,7 @@ func listen(path string) (net.Listener, error) {
 	if err != nil {
 		return nil, err
 	}
-	l := &pipeListener{path: path, sa: sa}
+	l := &pipeListener{path: path, sa: sa, released: make(chan struct{})}
 	l.next, err = l.instance(windows.FILE_FLAG_FIRST_PIPE_INSTANCE)
 	if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
 		c, derr := dial(path)
@@ -66,12 +69,13 @@ func listen(path string) (net.Listener, error) {
 // next before it hands a connected one over: an instance of the pipe exists
 // for as long as the listener does, so its name stays this user's.
 type pipeListener struct {
-	path  string
-	sa    *windows.SecurityAttributes
-	event windows.Handle // signals the pending connect
+	path     string
+	sa       *windows.SecurityAttributes
+	event    windows.Handle // signals the pending connect
+	released chan struct{}  // closed once a closed listener's waiting Accept has let go
 
 	mu     sync.Mutex
-	next   windows.Handle     // the instance a client connects to next
+	next   windows.Handle     // the instance a client connects to next; 0 once it failed
 	ov     windows.Overlapped // its pending connect
 	busy   bool               // an Accept waits on it
 	closed bool
@@ -122,7 +126,9 @@ func (l *pipeListener) connect() (windows.Handle, error) {
 	l.busy = false
 	switch {
 	case l.closed:
-		return 0, errors.Join(net.ErrClosed, windows.CloseHandle(h), windows.CloseHandle(l.event))
+		err := errors.Join(net.ErrClosed, windows.CloseHandle(h), windows.CloseHandle(l.event))
+		close(l.released)
+		return 0, err
 	case errors.Is(err, windows.ERROR_NO_DATA): // connected and gone again
 		return 0, windows.DisconnectNamedPipe(h)
 	case err != nil && !errors.Is(err, windows.ERROR_PIPE_CONNECTED):
@@ -130,25 +136,39 @@ func (l *pipeListener) connect() (windows.Handle, error) {
 	}
 	next, err := l.instance(0)
 	if err != nil {
+		l.next = 0 // h, closed here, is no instance of Close's
 		return 0, errors.Join(err, windows.CloseHandle(h))
 	}
 	l.next = next
 	return h, nil
 }
 
-// Close stops listening: a pending connect is cancelled, and the waiting
-// Accept closes the instance and the event; without one, Close does.
+// Close stops listening and returns once the pipe's name is free, as a Unix
+// socket's path is unlinked: a pending connect is cancelled, and Close waits
+// for the waiting Accept to close the instance and the event; without one,
+// Close closes them.
 func (l *pipeListener) Close() error {
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	if l.closed {
+		l.mu.Unlock()
 		return nil
 	}
 	l.closed = true
 	if l.busy {
-		return windows.CancelIoEx(l.next, &l.ov)
+		err := windows.CancelIoEx(l.next, &l.ov)
+		l.mu.Unlock()
+		<-l.released
+		if errors.Is(err, windows.ERROR_NOT_FOUND) { // the connect had completed
+			err = nil
+		}
+		return err
 	}
-	return errors.Join(windows.CloseHandle(l.next), windows.CloseHandle(l.event))
+	defer l.mu.Unlock()
+	err := windows.CloseHandle(l.event)
+	if l.next != 0 {
+		err = errors.Join(windows.CloseHandle(l.next), err)
+	}
+	return err
 }
 
 func (l *pipeListener) Addr() net.Addr { return pipeAddr(l.path) }
