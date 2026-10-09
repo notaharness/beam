@@ -1,5 +1,5 @@
 "use strict";
-// docs/09 npm: pack.mjs turns make dist's four binaries into the five
+// docs/09 npm: pack.mjs turns make dist's five binaries into the six
 // packages, every one at the release's version.
 const { test } = require("node:test");
 const assert = require("node:assert");
@@ -15,7 +15,7 @@ function inDist(t) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "beam-pack-"));
   t.after(() => fs.rmSync(dir, { recursive: true }));
   fs.mkdirSync(path.join(dir, "dist"));
-  for (const target of ["darwin-arm64", "darwin-amd64", "linux-amd64", "linux-arm64"]) {
+  for (const target of ["darwin-arm64", "darwin-amd64", "linux-amd64", "linux-arm64", "windows-amd64.exe"]) {
     fs.writeFileSync(path.join(dir, "dist", `beam-${target}`), target);
   }
   return dir;
@@ -35,21 +35,23 @@ test("writes the shim and a package per platform at the version", (t) => {
     "@notaharness/beam-darwin-x64": "1.2.3",
     "@notaharness/beam-linux-x64": "1.2.3",
     "@notaharness/beam-linux-arm64": "1.2.3",
+    "@notaharness/beam-win32-x64": "1.2.3",
   });
   for (const file of ["index.js", "bin/beam.js"]) {
     assert.ok(fs.existsSync(path.join(dir, "dist", "npm", "beam", file)), file);
   }
 
-  for (const [platform, target] of [
-    ["darwin-arm64", "darwin-arm64"],
-    ["darwin-x64", "darwin-amd64"],
-    ["linux-x64", "linux-amd64"],
-    ["linux-arm64", "linux-arm64"],
+  for (const [platform, target, file] of [
+    ["darwin-arm64", "darwin-arm64", "beam"],
+    ["darwin-x64", "darwin-amd64", "beam"],
+    ["linux-x64", "linux-amd64", "beam"],
+    ["linux-arm64", "linux-arm64", "beam"],
+    ["win32-x64", "windows-amd64.exe", "beam.exe"],
   ]) {
     const pkg = read(dir, `beam-${platform}/package.json`);
     const [os_, cpu] = platform.split("-");
-    assert.deepStrictEqual([pkg.name, pkg.version, pkg.os, pkg.cpu], [`@notaharness/beam-${platform}`, "1.2.3", [os_], [cpu]]);
-    const bin = path.join(dir, "dist", "npm", `beam-${platform}`, "beam");
+    assert.deepStrictEqual([pkg.name, pkg.version, pkg.os, pkg.cpu, pkg.files], [`@notaharness/beam-${platform}`, "1.2.3", [os_], [cpu], [file]]);
+    const bin = path.join(dir, "dist", "npm", `beam-${platform}`, file);
     assert.strictEqual(fs.readFileSync(bin, "utf8"), target);
     assert.strictEqual(fs.statSync(bin).mode & 0o777, 0o755);
   }
@@ -59,7 +61,7 @@ test("every package is MIT and carries LICENSE", (t) => {
   const dir = inDist(t);
   const r = spawnSync(process.execPath, [pack, "1.2.3"], { cwd: dir, encoding: "utf8" });
   assert.strictEqual(r.status, 0, r.stderr);
-  for (const pkg of ["beam", "beam-darwin-arm64", "beam-darwin-x64", "beam-linux-x64", "beam-linux-arm64"]) {
+  for (const pkg of ["beam", "beam-darwin-arm64", "beam-darwin-x64", "beam-linux-x64", "beam-linux-arm64", "beam-win32-x64"]) {
     assert.strictEqual(read(dir, `${pkg}/package.json`).license, "MIT", pkg);
     assert.strictEqual(fs.readFileSync(path.join(dir, "dist", "npm", pkg, "LICENSE"), "utf8"), license, pkg);
   }
@@ -78,16 +80,17 @@ test("npm publishes each package whole, at the version pack wrote", (t) => {
   const dir = inDist(t);
   const r = spawnSync(process.execPath, [pack, "1.2.3-rc.1"], { cwd: dir, encoding: "utf8" });
   assert.strictEqual(r.status, 0, r.stderr);
-  for (const p of ["beam", "beam-darwin-arm64", "beam-darwin-x64", "beam-linux-x64", "beam-linux-arm64"]) {
+  for (const p of ["beam", "beam-darwin-arm64", "beam-darwin-x64", "beam-linux-x64", "beam-linux-arm64", "beam-win32-x64"]) {
     const dry = spawnSync("npm", ["publish", "--dry-run", "--json", "--offline", "--tag", "next"], { cwd: path.join(dir, "dist", "npm", p), encoding: "utf8" });
     const out = JSON.parse(dry.stdout); // keyed by the package's name since npm 11.19
     const got = out[`@notaharness/${p}`] ?? out;
     assert.strictEqual(got.version, "1.2.3-rc.1", p);
     const files = Object.fromEntries(got.files.map((f) => [f.path, f.mode]));
-    const bin = p === "beam" ? ["bin/beam.js", "index.js"] : ["beam"];
+    const exe = p === "beam-win32-x64" ? "beam.exe" : "beam";
+    const bin = p === "beam" ? ["bin/beam.js", "index.js"] : [exe];
     assert.deepStrictEqual(Object.keys(files).sort(), ["LICENSE", "README.md", ...bin, "package.json"].sort(), p);
     if (p !== "beam") {
-      assert.strictEqual(files.beam & 0o777, 0o755, `${p}: the binary's mode in the tarball`);
+      assert.strictEqual(files[exe] & 0o777, 0o755, `${p}: the binary's mode in the tarball`);
     }
   }
 });
