@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -76,7 +75,7 @@ func TestExitWithParentStdinEnds(t *testing.T) {
 
 // docs/10 "exit with parent": the daemon's parent is killed outright; the
 // kernel closes its end of the daemon's stdin, and the daemon shuts down
-// cleanly, removing its socket.
+// cleanly.
 func TestExitWithParentKilled(t *testing.T) {
 	m := blank(t, "fresh")
 	p := exec.Command(os.Args[0], "parent", "--derp-map", relay.MapURL)
@@ -93,16 +92,17 @@ func TestExitWithParentKilled(t *testing.T) {
 		t.Fatalf("the parent printed %q: %v %v", line, err, perr)
 	}
 	t.Cleanup(func() {
-		if !ended(pid) {
-			syscall.Kill(pid, syscall.SIGKILL)
+		if d, err := os.FindProcess(pid); err == nil && !ended(pid) {
+			d.Kill()
 		}
 	})
+	clean := cleanExit(t, m, pid)
 	waitFor(t, 10*time.Second, "the daemon's socket", func() bool { return answering(m) })
 	p.Process.Kill()
 	p.Wait()
 	waitFor(t, 10*time.Second, "the daemon to exit", func() bool { return ended(pid) })
-	if _, err := os.Stat(m.paths().Socket); !os.IsNotExist(err) {
-		t.Errorf("the socket file is left behind: the daemon did not shut down cleanly (%v)", err)
+	if err := clean(); err != nil {
+		t.Error(err)
 	}
 }
 

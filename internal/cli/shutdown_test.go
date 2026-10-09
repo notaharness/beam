@@ -1,4 +1,4 @@
-//go:build beamtest
+//go:build beamtest && unix
 
 package cli_test
 
@@ -109,4 +109,20 @@ func TestShutdownDuringReset(t *testing.T) {
 	if !ended(ptyPid) {
 		t.Error("the pty session outlived the daemon")
 	}
+}
+
+// process runs m's daemon in a process of its own, on the dev relay and the
+// fake worker, with extra as its descriptors from 3 on; exited closes once it
+// has exited, and the test's end kills it.
+func (m *machine) process(t *testing.T, extra ...*os.File) (d *exec.Cmd, exited <-chan struct{}) {
+	t.Helper()
+	d = exec.Command(os.Args[0], "daemon", "--derp-map", relay.MapURL, "--directory", dirURL)
+	d.Env, d.Stderr, d.ExtraFiles = append(os.Environ(), "BEAM_CONFIG_DIR="+m.dir), os.Stderr, extra
+	if err := d.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { d.Wait(); close(done) }()
+	t.Cleanup(func() { d.Process.Kill(); <-done })
+	return d, done
 }
