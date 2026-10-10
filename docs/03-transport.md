@@ -128,7 +128,7 @@ self-hosted `derper`. Tests use an in-process relay ([10](10-testing.md)).
 
 ## Footprint (measured, Go 1.27.1, linux/amd64)
 
-Binary 21.2–22.5 MB stripped across the four release targets (SQLite and go-webauthn
+Binary 21.3–22.6 MB stripped across the five release targets (SQLite and go-webauthn
 included); at the M1 spike, before either, it was 15–16.4 MB with a 21.5 s cold build,
 0.14 s warm, and a 479 MB module cache; `CGO_ENABLED=0`.
 
