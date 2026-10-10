@@ -45,16 +45,15 @@ CGO_ENABLED=0 go build -trimpath -buildvcs=false -tags "$(cat build-tags.txt)" \
 ```
 
 `make dist` runs this for each target, and again with `beamtest` added to the tags into
-`dist/beamtest-$GOOS-$GOARCH`, the test kit ([10](10-testing.md)). `build-tags.txt` is
+`dist/beamtest-$GOOS-$GOARCH`, the test kit, each with `.exe` for Windows ([10](10-testing.md)). `build-tags.txt` is
 copied from tailcat: one comma-separated line; tests and lint use the same tags. SQLite
-via `modernc.org/sqlite` (pure Go). Targets in the first release: `darwin/arm64`,
-`darwin/amd64`, `linux/amd64`, `linux/arm64`. Windows follows when a Windows runner
-exists. 21.2–22.5 MB per binary stripped ([03](03-transport.md), Footprint).
+via `modernc.org/sqlite` (pure Go). Targets: `darwin/arm64`,
+`darwin/amd64`, `linux/amd64`, `linux/arm64`, `windows/amd64`. 21.3–22.6 MB per binary stripped ([03](03-transport.md), Footprint).
 
 ## Versioning
 
 beam has its own semver from the git tag: tag `vX.Y.Z` releases `X.Y.Z`, which
-`beam version`, `status.version` and the five npm packages carry without the `v`. The
+`beam version`, `status.version` and the six npm packages carry without the `v`. The
 version is canonical semver without build metadata (`npm/version.mjs`): no leading
 zeros, no empty prerelease identifier, no `+build`, the spellings npm would publish
 differently or not at all. One with a prerelease (`v1.2.3-rc.1`) is a prerelease.
@@ -65,14 +64,17 @@ pins `@notaharness/beam` with a caret range.
 
 | Package | Contents |
 |---|---|
-| `@notaharness/beam` | `bin/beam.js`: resolves the platform package and runs the binary with `child_process.spawn(bin, argv, { stdio: "inherit" })`, forwards `SIGINT`/`SIGTERM`/`SIGWINCH`, handling them from before the binary starts, exits with the child's code or `128+signal`. `index.js` exports `binaryPath()`. The platform packages are its `optionalDependencies`, the one list of platforms. |
-| `@notaharness/beam-{darwin-arm64,darwin-x64,linux-x64,linux-arm64}` | one binary each, named `beam`; `os`/`cpu` set |
+| `@notaharness/beam` | `bin/beam.js`: resolves the platform package and runs the binary with `child_process.spawn(bin, argv, { stdio: "inherit" })`, forwards `SIGINT`/`SIGTERM`/`SIGWINCH`, handling them from before the binary starts, exits with the child's code or `128+signal`. On Windows it forwards nothing and only outlives `SIGINT` and `SIGBREAK`: the console delivers Ctrl+C and Ctrl+Break to the binary itself (D75). Ending the shim any other way there (`child.kill()`, Task Manager, a job holding the shim alone) leaves the binary running, so a program that manages beam's lifetime spawns `binaryPath()` itself rather than the shim, on every system. `index.js` exports `binaryPath()`. The platform packages are its `optionalDependencies`, the one list of platforms. |
+| `@notaharness/beam-{darwin-arm64,darwin-x64,linux-x64,linux-arm64,win32-x64}` | one binary each, named `beam` (`beam.exe` in `win32-x64`) and alone in `files`; `os`/`cpu` set |
 
 `npm/beam/` is the shim and `npm/platform/package.json` the platform packages' template.
-`node npm/pack.mjs X.Y.Z` writes all five into `dist/npm/` from the binaries `make dist`
+`node npm/pack.mjs X.Y.Z` writes all six into `dist/npm/` from the binaries `make dist`
 left in `dist/`, each ready for `npm publish` as it is. Every package is MIT and carries
 the repository's `LICENSE` and a README: the shim's says what beam is, the platform
-packages' to install the shim instead.
+packages' to install the shim instead. `npm/test/install.e2e.js`, after `make dist`, packs
+them, installs the shim and this machine's platform package from their tarballs offline,
+runs beam through npm's bin entry and checks `binaryPath()`, and starts the test kit's
+binary for its line.
 
 ## The worker
 
@@ -189,24 +191,28 @@ Push (`.github/workflows/ci.yml`): job `ci`, required on `main`: the worker's vi
 workerd (the CSP hashes included) and the ceremony page's flows in Chromium, `make
 lint`, `make crap` (`go test -race` with coverage, the Playwright ceremony test among
 them, then the CRAP gate), `make dist`
-(cross-compile four targets), and the `directory` and `ceremony` packages' tests again
+(cross-compile five targets) with the packed-install test, and the `directory` and `ceremony` packages' tests again
 against the worker under `wrangler dev`, the Go directory client and the slot reader
 held to the real routes. Job `darwin`: `make test` on macOS, where the process
 lifetimes (kqueue, not waitid) and the in-process daemons run for real. Job `windows`:
 `make lint` and `make crap` on Windows, so the Windows files are held to the same lint
 budgets and CRAP gate, and the in-process daemons run on the named pipe and serve `exec`
-in job objects; `pty` and the scenarios that need a Unix process's signals are Unix-only. The `ci` job also runs the npm packages'
+in job objects; then `make dist` and the packed-install test, so the npm install runs
+`bin/beam.js` through npm's `.cmd` shim and `beam.exe` from it; `pty` and the scenarios that need a Unix process's signals are Unix-only. The `ci` job also runs the npm packages'
 node tests.
 
 Tag (`.github/workflows/release.yml`, on `v*`), two jobs. `release`: `npm/version.mjs`
 reads the tag, and the job stops at one that is not canonical. Then `make dist`,
 `npm/pack.mjs`, and a check that `npm publish --dry-run` would publish every package at
-the version the binary prints; only then a GitHub release with the four binaries, the
-four `beamtest-*` binaries of the test kit and `SHA256SUMS` over all eight, marked a
+the version the binary prints; only then a GitHub release with the five binaries, the
+five `beamtest-*` binaries of the test kit and `SHA256SUMS` over all ten, marked a
 prerelease for a prerelease tag. The test kit goes to the GitHub release alone, never to
 npm. `publish`, its own job so that it can be re-run alone:
 packs the same binaries, handed over as a workflow artifact, and publishes the platform
-packages and last the shim, with provenance, under `next` for a prerelease. It
+packages and last the shim, with provenance, under `next` for a prerelease. Before it
+publishes any, it stops if npm has no such package and there is no `NPM_TOKEN`, the one
+way to publish a package's first version; and it skips each package npm has at the
+version already, so a re-run finishes a publish that stopped part-way. It
 authenticates through npm's trusted publishing (OIDC: `id-token: write`, npm 11.5.1 or
 later, which Node 24 has), each package naming `notaharness/beam` and `release.yml` as
 its trusted publisher. A package with none yet, at the first release, is published with

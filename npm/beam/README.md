@@ -11,7 +11,8 @@ beam join    # on every other one
 ```
 
 This package is a launcher. The binary comes from whichever of
-`@notaharness/beam-{darwin-arm64,darwin-x64,linux-x64,linux-arm64}` matches the machine,
+`@notaharness/beam-{darwin-arm64,darwin-x64,linux-x64,linux-arm64,win32-x64}` matches the
+machine,
 installed as an optional dependency; `require("@notaharness/beam").binaryPath()` is its
 path.
 

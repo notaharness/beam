@@ -26,7 +26,8 @@ jobs:
       - run: node --test 'npm/**/*.test.js'
       - run: make lint
       - run: make crap
-      - run: make dist
+      - run: make dist VERSION=0.0.0-ci
+      - run: node --test npm/test/install.e2e.js
       - name: directory contract against the worker
         working-directory: worker
         run: |
@@ -54,5 +55,10 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
       - run: make lint
       - run: make crap
+      - run: make dist VERSION=0.0.0-ci
+      - run: node --test npm/test/install.e2e.js
