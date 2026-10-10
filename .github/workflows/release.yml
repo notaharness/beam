@@ -96,9 +96,31 @@ jobs:
           echo "NPM_TOKEN is $(npm whoami)'s"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # A package npm does not have yet has no trusted publisher, and only the
+      # token publishes it: without one, stop before publishing anything.
+      - name: every package can be published, before any is
+        run: |
+          for p in dist/npm/*/; do
+            name=$(jq -r .name "$p/package.json")
+            if out=$(npm view "$name" name 2>&1); then continue; fi
+            if ! grep -q E404 <<<"$out"; then echo "$out"; exit 1; fi
+            if [ -z "$NODE_AUTH_TOKEN" ]; then
+              echo "$name is not on npm, and only NPM_TOKEN can publish it: CONTRIBUTING.md \"A new platform package\""
+              exit 1
+            fi
+          done
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # A package npm has at the version already is skipped, so a re-run
+      # finishes a publish that stopped part-way.
       - name: publish the platform packages, then the shim
         run: |
           for p in dist/npm/beam-*/ dist/npm/beam/; do
+            name=$(jq -r .name "$p/package.json")
+            if [ "$(npm view "$name@$VERSION" version 2>/dev/null)" = "$VERSION" ]; then
+              echo "$name@$VERSION is published already"
+              continue
+            fi
             npm publish $DRY_RUN --provenance --access public --tag "$DIST_TAG" "$p"
           done
         env:

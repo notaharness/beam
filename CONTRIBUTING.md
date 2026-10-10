@@ -63,13 +63,11 @@ When a job fails part-way:
 
 - `release` failed: nothing is public but the tag. Fix the cause, delete the tag
   (`git push origin :refs/tags/vX.Y.Z && git tag -d vX.Y.Z`) and tag again.
-- The GitHub release exists and `publish` failed before publishing anything: fix the
-  cause (npm authentication, say) and re-run the failed job,
-  `gh run rerun <run-id> --failed`. A re-run runs the workflow as it was at the tag, so a
-  fix to `release.yml` itself needs the next version.
-- `publish` published some packages and not others: npm never takes a version twice, so
-  the version is spent. Delete its GitHub release (`gh release delete vX.Y.Z`) and
-  release the next patch.
+- The GitHub release exists and `publish` failed: fix the cause (npm authentication, a
+  missing `NPM_TOKEN`, an npm outage) and re-run the failed job,
+  `gh run rerun <run-id> --failed`. It skips each package npm has at the version
+  already, so it finishes a publish that stopped part-way. A re-run runs the workflow as
+  it was at the tag, so a fix to `release.yml` itself needs the next version.
 
 ### First release
 
@@ -95,5 +93,5 @@ only be set on a package that exists, so that one release publishes with a token
 A platform added to the shim's `optionalDependencies` is a package npm does not have
 yet, so the first release that carries it publishes with a token, as the first release
 did: steps 2 to 5 above, for that package alone in step 4. Without the token, `publish`
-fails at that package after publishing those before it, and the version is spent.
-`@notaharness/beam-win32-x64` is one such package.
+stops before publishing any package and names the one npm does not have; set the secret
+and re-run the job. `@notaharness/beam-win32-x64` is one such package.
