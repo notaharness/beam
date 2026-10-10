@@ -4,7 +4,8 @@
 // arguments and terminal, SIGINT, SIGTERM and SIGWINCH passed on, and its
 // exit status as this one's. On Windows nothing is passed on: the console
 // sends Ctrl+C and Ctrl+Break to the binary as to this process, which only
-// outlives them, and Node's kill would terminate the binary outright.
+// outlives them, and Node's kill would terminate the binary outright. Ending
+// this process any other way leaves the binary running there (D75).
 const { spawn } = require("node:child_process");
 const { constants } = require("node:os");
 const { binaryPath } = require("..");

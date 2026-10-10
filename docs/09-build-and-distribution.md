@@ -48,7 +48,7 @@ CGO_ENABLED=0 go build -trimpath -buildvcs=false -tags "$(cat build-tags.txt)" \
 `dist/beamtest-$GOOS-$GOARCH`, the test kit, each with `.exe` for Windows ([10](10-testing.md)). `build-tags.txt` is
 copied from tailcat: one comma-separated line; tests and lint use the same tags. SQLite
 via `modernc.org/sqlite` (pure Go). Targets: `darwin/arm64`,
-`darwin/amd64`, `linux/amd64`, `linux/arm64`, `windows/amd64`. 21.2–22.5 MB per binary stripped ([03](03-transport.md), Footprint).
+`darwin/amd64`, `linux/amd64`, `linux/arm64`, `windows/amd64`. 21.3–22.6 MB per binary stripped ([03](03-transport.md), Footprint).
 
 ## Versioning
 
@@ -64,7 +64,7 @@ pins `@notaharness/beam` with a caret range.
 
 | Package | Contents |
 |---|---|
-| `@notaharness/beam` | `bin/beam.js`: resolves the platform package and runs the binary with `child_process.spawn(bin, argv, { stdio: "inherit" })`, forwards `SIGINT`/`SIGTERM`/`SIGWINCH`, handling them from before the binary starts, exits with the child's code or `128+signal`. On Windows it forwards nothing and only outlives `SIGINT` and `SIGBREAK`: the console delivers Ctrl+C and Ctrl+Break to the binary itself (D75). `index.js` exports `binaryPath()`. The platform packages are its `optionalDependencies`, the one list of platforms. |
+| `@notaharness/beam` | `bin/beam.js`: resolves the platform package and runs the binary with `child_process.spawn(bin, argv, { stdio: "inherit" })`, forwards `SIGINT`/`SIGTERM`/`SIGWINCH`, handling them from before the binary starts, exits with the child's code or `128+signal`. On Windows it forwards nothing and only outlives `SIGINT` and `SIGBREAK`: the console delivers Ctrl+C and Ctrl+Break to the binary itself (D75). Ending the shim any other way there (`child.kill()`, Task Manager, a job holding the shim alone) leaves the binary running, so a program that manages beam's lifetime spawns `binaryPath()` itself rather than the shim, on every system. `index.js` exports `binaryPath()`. The platform packages are its `optionalDependencies`, the one list of platforms. |
 | `@notaharness/beam-{darwin-arm64,darwin-x64,linux-x64,linux-arm64,win32-x64}` | one binary each, named `beam` (`beam.exe` in `win32-x64`) and alone in `files`; `os`/`cpu` set |
 
 `npm/beam/` is the shim and `npm/platform/package.json` the platform packages' template.
@@ -209,7 +209,10 @@ five `beamtest-*` binaries of the test kit and `SHA256SUMS` over all ten, marked
 prerelease for a prerelease tag. The test kit goes to the GitHub release alone, never to
 npm. `publish`, its own job so that it can be re-run alone:
 packs the same binaries, handed over as a workflow artifact, and publishes the platform
-packages and last the shim, with provenance, under `next` for a prerelease. It
+packages and last the shim, with provenance, under `next` for a prerelease. Before it
+publishes any, it stops if npm has no such package and there is no `NPM_TOKEN`, the one
+way to publish a package's first version; and it skips each package npm has at the
+version already, so a re-run finishes a publish that stopped part-way. It
 authenticates through npm's trusted publishing (OIDC: `id-token: write`, npm 11.5.1 or
 later, which Node 24 has), each package naming `notaharness/beam` and `release.yml` as
 its trusted publisher. A package with none yet, at the first release, is published with
