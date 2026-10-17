@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/url"
 	"time"
 
 	"github.com/tailscale/tailcat"
@@ -44,9 +46,23 @@ func HomeKey(ctx context.Context, mapURL string, cache DERPMapCache, k *Key) (*K
 	return k.OnRegion(dm.Regions[id]), nil
 }
 
-// fetchMap fetches the DERP map at mapURL.
-func fetchMap(ctx context.Context, mapURL string, cache DERPMapCache, _ bool) (*tailcfg.DERPMap, error) {
-	return tailcat.FetchDERPMap(ctx, tailcat.DERPMapURL(mapURL), tailcat.DERPMapCache(cache))
+// fetchMap fetches the DERP map at mapURL. Unless dev, it refuses a URL that
+// is not https and clears every node's InsecureForTests: those are the dev
+// DERP's alone, which only beamtest builds reach (docs/03).
+func fetchMap(ctx context.Context, mapURL string, cache DERPMapCache, dev bool) (*tailcfg.DERPMap, error) {
+	if u, err := url.Parse(mapURL); !dev && (err != nil || u.Scheme != "https" || u.Host == "") {
+		return nil, fmt.Errorf("DERP map %q: need an https URL", mapURL)
+	}
+	dm, err := tailcat.FetchDERPMap(ctx, tailcat.DERPMapURL(mapURL), tailcat.DERPMapCache(cache))
+	if err != nil || dev {
+		return dm, err
+	}
+	for _, r := range dm.Regions {
+		for _, n := range r.Nodes {
+			n.InsecureForTests = false
+		}
+	}
+	return dm, nil
 }
 
 // on reports whether k's region is, exactly, one of dm's.
