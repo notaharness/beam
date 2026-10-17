@@ -16,7 +16,9 @@ full. Validated as exactly 32 lowercase hex characters wherever it arrives from 
 A `label` is a human name chosen at join, defaulting to the short host name: 1–64
 Unicode scalar values, none of `/ \ { }`, C0/C1 controls or bidirectional controls
 (Unicode `Bidi_Control`: U+061C, U+200E, U+200F, U+202A–U+202E, U+2066–U+2069), so a
-label displays as its bytes read. Rejected, never rewritten.
+label displays as its bytes read. Rejected, never rewritten, wherever an entry is
+verified: a member entry signed before this rule with a bidirectional control in its
+label stops verifying, and that machine re-joins under another label (D70).
 A fleet name (`beam init --fleet-name`, shown by the passkey provider) is held to the
 same bound.
 Labels may collide; disambiguation is by id.

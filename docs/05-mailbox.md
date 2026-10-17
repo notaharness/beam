@@ -16,7 +16,7 @@ Payload ≤ 256 KiB decoded; serialized envelope ≤ 960 KiB, so that one fits a
 line ([06](06-control-socket.md)) with what wraps it. An envelope is stored as it arrived
 and never goes out larger: no line beam writes escapes markup (`<`, `>`, `&`) or U+2028
 and U+2029 in its JSON. `topic` 0–128 scalar values with
-the label character rules. `seq` is a positive safe integer. A `base64` payload is unpadded
+the label character rules, bidirectional controls included (D70). `seq` is a positive safe integer. A `base64` payload is unpadded
 base64url, like every binary field in beam.
 
 ## Store
