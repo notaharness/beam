@@ -4,7 +4,7 @@ Actual worker asset under its CSP; virtual passkeys and intercepted slot respons
 
 Reproduce from worker/: `node test/page-screenshots.mjs`. c = create, a = authorize, r = revoke.
 
-42 distinct visible states, each at 1280px and 390px in light/dark (168 PNGs). Equivalent errors (for example cancelled via the button vs NotAllowedError) share a frame; protocol combinations are exercised by flows.test.mjs.
+44 distinct visible states, each at 1280px and 390px in light/dark (176 PNGs). Equivalent errors (for example cancelled via the button vs NotAllowedError) share a frame; protocol combinations are exercised by flows.test.mjs.
 
 | State | Desktop light | Desktop dark | Phone light | Phone dark |
 | --- | --- | --- | --- | --- |
@@ -17,6 +17,8 @@ Reproduce from worker/: `node test/page-screenshots.mjs`. c = create, a = author
 | ready-r | [desktop-light](ready-r-desktop-light.png) | [desktop-dark](ready-r-desktop-dark.png) | [phone-light](ready-r-phone-light.png) | [phone-dark](ready-r-phone-dark.png) |
 | checking-browser | [desktop-light](checking-browser-desktop-light.png) | [desktop-dark](checking-browser-desktop-dark.png) | [phone-light](checking-browser-phone-light.png) | [phone-dark](checking-browser-phone-dark.png) |
 | compatibility | [desktop-light](compatibility-desktop-light.png) | [desktop-dark](compatibility-desktop-dark.png) | [phone-light](compatibility-phone-light.png) | [phone-dark](compatibility-phone-dark.png) |
+| compatibility-expanded | [desktop-light](compatibility-expanded-desktop-light.png) | [desktop-dark](compatibility-expanded-desktop-dark.png) | [phone-light](compatibility-expanded-phone-light.png) | [phone-dark](compatibility-expanded-phone-dark.png) |
+| blocked-request-details | [desktop-light](blocked-request-details-desktop-light.png) | [desktop-dark](blocked-request-details-desktop-dark.png) | [phone-light](blocked-request-details-phone-light.png) | [phone-dark](blocked-request-details-phone-dark.png) |
 | prf-unknown | [desktop-light](prf-unknown-desktop-light.png) | [desktop-dark](prf-unknown-desktop-dark.png) | [phone-light](prf-unknown-phone-light.png) | [phone-dark](prf-unknown-phone-dark.png) |
 | prf-reported-false | [desktop-light](prf-reported-false-desktop-light.png) | [desktop-dark](prf-reported-false-desktop-dark.png) | [phone-light](prf-reported-false-phone-light.png) | [phone-dark](prf-reported-false-phone-dark.png) |
 | no-webauthn | [desktop-light](no-webauthn-desktop-light.png) | [desktop-dark](no-webauthn-desktop-dark.png) | [phone-light](no-webauthn-phone-light.png) | [phone-dark](no-webauthn-phone-dark.png) |
