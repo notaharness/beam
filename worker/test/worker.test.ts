@@ -4,6 +4,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import schema from "../schema.sql?raw";
 import worker from "../src/index";
 import { Authenticator } from "./authenticator";
+import { freshWindow } from "./window";
 
 const b64 = (b: Uint8Array) => isoBase64URL.fromBuffer(new Uint8Array(b));
 const sha256 = async (b: Uint8Array) => new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(b)));
@@ -201,30 +202,33 @@ describe("docs/09 rate", () => {
   it("allows 120 directory requests a minute per client address", async () => {
     const f = await fleet();
     await register(f);
+    await freshWindow();
     const codes = [];
     for (let i = 0; i < 121; i++) codes.push((await call("GET", "/v1/entries", undefined, f.token, "192.0.2.1")).status);
     expect(codes.slice(0, 119).every((c) => c === 200)).toBe(true);
     expect(codes[120]).toBe(429);
     expect((await call("GET", "/v1/entries", undefined, f.token, "192.0.2.2")).status).toBe(200);
-  }, 30_000); // 123 requests, which a slow runner takes over the default 5 s for
+  }, 45_000); // up to 15 s for a fresh window, then 123 requests, which a slow runner takes over 5 s for
 
   // An IPv6 client holds a /64 at least: its addresses share one rate.
   it("counts an IPv6 client by its /64", async () => {
+    await freshWindow();
     for (let i = 0; i < 120; i++) await call("GET", "/v1/entries", undefined, random(32), "2001:db8:0:1::1");
     expect((await call("GET", "/v1/entries", undefined, random(32), "2001:DB8:0:1:ffff:0:0:2")).status).toBe(429);
     expect((await call("GET", "/v1/entries", undefined, random(32), "2001:db8:0:2::1")).status).toBe(401);
-  }, 30_000);
+  }, 45_000);
 
   // Anyone can register a fleet with a key of their own, each fleet a store of
   // up to 5,000 entries: an address creates a few a minute, which a person
   // starting a fleet never needs more than.
   it("allows 10 fleet registrations a minute per client address", async () => {
+    await freshWindow();
     const codes = [];
     for (let i = 0; i < 11; i++) codes.push((await register(await fleet(), undefined, "192.0.2.10")).status);
     expect(codes.slice(0, 10).every((c) => c === 201)).toBe(true);
     expect(codes[10]).toBe(429);
     expect((await call("GET", "/v1/entries", undefined, random(32), "192.0.2.10")).status).toBe(401);
-  });
+  }, 30_000);
 
   // A fleetId is no secret: every member, revoked ones included, holds it.
   // Requests that prove nothing must not spend the owner's budget.
