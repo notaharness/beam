@@ -153,10 +153,11 @@ Cache-Control: public, max-age=300
 The page is a static asset (`worker/public/`) and these headers live in its `_headers`;
 a worker test recomputes the hashes, and the page's flows run in Chromium under them,
 failing on any policy violation. `connect-src` names the slot route's path prefix,
-not `'self'`: the page can write a slot and reach nothing else. A deploy that adds a
-table runs `schema.sql` against the remote database first (`worker/README.md`). Deploy is `wrangler deploy` from `worker/` with
-Hermann's Cloudflare account, `beam.n10.is` a custom domain of the worker;
-`worker/README.md` has the commands.
+not `'self'`: the page can write a slot and reach nothing else. The release workflow
+deploys it (CI, below): `schema.sql`, whose statements are all `IF NOT EXISTS`, against
+the remote database, then `wrangler deploy` from `worker/`, which creates the bindings
+`wrangler.toml` declares and keeps `beam.n10.is` a custom domain of the worker.
+`worker/README.md` has the one-time setup.
 
 ## Lint
 
@@ -184,8 +185,14 @@ held to the real routes. Job `darwin`: `make test` on macOS, where the process
 lifetimes (kqueue, not waitid) and the in-process daemons run for real. The `ci` job also
 runs the npm packages' node tests.
 
-Tag (`.github/workflows/release.yml`, on `v*`), two jobs. `release`: `npm/version.mjs`
-reads the tag, and the job stops at one that is not canonical. Then `make dist`,
+Tag (`.github/workflows/release.yml`, on `v*`), three jobs. `worker` deploys the
+worker first, so that no binary, on GitHub or npm, meets an older worker than its own;
+the worker serves every installed beam as well, so a release that fails after it is
+harmless. It runs in the environment `cloudflare`, which takes deployments only from `v*`
+tags and holds `CLOUDFLARE_API_TOKEN` (the account's Workers Scripts and D1, the
+`n10.is` zone's Workers Routes) and `CLOUDFLARE_ACCOUNT_ID`, one deploy at a time;
+`npm/version.mjs` stops it at a tag that is not canonical. Then `release`:
+`npm/version.mjs` reads the tag, and the job stops at one that is not canonical. Then `make dist`,
 `npm/pack.mjs`, and a check that `npm publish --dry-run` would publish every package at
 the version the binary prints; only then a GitHub release with the four binaries, the
 four `beamtest-*` binaries of the test kit and `SHA256SUMS` over all eight, marked a
@@ -208,4 +215,5 @@ removing a throwaway `release-check` dist-tag on each checks the dist-tag permis
 a missing trusted publisher or dist-tag permission stops the job before a version is
 spent. Run by hand from `main` (`workflow_dispatch`) with an unpublished version, the
 workflow rehearses that release: no GitHub release, and those checks in place of the
-publish. CONTRIBUTING.md has the steps.
+publish; `worker` runs outside its environment, without the token, applying `schema.sql`
+to a local D1 and running `wrangler deploy --dry-run`. CONTRIBUTING.md has the steps.
