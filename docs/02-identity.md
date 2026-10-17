@@ -202,8 +202,8 @@ The page:
    | `o` | Heading | Action | Button |
    |---|---|---|---|
    | `c` | Create your fleet passkey | Create fleet passkey for “{n}” | Create passkey |
-   | `a` | Authorize this machine | Add “{l}” to fleet | Authorize machine |
-   | `r` | Remove this machine from your fleet | Remove “{l}” from fleet | Authorize removal, marked destructive |
+   | `a` | Authorize “{l}” | Add “{l}” to fleet | Authorize machine |
+   | `r` | Remove “{l}” from your fleet | Remove “{l}” from fleet | Authorize removal, marked destructive |
 
    Create explains “Step 1 of 2. Save a passkey, then return to the machine where you
    started for the second prompt.” There is no separate step label above the heading.
@@ -303,7 +303,7 @@ sealed = HPKE base mode, single shot (RFC 9180):
    copy. All delivered results say “You can close this tab.” There is no Return button.
    PRF failure says “Return to the machine where you started and request a new link. Try a
    browser and passkey provider that support beam's required PRF feature.” Authorize/revoke
-   prominently say “Use the same fleet passkey.” Create says “A passkey may have been saved,
+   prominently say “Use the same fleet passkey; a new passkey creates a different fleet.” Create says “A passkey may have been saved,
    but fleet creation is not complete.” Diagnostics stay in Technical details.
    Other HTTP rejection recovery says “Return to the machine where you started. If the
    request is still waiting, cancel it there, then start a fresh request.”

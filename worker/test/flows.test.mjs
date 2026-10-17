@@ -114,7 +114,7 @@ describe("the ceremony page, given an invalid request", () => {
 
   it("ignores a parameter it does not know", async () => {
     const t = await load(request("a").url + "&z=1");
-    assert.equal(await text(t.page, "h1"), "Authorize this machine");
+    assert.equal(await text(t.page, "h1"), "Authorize “buildbox”");
     assert.equal(await t.page.locator("#home").isVisible(), false);
     assert.ok(await t.page.locator("details#compat").isVisible());
     await t.close();
@@ -132,10 +132,10 @@ describe("the ceremony page, given a request", () => {
     ["c", "Create your fleet passkey",
       "Step 1 of 2. Save a passkey, then return to the machine where you started for the second prompt.",
       "Create fleet passkey for “homelab”", "Create passkey", { n: "homelab" }],
-    ["a", "Authorize this machine",
+    ["a", "Authorize “buildbox”",
       "Use your fleet’s passkey to add this machine. If you just created it, this is step 2 of 2.",
       "Add “buildbox” to fleet", "Authorize machine", {}],
-    ["r", "Remove this machine from your fleet",
+    ["r", "Remove “buildbox” from your fleet",
       "Permanently revoke this machine identity with your fleet’s passkey. Offline machines learn when they reconnect.",
       "Remove “buildbox” from fleet", "Authorize removal", {}],
   ];
@@ -167,6 +167,7 @@ describe("the ceremony page, given a request", () => {
   it("renders a label as text, never markup", async () => {
     const t = await load(request("a", { l: "<img src=x onerror=alert(1)>" }).url);
     assert.equal(await text(t.page, "#machine"), "<img src=x onerror=alert(1)>");
+    assert.equal(await text(t.page, "h1"), "Authorize “<img src=x onerror=alert(1)>”");
     assert.equal(await t.page.locator("main img").count(), 0);
     await t.close();
   });
@@ -376,7 +377,7 @@ describe("the ceremony page's passkey calls", () => {
     const t = await load(req.url, { prf: false, passkey: true });
     await t.page.getByRole("button", { name: "Authorize removal" }).click();
     assert.equal((await settle(t.page))[0], "This passkey could not complete the request.");
-    assert.equal(await text(t.page, "#result-extra"), "Use the same fleet passkey.");
+    assert.equal(await text(t.page, "#result-extra"), "Use the same fleet passkey; a new passkey creates a different fleet.");
     assert.match(await text(t.page, "#technical-text"), /prf\.results\.first/);
     const f = sent(req, t.posts);
     assert.equal(f.get("result"), "prf-unsupported");
