@@ -26,6 +26,22 @@ describe("the ceremony page, without a request", () => {
     await t.close();
   });
 
+  it("opens standalone compatibility help without a ceremony", async () => {
+    const t = await load("https://beam.n10.is/#compat");
+    assert.ok(await t.page.locator("#compat").isVisible());
+    assert.equal(await t.page.locator("#compat").evaluate((d) => d.open), true);
+    assert.equal(await t.page.getByRole("alert").count(), 0);
+    assert.equal(await t.page.locator("#home").isVisible(), false);
+    assert.equal(await t.page.locator("#summary").isVisible(), false);
+    assert.equal(await t.page.getByRole("button").count(), 0);
+    await t.page.getByText("Safari", { exact: true }).click();
+    assert.ok(await t.page.getByText("For this page use Safari 18.4 or later.", { exact: false }).isVisible());
+    assert.equal(await t.calls(), 0);
+    assert.equal(t.posts.length, 0);
+    assert.deepEqual(await t.page.evaluate(() => window.__violations), []);
+    await t.close();
+  });
+
   for (const scheme of ["light", "dark"]) {
     it(`keeps the action, comparison and help usable at phone width in ${scheme}`, async () => {
       const t = await load(request("a", { l: "long-machine-name-".repeat(3) }).url, { scheme });

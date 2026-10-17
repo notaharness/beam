@@ -4,10 +4,11 @@ Actual worker asset under its CSP; virtual passkeys and intercepted slot respons
 
 Reproduce from worker/: `node test/page-screenshots.mjs`. c = create, a = authorize, r = revoke.
 
-44 distinct visible states, each at 1280px and 390px in light/dark (176 PNGs). Equivalent errors (for example cancelled via the button vs NotAllowedError) share a frame; protocol combinations are exercised by flows.test.mjs.
+45 distinct visible states, each at 1280px and 390px in light/dark (180 PNGs). Equivalent errors (for example cancelled via the button vs NotAllowedError) share a frame; protocol combinations are exercised by flows.test.mjs.
 
 | State | Desktop light | Desktop dark | Phone light | Phone dark |
 | --- | --- | --- | --- | --- |
+| compatibility-standalone | [desktop-light](compatibility-standalone-desktop-light.png) | [desktop-dark](compatibility-standalone-desktop-dark.png) | [phone-light](compatibility-standalone-phone-light.png) | [phone-dark](compatibility-standalone-phone-dark.png) |
 | start | [desktop-light](start-desktop-light.png) | [desktop-dark](start-desktop-dark.png) | [phone-light](start-phone-light.png) | [phone-dark](start-phone-dark.png) |
 | start-join | [desktop-light](start-join-desktop-light.png) | [desktop-dark](start-join-desktop-dark.png) | [phone-light](start-join-phone-light.png) | [phone-dark](start-join-phone-dark.png) |
 | start-app | [desktop-light](start-app-desktop-light.png) | [desktop-dark](start-app-desktop-dark.png) | [phone-light](start-app-phone-light.png) | [phone-dark](start-app-phone-dark.png) |

@@ -224,6 +224,11 @@ details p { margin-bottom: 16px; }
   if (!hash) return;
   hide("home");
   show("compat");
+  if (hash === "compat") {
+    hide("intro", "actions", "utilities");
+    $("compat").open = true;
+    return;
+  }
   const req = parse(hash);
   if (!req) {
     put("heading", "This link is incomplete or invalid.");

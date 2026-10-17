@@ -187,7 +187,10 @@ The page:
    and `beam` when absent. Other keys are ignored. With no fragment the page is beam's
    start screen: “Connect this machine”, with `beam init` first, `beam join` under
    “Joining an existing fleet?”, and generic guidance under “Using an app with beam?”.
-   It has no client branding, navigation, illustration or animation. Any other fragment that is not a request gets
+   It has no client branding, navigation, illustration or animation. The exact fragment
+   `#compat` opens standalone compatibility help without a ceremony, passkey prompt or
+   slot write. It hides the start instructions and opens the compatibility disclosure.
+   Any other fragment that is not a request gets
    "This link is incomplete or invalid." instead, without the homepage. Neither has a
    button or writes the slot. A request shows its heading and explanation, then **Action**, **Machine**
    (`l`) and **Machine fingerprint** (`f` in groups of four, as `beam status` prints a

@@ -12,6 +12,7 @@ const result = async (t) => t.page.locator("#result:not([hidden])").waitFor();
 const approve = async (t) => { await ready(t); await click(t, "#go"); await result(t); };
 const disclose = (name) => async (t) => t.page.getByText(name, { exact: true }).click();
 const cases = [
+  { name: "compatibility-standalone", url: "https://beam.n10.is/#compat" },
   { name: "start", url: "https://beam.n10.is/" },
   { name: "start-join", url: "https://beam.n10.is/", act: disclose("Joining an existing fleet?") },
   { name: "start-app", url: "https://beam.n10.is/", act: disclose("Using an app with beam?") },
