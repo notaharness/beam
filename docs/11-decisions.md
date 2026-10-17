@@ -61,6 +61,8 @@
 | D55 | `beam daemon` marks every inherited descriptor above 2 close-on-exec at start, walking `/dev/fd`; where it cannot be listed they stay as they are. | A daemon started from Electron inherits descriptors that are not close-on-exec (inotify, a socket, a V8 snapshot), and every shell it starts for a peer would hold them. | 07 |
 | D56 | The test kit is the beamtest build itself: `beam testkit` serves the dev relay and fake worker, released as `beamtest-*` binaries with `SHA256SUMS` on the GitHub release, never on npm. | n10's e2e and other projects test against the same relay, worker and authenticator beam's own tests use, without building beam; npm would put a software passkey one typo from `@notaharness/beam`. | 09, 10 |
 
+| D57 | The ceremony page uses the shared colour, font and radius tokens, with a standalone beam authentication layout and CLI-first start screen. | Any client can start a ceremony; the page names the originating terminal or app rather than a particular client. One primary action and an explicit return instruction keep approval separate from daemon completion. | 02 |
+
 ## Milestone gate
 
 Before anything else: a spike with three daemons on the dev DERP with forced relay,

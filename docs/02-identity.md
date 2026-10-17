@@ -185,22 +185,24 @@ The page:
    base64url, `f` 16 lowercase hex characters, and `l` a label (1–64 scalar values
    without `/ \ { }` or a control character). For `o=c`, `n` is a label too, at most once,
    and `beam` when absent. Other keys are ignored. With no fragment the page is beam's
-   homepage: what beam is, machines joined by beams whose packets move only without
-   `prefers-reduced-motion: reduce`, to start in n10 Desktop, `beam init` or `beam join`,
-   and links to the repository and n10.is. Any other fragment that is not a request gets
+   start screen: “Connect this machine”, with `beam init` first, `beam join` under
+   “Joining an existing fleet?”, and generic guidance under “Using an app with beam?”.
+   It has no client branding, navigation, illustration or animation. Any other fragment that is not a request gets
    "This link is incomplete or invalid." instead, without the homepage. Neither has a
    button or writes the slot. A request shows its heading and explanation, then **Action**, **Machine**
    (`l`) and **Machine fingerprint** (`f` in groups of four, as `beam status` prints a
    peerId; never the fleet's), "Continue only if you started this request just now.
-   Compare the action, machine name and machine fingerprint with n10 Desktop or your
-   terminal." and that requests expire after five minutes. Names are rendered as text.
+   Compare the action, machine name and machine fingerprint with the terminal or app
+   where you started." and that requests expire after five minutes. Names are rendered as text.
 
    | `o` | Heading | Action | Button |
    |---|---|---|---|
-   | `c` | Step 1 of 2 · Create your fleet passkey | Create fleet passkey for “{n}” | Create passkey |
+   | `c` | Create your fleet passkey | Create fleet passkey for “{n}” | Create passkey |
    | `a` | Authorize {l} | Add “{l}” to fleet | Authorize machine |
    | `r` | Remove {l} from your fleet | Remove “{l}” from fleet | Authorize removal, marked destructive |
 
+   Create explains “Step 1 of 2. Save a passkey, then return to the machine where you
+   started for the second prompt.” There is no separate step label above the heading.
    `o=a` is init's second ceremony, a join and a re-join alike; the page cannot tell them
    apart and does not guess. The **Action** values are the ones n10 Desktop and `beam`
    ([07](07-cli.md)) show beside the link, so the owner compares like with like.
@@ -245,7 +247,9 @@ sealed = HPKE base mode, single shot (RFC 9180):
          = enc (32 bytes) ‖ ciphertext
 ```
 
-5. Says what happened, and offers no retry on the slot: the originating machine makes the
+5. Replaces the approval form with the result, keeping the action, machine and fingerprint
+   in collapsed **Request details**. Compatibility help stays available below the result.
+   Says what happened, and offers no retry on the slot: the originating machine makes the
    next request. The technical details, collapsed, give the result code (with the
    missing PRF field, or the exception's name) and the delivery's HTTP status apart.
    The page writes every result, `cancelled` and `failed` included, so the daemon ends
@@ -264,7 +268,7 @@ sealed = HPKE base mode, single shot (RFC 9180):
    | `409` | This request was already answered. ([01](01-model.md), The relayed result) |
    | `429` | Too many requests. |
    | no response in 20 s | Could not confirm delivery. (the answer may have arrived; nothing is sent again) |
-   | any other status | beam.n10.is did not accept the answer (HTTP {status}). |
+   | any other status | beam did not accept the answer (HTTP {status}). |
    | sealing failed after the call | Could not encrypt the answer. (nothing was sent) |
 
 The daemon opens the sealed result with `sk` and the same `info`. A ciphertext that

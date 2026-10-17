@@ -11,6 +11,17 @@ npx playwright install chromium       # for the page's flows and internal/ceremo
 npm test                              # tsc, vitest in workerd, then the page's flows in Chromium
 ```
 
+The real page’s visual state matrix uses the same isolated virtual authenticator and
+intercepted slot responses as the browser tests:
+
+```sh
+node test/page-screenshots.mjs         # light/dark at desktop and phone widths
+```
+
+Captures go to `docs/review/guided-fleet-browser/screenshots/`, with a state index.
+No requests reach the live service; every page/slot request is intercepted. Browser
+compatibility beyond Chromium’s virtual authenticator still requires device testing.
+
 The Go directory client's and ceremony slot reader's tests (`internal/directory`,
 `internal/ceremony`) also run against the worker under `wrangler dev`:
 
