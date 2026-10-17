@@ -43,7 +43,9 @@ func Connect(p Paths, env []string) (*Client, error) {
 	if err == nil {
 		return c, nil
 	}
-	if !errors.Is(err, syscall.ECONNREFUSED) && !errors.Is(err, fs.ErrNotExist) {
+	// Nothing listens: no file, a stale socket, or a file that is no socket,
+	// which Linux refuses as ECONNREFUSED and macOS as ENOTSOCK.
+	if !errors.Is(err, syscall.ECONNREFUSED) && !errors.Is(err, syscall.ENOTSOCK) && !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
 	}
 	if err := owned(p.Socket); err != nil {
