@@ -127,7 +127,8 @@ func ValidPeerID(s string) bool {
 }
 
 // ValidText reports whether s is min to max Unicode scalar values with none of
-// / \ { } or a control character: the rule for labels and topics.
+// / \ { }, a control character or a bidirectional control: the rule for
+// labels and topics.
 func ValidText(s string, min, max int) bool {
 	if !utf8.ValidString(s) {
 		return false
@@ -136,7 +137,7 @@ func ValidText(s string, min, max int) bool {
 		return false
 	}
 	for _, r := range s {
-		if r == '/' || r == '\\' || r == '{' || r == '}' || unicode.IsControl(r) {
+		if r == '/' || r == '\\' || r == '{' || r == '}' || unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) {
 			return false
 		}
 	}

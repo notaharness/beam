@@ -14,7 +14,9 @@ Displayed as the first 16 characters in groups of four. Stored, keyed and compar
 full. Validated as exactly 32 lowercase hex characters wherever it arrives from outside.
 
 A `label` is a human name chosen at join, defaulting to the short host name: 1–64
-Unicode scalar values, none of `/ \ { }` or C0/C1 controls. Rejected, never rewritten.
+Unicode scalar values, none of `/ \ { }`, C0/C1 controls or bidirectional controls
+(Unicode `Bidi_Control`: U+061C, U+200E, U+200F, U+202A–U+202E, U+2066–U+2069), so a
+label displays as its bytes read. Rejected, never rewritten.
 A fleet name (`beam init --fleet-name`, shown by the passkey provider) is held to the
 same bound.
 Labels may collide; disambiguation is by id.
@@ -183,7 +185,7 @@ The page:
 1. Reads the fragment. A request has a known `o` and exactly one each of `o`, `s`, `k`,
    `c`, `l` and `f`, with `s` 16 bytes and `k` and `c` 32 bytes, each canonical unpadded
    base64url, `f` 16 lowercase hex characters, and `l` a label (1–64 scalar values
-   without `/ \ { }` or a control character). For `o=c`, `n` is a label too, at most once,
+   without `/ \ { }`, a control character or a bidirectional control). For `o=c`, `n` is a label too, at most once,
    and `beam` when absent. Other keys are ignored. With no fragment the page is beam's
    homepage: what beam is, machines joined by beams whose packets move only without
    `prefers-reduced-motion: reduce`, to start in n10 Desktop, `beam init` or `beam join`,
