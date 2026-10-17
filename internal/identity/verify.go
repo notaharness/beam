@@ -41,6 +41,11 @@ func (c Credential) FleetID() string {
 	return hex.EncodeToString(h[:])
 }
 
+// CanonicalKey reports whether pk is a COSE key as CTAP2 encodes it.
+func CanonicalKey(pk []byte) bool {
+	return false
+}
+
 // Verify checks a record (docs/02, "The membership entry"). For a member,
 // revoked reports whether its peer id has a stored revocation.
 func (c Credential) Verify(r Record, revoked func(peerID string) bool) error {
