@@ -125,8 +125,9 @@ are TCP's. No multiplexer. One port, kind in the header.
 Default map `https://tailcat.dev/derpmap.json` (Tailscale's tailcat fleet: rate-limited,
 metadata-logged, no SLA). Cached in `derpmap.json`. `beam daemon --derp-map URL` for a
 self-hosted `derper`; the URL is `https`, and a map's `InsecureForTests` on a node is
-ignored. Tests use an in-process relay ([10](10-testing.md)), whose map is served over
-`http` with `InsecureForTests` set; only a `beamtest` build takes either.
+ignored. An address whose region has a node `InsecureForTests` is refused, in a member
+entry and at a dial. Tests use an in-process relay ([10](10-testing.md)), whose map is
+served over `http` with `InsecureForTests` set; only a `beamtest` build takes either.
 
 ## Footprint (measured, Go 1.27.1, linux/amd64)
 

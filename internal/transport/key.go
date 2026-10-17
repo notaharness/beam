@@ -72,13 +72,15 @@ func raw(k key.NodePublic) [32]byte {
 }
 
 // AddressKey returns the node key an address reaches. It refuses an address
-// that does not parse or carries no pre-shared key.
+// that does not parse or carries no pre-shared key, and outside beamtest
+// builds one on a relay InsecureForTests (docs/03): it backs both the member
+// entry's check and every dial.
 func AddressKey(address string) ([32]byte, error) {
 	return addressKey(address, devDERP)
 }
 
-// addressKey is AddressKey.
-func addressKey(address string, _ bool) ([32]byte, error) {
+// addressKey is AddressKey, taking InsecureForTests only if dev.
+func addressKey(address string, dev bool) ([32]byte, error) {
 	ci, err := tailcat.ParseAddr(tailcat.Addr(address))
 	if err != nil {
 		return [32]byte{}, err
@@ -86,5 +88,20 @@ func addressKey(address string, _ bool) ([32]byte, error) {
 	if ci.PresharedKey.IsZero() {
 		return [32]byte{}, errors.New("address has no pre-shared key")
 	}
+	if !dev && insecure(ci.Region) {
+		return [32]byte{}, errors.New("address is on a relay InsecureForTests, which only beamtest builds reach")
+	}
 	return raw(ci.ServerPublic.NodePublic), nil
+}
+
+// insecure reports whether any node of regions is InsecureForTests.
+func insecure(regions []*tailcfg.DERPRegion) bool {
+	for _, r := range regions {
+		for _, n := range r.Nodes {
+			if n.InsecureForTests {
+				return true
+			}
+		}
+	}
+	return false
 }
