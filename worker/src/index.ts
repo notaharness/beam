@@ -64,11 +64,19 @@ export default {
       if (req.method === "POST" && append) return await appendEntry(env, req, append[1]);
       throw new Refusal(404, "not-found");
     } catch (e) {
-      if (e instanceof Refusal) return json(e.status, { error: e.reason });
+      if (e instanceof Refusal) return refused(req, url, e);
       throw e;
     }
   },
 } satisfies ExportedHandler<Env>;
+
+// refused answers a refusal and, on a route, logs it: the route's pattern,
+// the status and the reason, never a header, an id or a body (docs/09).
+function refused(req: Request, url: URL, e: Refusal): Response {
+  const route = url.pathname.replace(/^\/v1\/fleets\/[0-9a-f]{64}\//, "/v1/fleets/:id/").replace(/^\/v1\/slots\/.*/, "/v1/slots/:slot");
+  if (e.reason !== "not-found") console.log({ event: "refused", route: `${req.method} ${route}`, status: e.status, reason: e.reason });
+  return json(e.status, { error: e.reason });
+}
 
 // POST /v1/fleets: create a fleet with its first entry, a member statement
 // signed by the credential it registers.
@@ -78,7 +86,7 @@ async function register(env: Env, r: Request): Promise<Response> {
   const req = await body(r);
   const pk = bytes(req.credentialPublicKey);
   const token = bytes(req.readToken);
-  if (typeof req.credentialId !== "string" || !req.credentialId || token.length !== 32 || typeof req.first !== "object") {
+  if (typeof req.credentialId !== "string" || !req.credentialId || token.length !== 32 || typeof req.first !== "object" || !canonical(pk)) {
     throw new Refusal(400, "params");
   }
   const fleetId = hex(await sha256(pk));
@@ -181,7 +189,7 @@ async function readSlot(env: Env, req: Request, slot: string): Promise<Response>
   for (const deadline = Date.now() + SLOT_WAIT; !row && Date.now() < deadline; row = await peek()) {
     await new Promise((ok) => setTimeout(ok, SLOT_POLL));
   }
-  if (!row) return new Response(null, { status: 204 });
+  if (!row) return new Response(null, { status: 204, headers: API });
   if (!row.full) throw new Refusal(410, "read");
   const live = Date.now() - SLOT_TTL;
   const [got] = await env.DB.batch<{ sealed: ArrayBuffer | null }>([
@@ -279,8 +287,12 @@ async function body(req: Request): Promise<any> {
   return v;
 }
 
+// API is every API response's headers: no cache keeps a directory page or a
+// slot, and no browser takes one for anything but JSON.
+const API = { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" };
+
 function json(status: number, v: unknown): Response {
-  return new Response(JSON.stringify(v), { status, headers: { "Content-Type": "application/json" } });
+  return new Response(JSON.stringify(v), { status, headers: { ...API, "Content-Type": "application/json" } });
 }
 
 // bytes decodes unpadded base64url, anything else being empty.
@@ -305,4 +317,25 @@ function concat(a: Uint8Array, b: Uint8Array): Uint8Array<ArrayBuffer> {
 
 function hex(b: Uint8Array): string {
   return [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+}
+
+// COSE keys as CTAP2 encodes them, around their 32-byte coordinates:
+// {1: 2, 3: -7, -1: 1, -2: x, -3: y} for ES256, {1: 1, 3: -8, -1: 6, -2: x}
+// for Ed25519.
+const KEYS = [
+  [[0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21, 0x58, 0x20], [0x22, 0x58, 0x20]],
+  [[0xa4, 0x01, 0x01, 0x03, 0x27, 0x20, 0x06, 0x21, 0x58, 0x20]],
+];
+
+// canonical reports whether pk is one of KEYS with no other entry: the one
+// encoding of its public key, so that the key names one fleet (docs/02).
+function canonical(pk: Uint8Array): boolean {
+  return KEYS.some((parts) => {
+    let i = 0;
+    for (const part of parts) {
+      if (!part.every((b, j) => pk[i + j] === b)) return false;
+      i += part.length + 32;
+    }
+    return i === pk.length;
+  });
 }

@@ -18,7 +18,7 @@ encodes again what it checked, which is what arrived from a sender that encodes 
 does, so a key spelled twice or in another case cannot name one sender to beam and another
 to an application; and it never goes out larger: no line beam writes escapes markup (`<`,
 `>`, `&`) or U+2028 and U+2029 in its JSON. `topic` 0–128 scalar values with
-the label character rules. `seq` is a positive safe integer. A `base64` payload is unpadded
+the label character rules, bidirectional controls included (D70). `seq` is a positive safe integer. A `base64` payload is unpadded
 base64url, like every binary field in beam.
 
 ## Store

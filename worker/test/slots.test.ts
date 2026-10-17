@@ -91,7 +91,8 @@ describe("docs/09 slots", () => {
     await vi.advanceTimersByTimeAsync(24_000);
     expect(done).toBe(false);
     await vi.advanceTimersByTimeAsync(2_000);
-    expect((await reading).status).toBe(204);
+    const res = await reading;
+    expect([res.status, res.headers.get("Cache-Control"), res.headers.get("X-Content-Type-Options")]).toEqual([204, "no-store", "nosniff"]);
   });
 
   // A waiting read only reads; one write takes the ciphertext once it is there.

@@ -249,6 +249,10 @@ describe("the ceremony page, given an invalid request", () => {
     ["a label with a brace", { l: "a{b" }],
     ["a label with a C0 control", { l: "a\tb" }],
     ["a label with a C1 control", { l: "a\u0085b" }],
+    ["a label with a right-to-left override", { l: "a\u202eb" }],
+    ["a label with a right-to-left isolate", { l: "a\u2067b" }],
+    ["a label with a right-to-left mark", { l: "a\u200fb" }],
+    ["a fleet name with a left-to-right embedding", { o: "c", n: "a\u202ab" }],
     ["an empty fleet name", { o: "c", n: "" }],
     ["a fleet name with a backslash", { o: "c", n: "a\\b" }],
   ];

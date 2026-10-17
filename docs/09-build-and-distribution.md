@@ -139,7 +139,7 @@ captive portal, a proxy or the edge answered it.
 | | Auth | |
 |---|---|---|
 | `GET /` | none | ceremony page |
-| `POST /v1/fleets` | body | `{ credentialId, credentialPublicKey, readToken, first: { statementHash, blob, assertion } }`. Verifies `first.assertion` under `credentialPublicKey` with challenge `SHA-256("beam-member:v1" ‖ statementHash)`, creates the fleet with `read_hash = SHA-256(readToken)`, stores the entry. `409` if the fleet exists. |
+| `POST /v1/fleets` | body | `{ credentialId, credentialPublicKey, readToken, first: { statementHash, blob, assertion } }`. Verifies `first.assertion` under `credentialPublicKey` with challenge `SHA-256("beam-member:v1" ‖ statementHash)`, creates the fleet with `read_hash = SHA-256(readToken)`, stores the entry. `400` for a `credentialPublicKey` not in CTAP2's encoding ([02](02-identity.md), fleetId). `409` if the fleet exists. |
 | `GET /v1/entries?since=` | `Authorization: Bearer <T_read>`; the fleet is the one whose `read_hash` is `SHA-256(T_read)` | `{ fleetId, credentialId, credentialPublicKey, entries: [ { seq, statementHash, blob, assertion } ], next? }`, ≤ 500 per page, `seq > since`. Every token that opens no fleet, malformed or unknown, gets the same `401`. |
 | `POST /v1/slots/:slot` | none: whoever has the ceremony URL | `{ sealed }`, the page's HPKE ciphertext, unpadded base64url, at most 8 KiB decoded. `201 {}`. `409` if the slot was written in the last five minutes, read or not: one write per slot. |
 | `GET /v1/slots/:slot` | `Authorization: Bearer <readKey>`, which must hash to `:slot` | Holds the request up to 25 s for the write. `200 { sealed }`, and the ciphertext is deleted: one read. `204` if nothing arrived; the daemon asks again. `410` if it was read already. Every key that does not hash to the slot gets the same `401`. |
@@ -153,10 +153,23 @@ rate-limit binding. A revoked machine holds `T_read` and can read; it cannot app
 `:slot` as 22 base64url characters encoding 16 bytes; any other is `404`. The worker can
 open no slot's ciphertext; it never sees the key.
 
+Every API response, a refusal or a `204` included, carries `Cache-Control: no-store` and
+`X-Content-Type-Options: nosniff`: no cache between keeps a directory page or a slot, and
+no browser takes a response for anything but JSON.
+
+Logs: Workers Logs holds one structured line per refusal on a route, `{ event:
+"refused", route, status, reason }`, `route` being the method and the route's pattern
+(`POST /v1/fleets/:id/entries`, `GET /v1/slots/:slot`): failed assertions, tokens and
+keys that open nothing, refused registrations and rate-limit hits. No line holds a
+header, a fleet or slot id, a body or anything from a ceremony fragment, and invocation
+logs, which would hold every request's URL, are off. A request to no route is not
+logged. Request counts and the database's size are Cloudflare's own metrics, watched in
+its dashboard.
+
 ### Ceremony page headers
 
 ```
-Content-Security-Policy: default-src 'none'; script-src 'sha256-…'; style-src 'sha256-…'; connect-src https://beam.n10.is/v1/slots/
+Content-Security-Policy: default-src 'none'; script-src 'sha256-…'; style-src 'sha256-…'; connect-src https://beam.n10.is/v1/slots/; base-uri 'none'; form-action 'none'
 Referrer-Policy: no-referrer
 X-Frame-Options: DENY
 Cache-Control: public, max-age=300
@@ -165,7 +178,9 @@ Cache-Control: public, max-age=300
 The page is a static asset (`worker/public/`) and these headers live in its `_headers`;
 a worker test recomputes the hashes, and the page's flows run in Chromium under them,
 failing on any policy violation. `connect-src` names the slot route's path prefix,
-not `'self'`: the page can write a slot and reach nothing else. The release workflow
+not `'self'`: the page can write a slot and reach nothing else. `base-uri` and
+`form-action`, which `default-src` does not cover, are `'none'`: the page sets no base
+URL and posts no form. The release workflow
 deploys it (CI, below): `schema.sql`, whose statements are all `IF NOT EXISTS`, against
 the remote database, then `wrangler deploy` from `worker/`, which creates the bindings
 `wrangler.toml` declares and keeps `beam.n10.is` a custom domain of the worker.

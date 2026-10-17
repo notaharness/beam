@@ -25,6 +25,10 @@ type Result struct {
 // ErrBadResult is an ok result that is not one.
 var ErrBadResult = errors.New("the page's result is malformed")
 
+// ErrKeyEncoding is a create whose key is not an ES256 or Ed25519 COSE key in
+// CTAP2's encoding alone (docs/02, fleetId).
+var ErrKeyEncoding = errors.New("the passkey's public key is not an ES256 or Ed25519 key in CTAP2's encoding")
+
 // parse reads a result's fields (docs/02, Ceremonies; binary fields are
 // unpadded base64url).
 func parse(f url.Values) (Result, error) {
@@ -85,7 +89,11 @@ func (r Result) Credential(challenge []byte) (identity.Credential, error) {
 		false, true, true, nil, params, protocol.AttestationPolicy{}, protocol.SignaturePolicy{}); err != nil {
 		return identity.Credential{}, err
 	}
-	return identity.Credential{ID: r.CredentialID, PublicKey: p.Response.AttestationObject.AuthData.AttData.CredentialPublicKey}, nil
+	pk := p.Response.AttestationObject.AuthData.AttData.CredentialPublicKey
+	if !identity.CanonicalKey(pk) {
+		return identity.Credential{}, ErrKeyEncoding
+	}
+	return identity.Credential{ID: r.CredentialID, PublicKey: pk}, nil
 }
 
 // Assertion is a get result as a record's assertion.

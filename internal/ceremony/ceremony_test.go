@@ -116,6 +116,23 @@ func TestCredentialChecks(t *testing.T) {
 	}
 }
 
+// docs/02 "fleetId" and init step 2: a create whose key carries more than
+// its algorithm's entries registers no fleet, though the attestation
+// verifies. (go-webauthn re-encodes the key in CTAP2's form, so order and
+// integer width cannot differ by the time the daemon sees it.)
+func TestCredentialCanonicalKey(t *testing.T) {
+	a := identity.NewAuthenticator()
+	att := a.AttestationObject(identity.RPID, identity.FlagUP|identity.FlagUV)
+	key := a.Credential().PublicKey
+	extra := append(append([]byte{0xa6}, key[1:]...), 0x04, 0x00) // and {4: 0}
+	authData := bytes.Replace(att[31:], key, extra, 1)            // after {"fmt", "attStmt", "authData": 0x59 len16
+	r := Result{CredentialID: a.CredentialID, ClientDataJSON: identity.ClientDataJSON("webauthn.create", challenge, identity.Origin),
+		AttestationObject: append(append(att[:29:29], byte(len(authData)>>8), byte(len(authData))), authData...)}
+	if cred, err := r.Credential(challenge); err == nil {
+		t.Errorf("registered %x", cred.PublicKey)
+	}
+}
+
 // docs/02 Ceremonies: the fragment is the table's, n only for a create; the
 // slot is the hash of a read key the URL does not carry, and k a key that
 // the daemon holds the private half of.
