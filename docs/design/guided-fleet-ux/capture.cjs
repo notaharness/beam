@@ -16,6 +16,8 @@ const assert = require('node:assert/strict');
   for(const [flow,count] of Object.entries(counts)) for(let step=0;step<count;step++) {
    await page.goto(`${root}?flow=${flow}&step=${step}&theme=${theme}`);
    assert.equal(await page.locator('#surfaces .surface').count(),2);
+   assert.doesNotMatch(await page.locator('#browser').innerText(), /n10|connected anywhere/i);
+   assert.equal(await page.locator('#browser .brand, #browser .mesh, #browser nav').count(),0);
    assert.equal(await page.evaluate(()=>getComputedStyle(document.body).backgroundColor),theme==='light'?'rgb(255, 255, 255)':'rgb(31, 31, 31)');
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,`${flow}/${step} overflow`);
   }
@@ -46,11 +48,18 @@ const assert = require('node:assert/strict');
  await page.getByRole('button',{name:'Resume setup',exact:true}).click();
  assert.equal(await page.getByRole('dialog').count(),1);
  for(const theme of ['light','dark']) {
+  await page.setViewportSize({width:900,height:1000});
+  await page.goto(root.replace('index.html','browser.html')+`?flow=create&step=0&theme=${theme}`);
+  await page.locator('#browser').screenshot({path:path.join(out,`browser-start-${theme}.png`)});
+  await page.getByText('Joining an existing fleet?',{exact:true}).click();
+  await page.getByText('beam join',{exact:true}).waitFor({state:'visible'});
   await page.setViewportSize({width:390,height:844});
   await page.goto(root.replace('index.html','browser.html')+`?flow=create&step=3&theme=${theme}`);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'mobile overflow');
-  await page.screenshot({path:path.join(out,`browser-mobile-${theme}.png`),fullPage:true});
+  await page.locator('#browser').screenshot({path:path.join(out,`browser-mobile-${theme}.png`)});
+  await page.goto(root.replace('index.html','browser.html')+`?flow=create&step=0&theme=${theme}`);
+  await page.locator('#browser').screenshot({path:path.join(out,`browser-start-mobile-${theme}.png`)});
  }
  assert.deepEqual(errors,[]);await browser.close();
- console.log('72 themed states rendered; interaction checks passed; 18 screenshots captured.');
+ console.log('72 themed states rendered; interaction checks passed; 22 screenshots captured.');
 })().catch(e=>{console.error(e);process.exitCode=1;});

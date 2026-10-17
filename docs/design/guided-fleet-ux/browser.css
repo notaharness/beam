@@ -1,0 +1,64 @@
+/* Standalone beam authentication surface; shared tokens, no client branding. */
+.browser-body {
+  min-height: 780px;
+  padding: 56px 40px;
+  background: var(--background);
+}
+.browser-content { max-width: 368px; margin: 0 auto; }
+.signature {
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -.5px;
+  margin-bottom: 36px;
+}
+.browser-content .stack { gap: 20px; }
+.browser-content h1 { font-size: 24px; line-height: 1.25; letter-spacing: -.6px; }
+.browser-content p { font-size: 14px; line-height: 1.6; }
+.browser-content .eyebrow { letter-spacing: 0; text-transform: none; font-size: 12px; margin-bottom: -12px; }
+.browser-content .identity {
+  background: transparent;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  padding: 18px 0;
+  gap: 14px;
+}
+.browser-content .identity dt { font-size: 12px; }
+.browser-content .identity dd { font-size: 14px; }
+.browser-content .identity code { font-size: 14px; letter-spacing: .4px; }
+.browser-content .handoff {
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  gap: 6px;
+}
+.browser-content .handoff strong { font-size: 14px; font-weight: 600; }
+.browser-content button { min-height: 44px; font-size: 14px; }
+.browser-content .actions { justify-content: space-between; margin-top: -16px; gap: 12px; }
+.browser-content .actions button { border: 0; color: var(--muted-foreground); padding: 8px 0; }
+.browser-content .actions button:hover { color: var(--foreground); background: none; text-decoration: underline; }
+.browser-content small { font-size: 12px; line-height: 1.6; }
+.browser-content details { padding-top: 16px; }
+.browser-content summary { font-size: 13px; }
+.browser-content details p { font-size: 13px; }
+.browser-content details .identity { border: none; }
+.browser-content .command {
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px 20px;
+  display: grid;
+  gap: 8px;
+}
+.browser-content .command code { font-size: 18px; color: var(--foreground); }
+.browser-content details .command { margin-top: 12px; }
+.browser-content .status-icon { display: none; }
+.single.browser-only #surfaces { max-width: 680px; }
+.single .browser-body { min-height: 780px; }
+@media (max-width: 540px) {
+  .browser-body, .single .browser-body { padding: 32px 24px; min-height: 0; }
+  .signature { margin-bottom: 28px; }
+  .browser-content h1 { font-size: 24px; }
+  .browser-content .identity { padding: 16px 0; }
+}
