@@ -141,6 +141,10 @@ binding. A revoked machine holds `T_read` and can read; it cannot append. A slot
 `:slot` as 22 base64url characters encoding 16 bytes; any other is `404`. The worker can
 open no slot's ciphertext; it never sees the key.
 
+Every API response, a refusal or a `204` included, carries `Cache-Control: no-store` and
+`X-Content-Type-Options: nosniff`: no cache between keeps a directory page or a slot, and
+no browser takes a response for anything but JSON.
+
 ### Ceremony page headers
 
 ```

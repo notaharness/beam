@@ -177,7 +177,7 @@ async function readSlot(env: Env, req: Request, slot: string): Promise<Response>
   for (const deadline = Date.now() + SLOT_WAIT; !row && Date.now() < deadline; row = await peek()) {
     await new Promise((ok) => setTimeout(ok, SLOT_POLL));
   }
-  if (!row) return new Response(null, { status: 204 });
+  if (!row) return new Response(null, { status: 204, headers: API });
   if (!row.full) throw new Refusal(410, "read");
   const live = Date.now() - SLOT_TTL;
   const [got] = await env.DB.batch<{ sealed: ArrayBuffer | null }>([
@@ -259,8 +259,12 @@ async function body(req: Request): Promise<any> {
   return v;
 }
 
+// API is every API response's headers: no cache keeps a directory page or a
+// slot, and no browser takes one for anything but JSON.
+const API = { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" };
+
 function json(status: number, v: unknown): Response {
-  return new Response(JSON.stringify(v), { status, headers: { "Content-Type": "application/json" } });
+  return new Response(JSON.stringify(v), { status, headers: { ...API, "Content-Type": "application/json" } });
 }
 
 // bytes decodes unpadded base64url, anything else being empty.
