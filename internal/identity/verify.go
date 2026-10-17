@@ -41,9 +41,30 @@ func (c Credential) FleetID() string {
 	return hex.EncodeToString(h[:])
 }
 
-// CanonicalKey reports whether pk is a COSE key as CTAP2 encodes it.
+// es256Key and ed25519Key are the bytes of a COSE key as CTAP2 encodes it,
+// around its coordinates: {1: 2, 3: -7, -1: 1, -2: x, -3: y} and
+// {1: 1, 3: -8, -1: 6, -2: x}.
+var (
+	es256Key   = [][]byte{{0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21, 0x58, 0x20}, {0x22, 0x58, 0x20}}
+	ed25519Key = [][]byte{{0xa4, 0x01, 0x01, 0x03, 0x27, 0x20, 0x06, 0x21, 0x58, 0x20}}
+)
+
+// CanonicalKey reports whether pk is an ES256 or Ed25519 COSE key as CTAP2
+// encodes it, with no other entry: the one encoding of its public key, so
+// that the key names one fleet (docs/02, fleetId).
 func CanonicalKey(pk []byte) bool {
-	return false
+	return layout(pk, es256Key) || layout(pk, ed25519Key)
+}
+
+// layout reports whether b is the parts of l, each followed by 32 bytes.
+func layout(b []byte, l [][]byte) bool {
+	for _, part := range l {
+		if !bytes.HasPrefix(b, part) || len(b) < len(part)+32 {
+			return false
+		}
+		b = b[len(part)+32:]
+	}
+	return len(b) == 0
 }
 
 // Verify checks a record (docs/02, "The membership entry"). For a member,

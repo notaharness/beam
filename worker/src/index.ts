@@ -82,7 +82,7 @@ function refused(req: Request, url: URL, e: Refusal): Response {
 async function register(env: Env, req: any): Promise<Response> {
   const pk = bytes(req.credentialPublicKey);
   const token = bytes(req.readToken);
-  if (typeof req.credentialId !== "string" || !req.credentialId || token.length !== 32 || typeof req.first !== "object") {
+  if (typeof req.credentialId !== "string" || !req.credentialId || token.length !== 32 || typeof req.first !== "object" || !canonical(pk)) {
     throw new Refusal(400, "params");
   }
   const fleetId = hex(await sha256(pk));
@@ -297,4 +297,25 @@ function concat(a: Uint8Array, b: Uint8Array): Uint8Array<ArrayBuffer> {
 
 function hex(b: Uint8Array): string {
   return [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+}
+
+// COSE keys as CTAP2 encodes them, around their 32-byte coordinates:
+// {1: 2, 3: -7, -1: 1, -2: x, -3: y} for ES256, {1: 1, 3: -8, -1: 6, -2: x}
+// for Ed25519.
+const KEYS = [
+  [[0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21, 0x58, 0x20], [0x22, 0x58, 0x20]],
+  [[0xa4, 0x01, 0x01, 0x03, 0x27, 0x20, 0x06, 0x21, 0x58, 0x20]],
+];
+
+// canonical reports whether pk is one of KEYS with no other entry: the one
+// encoding of its public key, so that the key names one fleet (docs/02).
+function canonical(pk: Uint8Array): boolean {
+  return KEYS.some((parts) => {
+    let i = 0;
+    for (const part of parts) {
+      if (!part.every((b, j) => pk[i + j] === b)) return false;
+      i += part.length + 32;
+    }
+    return i === pk.length;
+  });
 }

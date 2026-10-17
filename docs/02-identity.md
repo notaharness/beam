@@ -46,6 +46,12 @@ cached one and refuse on mismatch (`wrong-passkey`).
 fleetId = lowercase hex of SHA-256(credentialPublicKey COSE bytes)      64 characters
 ```
 
+A new fleet's `credentialPublicKey` is an ES256 or Ed25519 COSE key exactly as CTAP2
+encodes it, `{1: 2, 3: -7, -1: 1, -2: x, -3: y}` or `{1: 1, 3: -8, -1: 6, -2: x}` with
+no other entry, so that one public key names one fleet. `init` and the worker refuse any
+other encoding when a fleet is registered; a fleet registered already keeps its key's
+bytes and its `fleetId` ([11](11-decisions.md), D68).
+
 ## `$BEAM_DIR`
 
 `$BEAM_CONFIG_DIR`, else `$XDG_CONFIG_HOME/beam`, else `~/.config/beam`. Config files are
@@ -300,8 +306,8 @@ nothing else.
 1. Generate `key.json` if absent: fetch the DERP map, home the key on the region that
    answers fastest, compute the address. The label defaults to the host name up to its
    first dot, cut to 64 characters; the fleet name to `beam`.
-2. `create` ceremony: registers the credential. Record `credentialId`,
-   `credentialPublicKey`, `fleetId`. Check `prf.enabled`. beam checks no attestation, so
+2. `create` ceremony: registers the credential, whose key must be in CTAP2's encoding
+   (above). Record `credentialId`, `credentialPublicKey`, `fleetId`. Check `prf.enabled`. beam checks no attestation, so
    this is where the page is trusted for the root, once ([01](01-model.md)); every later
    ceremony on this machine verifies under the credential recorded here.
 3. `get` ceremony with the member challenge and PRF evaluation: yields the assertion
