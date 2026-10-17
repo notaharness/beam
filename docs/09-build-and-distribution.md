@@ -145,6 +145,15 @@ Every API response, a refusal or a `204` included, carries `Cache-Control: no-st
 `X-Content-Type-Options: nosniff`: no cache between keeps a directory page or a slot, and
 no browser takes a response for anything but JSON.
 
+Logs: Workers Logs holds one structured line per refusal on a route, `{ event:
+"refused", route, status, reason }`, `route` being the method and the route's pattern
+(`POST /v1/fleets/:id/entries`, `GET /v1/slots/:slot`): failed assertions, tokens and
+keys that open nothing, refused registrations and rate-limit hits. No line holds a
+header, a fleet or slot id, a body or anything from a ceremony fragment, and invocation
+logs, which would hold every request's URL, are off. A request to no route is not
+logged. Request counts and the database's size are Cloudflare's own metrics, watched in
+its dashboard.
+
 ### Ceremony page headers
 
 ```

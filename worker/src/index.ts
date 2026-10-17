@@ -63,11 +63,19 @@ export default {
       if (req.method === "POST" && append) return await appendEntry(env, append[1], await body(req));
       throw new Refusal(404, "not-found");
     } catch (e) {
-      if (e instanceof Refusal) return json(e.status, { error: e.reason });
+      if (e instanceof Refusal) return refused(req, url, e);
       throw e;
     }
   },
 } satisfies ExportedHandler<Env>;
+
+// refused answers a refusal and, on a route, logs it: the route's pattern,
+// the status and the reason, never a header, an id or a body (docs/09).
+function refused(req: Request, url: URL, e: Refusal): Response {
+  const route = url.pathname.replace(/^\/v1\/fleets\/[0-9a-f]{64}\//, "/v1/fleets/:id/").replace(/^\/v1\/slots\/.*/, "/v1/slots/:slot");
+  if (e.reason !== "not-found") console.log({ event: "refused", route: `${req.method} ${route}`, status: e.status, reason: e.reason });
+  return json(e.status, { error: e.reason });
+}
 
 // POST /v1/fleets: create a fleet with its first entry, a member statement
 // signed by the credential it registers.

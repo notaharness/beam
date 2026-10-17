@@ -16,3 +16,11 @@ database_id = "7e0d3382-8f3d-45a9-bf67-b341360650da"
 name = "LIMITER"
 namespace_id = "1001"
 simple = { limit = 120, period = 60 }
+
+# Workers Logs keeps the worker's own lines, each refusal (docs/09); no
+# invocation log, which would hold every request's URL, slot ids among them.
+[observability]
+enabled = true
+
+[observability.logs]
+invocation_logs = false
