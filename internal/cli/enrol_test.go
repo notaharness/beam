@@ -5,15 +5,21 @@ package cli_test
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -326,7 +332,7 @@ func TestJunkInLog(t *testing.T) {
 	signed, other := newMachine(t, "signed").entry, newMachine(t, "other").entry
 	e := directory.NewEntry(kDir, fleetID, signed)
 	e.Blob = directory.NewEntry(kDir, fleetID, other).Blob
-	if _, err := (directory.Client{URL: dirURL}).Append(context.Background(), fleetID, e); err != nil {
+	if _, _, err := (directory.Client{URL: dirURL}).Append(context.Background(), fleetID, e); err != nil {
 		t.Fatal(err)
 	}
 	b := blank(t, "beta")
@@ -380,11 +386,11 @@ func TestFleetReset(t *testing.T) {
 	waitState(t, a, b, "offline")
 	id := b.id()
 	join2 := b.beam("", "join", "--label", "beta")
-	if join2.code != 0 || b.enrolled(t).id() != id {
-		t.Fatalf("re-join: %+v, id %s want %s", join2, b.id(), id)
+	if join2.code != 0 || b.enrolled(t).id() == id {
+		t.Fatalf("re-join: %+v, id %s, the old one", join2, b.id())
 	}
-	// docs/06: the same fleet and peer id, a later generation
-	if st := b.status(t); st.FleetID != before.FleetID || st.PeerID != before.PeerID || st.Generation <= reset.Generation {
+	// docs/06: the same fleet, a new peer id (docs/02: a new key), a later generation
+	if st := b.status(t); st.FleetID != before.FleetID || st.PeerID == before.PeerID || st.Generation <= reset.Generation {
 		t.Errorf("status after re-join: %+v, after reset %+v", st, reset)
 	}
 	connectedAll(t, a, b)
@@ -402,6 +408,81 @@ func TestFleetReset(t *testing.T) {
 	}
 }
 
+// docs/02 reset: a reset is how a compromised fleet recovers, and a node key
+// copied off a machine is part of what it recovers from. The machine's next
+// enrolment has a new node key, so a new peer id.
+func TestResetNewKey(t *testing.T) {
+	a := initFleet(t, "alpha")
+	b := join(t, "beta")
+	connectedAll(t, a, b)
+	if r := b.beam("reset\n", "fleet", "reset"); r.code != 0 {
+		t.Fatalf("reset: %+v", r)
+	}
+	if r := b.beam("", "join", "--label", "beta"); r.code != 0 {
+		t.Fatalf("join: %+v", r)
+	}
+	if id := b.status(t).PeerID; id == b.id() {
+		t.Fatalf("beta enrolled again as %s, its old key", id[:8])
+	}
+}
+
+// docs/02 reset: a machine re-joined under a new peer id takes a peer's mail
+// from its first message; the counts it saw under the old id are gone.
+func TestResetMail(t *testing.T) {
+	a := initFleet(t, "alpha")
+	b := join(t, "beta")
+	connectedAll(t, a, b)
+	for i := 0; i < 3; i++ {
+		if r := a.beam("", "msg", "send", "beta", "before"); r.code != 0 {
+			t.Fatalf("send: %+v", r)
+		}
+	}
+	if r := b.beam("reset\n", "fleet", "reset"); r.code != 0 {
+		t.Fatalf("reset: %+v", r)
+	}
+	if r := b.beam("", "join", "--label", "beta"); r.code != 0 {
+		t.Fatalf("join: %+v", r)
+	}
+	nb := b.status(t).PeerID
+	waitFor(t, 30*time.Second, "alpha to connect to the new beta", func() bool { return a.peers(t)[nb].State == "connected" })
+	if r := a.beam("", "msg", "send", nb, "after reset"); r.code != 0 {
+		t.Fatalf("send after the reset: %+v", r)
+	}
+	if lines := queue(t, b, "--which", "inbound"); len(lines) != 1 {
+		t.Fatalf("beta's inbound after the reset: %q", lines)
+	}
+}
+
+// docs/07 Peer arguments: after a re-join into the same fleet the label names
+// both identities until the old one is revoked, and then only the new one;
+// the revoked one is still reached by its id.
+func TestRejoinLabel(t *testing.T) {
+	a := initFleet(t, "alpha")
+	b := join(t, "beta")
+	connectedAll(t, a, b)
+	old := b.id()
+	if r := b.beam("reset\n", "fleet", "reset"); r.code != 0 || !strings.Contains(r.out, "beam revoke "+old) {
+		t.Fatalf("reset: %+v, want the old identity's revoke", r)
+	}
+	if r := b.beam("", "join", "--label", "beta"); r.code != 0 {
+		t.Fatalf("join: %+v", r)
+	}
+	nb := b.status(t).PeerID
+	waitFor(t, 30*time.Second, "alpha to connect to the new beta", func() bool { return a.peers(t)[nb].State == "connected" })
+	if r := a.beam("", "exec", "beta", "--", "true"); r.code != 1 || !strings.HasPrefix(r.err, "ambiguous-peer") {
+		t.Fatalf("exec beta, both identities current: %+v", r)
+	}
+	if r := a.beam("", "revoke", old); r.code != 0 {
+		t.Fatalf("revoke the old identity: %+v", r)
+	}
+	if r := a.beam("", "exec", "beta", "--", "true"); r.code != 0 {
+		t.Errorf("exec beta after revoking the old identity: %+v", r)
+	}
+	if r := a.beam("", "exec", old, "--", "true"); r.code != 1 || !strings.HasPrefix(r.err, "revoked-peer") {
+		t.Errorf("exec the old identity: %+v, want revoked-peer", r)
+	}
+}
+
 // docs/02 reset: a reset ends the ceremony under way, and one whose result is
 // already being handled commits nothing; one committing finishes first. The
 // machine ends reset.
@@ -415,6 +496,7 @@ func TestResetEndsCeremony(t *testing.T) {
 			if r := b.beam("", "join", "--label", "beta"); r.code != 0 {
 				t.Fatalf("join: %+v", r)
 			}
+			b.enrolled(t) // a reset gave it a new key; no pause hook is set yet
 		}
 		c, err := control.Connect(b.paths(), nil)
 		if err != nil {
@@ -504,12 +586,54 @@ func TestOldFleetRevokesNothing(t *testing.T) {
 	if r := c.beam("", "join", "--label", "gamma"); r.code != 0 {
 		t.Fatalf("join: %+v", r)
 	}
-	connectedAll(t, b, c)
+	bID, cID := b.status(t).PeerID, c.status(t).PeerID // new keys; not enrolled(t), which the pause hook would race
+	waitFor(t, 30*time.Second, "beta and gamma connected", func() bool {
+		return b.peers(t)[cID].State == "connected" && c.peers(t)[bID].State == "connected"
+	})
 	release()
 	for deadline := time.Now().Add(time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
-		if s := b.peers(t)[c.id()].State; s == "revoked" {
+		if s := b.peers(t)[cID].State; s == "revoked" {
 			t.Fatalf("the old fleet's revocation reached the new one: gamma is %s", s)
 		}
+	}
+}
+
+// docs/02 reset: a revocation that has not reached the directory survives a
+// reset, so that a re-join into the same fleet keeps refusing the revoked
+// machine, which was offline and never learned it.
+func TestResetKeepsRevocation(t *testing.T) {
+	a := initFleet(t, "alpha")
+	c := join(t, "gamma")
+	connectedAll(t, a, c)
+	c.stop()
+	reached, release := pauseAt(t, a, "publishing", c.id())
+	defer worker.SetDown(false)
+	revoked := make(chan result, 1)
+	go func() { revoked <- a.beam("", "revoke", "gamma") }()
+	await(t, reached, "the revocation's publishing")
+	worker.SetDown(true)
+	release()
+	if r := <-revoked; r.code != 0 || !strings.Contains(r.out, "Directory publication is pending") {
+		t.Fatalf("revoke: %+v", r)
+	}
+	a.stop()
+	worker.SetDown(false)
+	a.dirURL = "http://127.0.0.1:1" // the directory stays out of reach until the reset
+	a.start(t)
+	if r := a.beam("reset\n", "fleet", "reset"); r.code != 0 {
+		t.Fatalf("reset: %+v", r)
+	}
+	a.stop()
+	a.dirURL = ""
+	a.start(t)
+	if r := a.beam("", "join", "--label", "alpha"); r.code != 0 {
+		t.Fatalf("re-join: %+v", r)
+	}
+	alpha := a.status(t).PeerID // not a.enrolled: the pause hook reads a's entry
+	c.start(t)
+	waitFor(t, 30*time.Second, "alpha to refuse gamma", func() bool { return c.peers(t)[alpha].State == "revoked-by-fleet" })
+	if r := c.beam("", "exec", alpha, "--", "true"); r.code == 0 {
+		t.Fatal("the revoked machine ran a command on alpha")
 	}
 }
 
@@ -623,6 +747,135 @@ func TestRefusedWriteDropped(t *testing.T) {
 		sqlite(t, a, func(tx *sql.Tx) error { return tx.QueryRow(`SELECT count(*) FROM pending`).Scan(&queued) })
 		return queued == 0
 	})
+}
+
+// docs/07 Enrolment: the CLI shows and opens only a ceremony on beam.n10.is's
+// page, whatever answers on the socket, and prints nothing of its fragment a
+// terminal would take as a control sequence.
+func TestCeremonyURLChecked(t *testing.T) {
+	m := blank(t, "box")
+	os.MkdirAll(filepath.Dir(m.paths().Socket), 0o700)
+	ln, err := net.Listen("unix", m.paths().Socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	hostile := "file:///Applications/Calculator.app#f=0123456789abcdef&l=" + url.QueryEscape("box\x1b]0;owned\x07") + "&o=a"
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go fakeDaemon(c, map[string]any{"join.start": map[string]string{"ceremonyUrl": hostile}})
+		}
+	}()
+	r := m.beam("", "join", "--label", "box")
+	if r.code == 0 || strings.Contains(r.out, "file://") || strings.ContainsRune(r.out+r.err, 0x1b) {
+		t.Fatalf("a hostile ceremony URL: %+v", r)
+	}
+}
+
+// fakeDaemon answers each op on c with its result in results, and any other
+// op with ceremony-cancelled.
+func fakeDaemon(c net.Conn, results map[string]any) {
+	defer c.Close()
+	d := json.NewDecoder(c)
+	for {
+		var req struct {
+			ID json.RawMessage `json:"id"`
+			Op string          `json:"op"`
+		}
+		if d.Decode(&req) != nil {
+			return
+		}
+		res := map[string]any{"id": req.ID, "ok": false, "error": "ceremony-cancelled"}
+		if r, ok := results[req.Op]; ok {
+			res = map[string]any{"id": req.ID, "ok": true, "result": r}
+		}
+		b, _ := json.Marshal(res)
+		c.Write(append(b, '\n'))
+	}
+}
+
+// docs/02 directory: the worker keeps the first blob for a statement, and
+// verifies the assertion, not the blob. A statement it holds already counts
+// as published only if what it holds is the record: a copy of the
+// revocation's assertion, appended first with a junk blob (by a member the
+// revocation was pushed to), leaves the revocation queued, not published,
+// and so does the retry that follows.
+func TestHeldStatementChecked(t *testing.T) {
+	a := initFleet(t, "alpha")
+	c := join(t, "gamma")
+	connectedAll(t, a, c)
+	reached, release := pauseAt(t, a, "publishing", c.id())
+	revoked := make(chan result, 1)
+	go func() { revoked <- a.beam("", "revoke", "gamma") }()
+	await(t, reached, "the revocation's publishing")
+	var rec identity.Record
+	sqlite(t, a, func(tx *sql.Tx) error {
+		var b []byte
+		err := tx.QueryRow(`SELECT record FROM pending`).Scan(&b)
+		if err == nil {
+			err = json.Unmarshal(b, &rec)
+		}
+		return err
+	})
+	h := rec.StatementHash()
+	junk, _ := json.Marshal(map[string]any{"kind": rec.Kind, "statementHash": base64.RawURLEncoding.EncodeToString(h[:]),
+		"blob": base64.RawURLEncoding.EncodeToString(make([]byte, 64)), "assertion": rec.Assertion})
+	res, err := http.Post(dirURL+"/v1/fleets/"+owner.Credential().FleetID()+"/entries", "application/json", strings.NewReader(string(junk)))
+	if err != nil || res.StatusCode != http.StatusCreated {
+		t.Fatalf("junk append: %v %v", res, err)
+	}
+	res.Body.Close()
+	reads := worker.Reads(owner.Credential().FleetID())
+	release()
+	if r := <-revoked; r.code != 0 || strings.Contains(r.out, "Published to directory") {
+		t.Fatalf("a revocation over its statement held with junk: %+v", r)
+	}
+	waitFor(t, 5*time.Second, "the publish's and the retry's reads", func() bool {
+		return worker.Reads(owner.Credential().FleetID()) >= reads+2
+	})
+	var queued int
+	sqlite(t, a, func(tx *sql.Tx) error { return tx.QueryRow(`SELECT count(*) FROM pending`).Scan(&queued) })
+	if queued != 1 {
+		t.Errorf("%d writes queued, want the revocation", queued)
+	}
+}
+
+// docs/06: only the worker's own refusal drops a queued write. A 4xx from
+// anything between (a captive portal, a proxy, the edge) leaves it queued,
+// and it lands once the path clears.
+func TestForeignRefusalKeepsWrite(t *testing.T) {
+	target, _ := url.Parse(dirURL)
+	pass := httputil.NewSingleHostReverseProxy(target)
+	var blocking atomic.Bool
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if blocking.Load() && strings.HasSuffix(r.URL.Path, "/entries") {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, "<html>blocked by policy</html>")
+			return
+		}
+		pass.ServeHTTP(w, r)
+	}))
+	defer proxy.Close()
+	a := initFleet(t, "alpha")
+	a.stop()
+	a.dirURL = proxy.URL
+	a.start(t)
+	c := join(t, "gamma")
+	connectedAll(t, a, c)
+	fleetID := owner.Credential().FleetID()
+	before := worker.Len(fleetID)
+	blocking.Store(true)
+	if r := a.beam("", "revoke", "gamma"); r.code != 0 || !strings.Contains(r.out, "Directory publication is pending") {
+		t.Fatalf("revoke: %+v", r)
+	}
+	time.Sleep(3 * time.Second) // a retry meets the proxy too
+	blocking.Store(false)
+	waitFor(t, 15*time.Second, "the revocation in the directory", func() bool { return worker.Len(fleetID) == before+1 })
 }
 
 // docs/02: a record this machine signs is queued with the state it commits,

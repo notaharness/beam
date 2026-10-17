@@ -57,7 +57,10 @@ func TestAttachEndsWithReset(t *testing.T) {
 	if r := b.beam("", "join", "--label", "beta"); r.code != 0 {
 		t.Fatalf("join: %+v", r)
 	}
-	connectedAll(t, a, b)
+	aID, bID := a.status(t).PeerID, b.status(t).PeerID // new keys; not enrolled(t), which the pause hook would race
+	waitFor(t, 30*time.Second, "alpha and beta connected", func() bool {
+		return a.peers(t)[bID].State == "connected" && b.peers(t)[aID].State == "connected"
+	})
 	release()
 	if msg := readClose(t, ac); msg.Reason != "connection-lost" {
 		t.Errorf("close %+v, want connection-lost", msg)

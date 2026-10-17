@@ -160,6 +160,7 @@ func main() {
 	add("wrong origin", withAssertion(member(n0), uvData, "webauthn.get", "https://beam.n10.is.example.com"), identity.BadAssertion)
 	add("wrong rpIdHash", withAssertion(member(n0), identity.AuthenticatorData("n10.is", identity.FlagUP|identity.FlagUV), "webauthn.get", identity.Origin), identity.BadAssertion)
 	add("user verification unset", withAssertion(member(n0), identity.AuthenticatorData(identity.RPID, identity.FlagUP), "webauthn.get", identity.Origin), identity.BadAssertion)
+	add("user presence unset", withAssertion(member(n0), identity.AuthenticatorData(identity.RPID, identity.FlagUV), "webauthn.get", identity.Origin), identity.BadAssertion)
 	add("create instead of get", withAssertion(member(n0), uvData, "webauthn.create", identity.Origin), identity.BadAssertion)
 	badSig := signed(member(n0))
 	sig, _ := base64.RawURLEncoding.DecodeString(badSig.Assertion.Signature)

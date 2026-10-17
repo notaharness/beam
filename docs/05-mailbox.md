@@ -13,9 +13,11 @@ it.
 ```
 
 Payload ≤ 256 KiB decoded; serialized envelope ≤ 960 KiB, so that one fits a 1 MiB control
-line ([06](06-control-socket.md)) with what wraps it. An envelope is stored as it arrived
-and never goes out larger: no line beam writes escapes markup (`<`, `>`, `&`) or U+2028
-and U+2029 in its JSON. `topic` 0–128 scalar values with
+line ([06](06-control-socket.md)) with what wraps it. An envelope is stored as the receiver
+encodes again what it checked, which is what arrived from a sender that encodes as beam
+does, so a key spelled twice or in another case cannot name one sender to beam and another
+to an application; and it never goes out larger: no line beam writes escapes markup (`<`,
+`>`, `&`) or U+2028 and U+2029 in its JSON. `topic` 0–128 scalar values with
 the label character rules. `seq` is a positive safe integer. A `base64` payload is unpadded
 base64url, like every binary field in beam.
 
@@ -42,9 +44,10 @@ envelope with `seq ≤ high_seq` is answered `accepted: false, reason: "duplicat
 the sender deletes it. Contiguity is not required.
 
 A peer's `send_seq` row is created at 1 in the transaction that pins the peer, so one that
-is missing is an error (`storage-failure` on send), never a restart at 1. `send_seq` and
-`seen` belong to the keys, not the fleet: `beam fleet reset` keeps them, and a peer
-pinned again continues where it was.
+is missing is an error (`storage-failure` on send), never a restart at 1. `beam fleet
+reset` deletes `send_seq` and `seen` with the peers: the machine comes back under a new
+`peerId`, which peers count their mail to from 1, so a `high_seq` kept from the old one
+would drop that mail as a duplicate.
 
 ## Transactions
 

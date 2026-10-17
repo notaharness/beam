@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"net"
@@ -430,6 +431,33 @@ func TestMsgDuplicateSuppressed(t *testing.T) {
 	c.Call("msg.ack", map[string]any{"envelopeId": e.ID}, nil)
 	if q := queue(t, b, "--which", "inbound"); len(q) != 0 {
 		t.Errorf("inbound: %v", q)
+	}
+}
+
+// docs/04 msg: the acceptor checks that an envelope is from the peer bound
+// to the tunnel. What it hands applications says the same to any JSON reader,
+// case-sensitive or not, whatever spelling of the keys the sender chose.
+func TestMsgFromAsChecked(t *testing.T) {
+	ms := fleet(t, "alpha", "beta")
+	a, b := ms[0], ms[1]
+	tun, raw := rawTunnel(t, b)
+	env := fmt.Sprintf(`{"id":"0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f","from":%q,"FROM":%q,"to":%q,"seq":1,"topic":"","payload":"from alpha","encoding":"utf8","createdAt":1}`,
+		a.id(), raw.id(), b.id())
+	sc := rawOpen(t, tun, stream.Header{V: 1, Kind: stream.KindMsg})
+	defer sc.Close()
+	sc.WriteFrame(stream.Data, []byte(env))
+	var ack mailbox.Ack
+	if _, p, err := sc.ReadFrame(); err != nil || json.Unmarshal(p, &ack) != nil {
+		t.Fatalf("ack: %v", err)
+	}
+	if !ack.Accepted {
+		return // refused outright: nothing reaches an application
+	}
+	for _, line := range queue(t, b, "--which", "inbound") {
+		var item struct{ Envelope map[string]any } // as a case-sensitive reader sees it
+		if json.Unmarshal([]byte(line), &item) != nil || item.Envelope["from"] != raw.id() {
+			t.Errorf("accepted from %s, handed on as %s", raw.id()[:8], line)
+		}
 	}
 }
 

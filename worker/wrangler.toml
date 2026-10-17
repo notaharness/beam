@@ -16,3 +16,10 @@ database_id = "7e0d3382-8f3d-45a9-bf67-b341360650da"
 name = "LIMITER"
 namespace_id = "1001"
 simple = { limit = 120, period = 60 }
+
+# A fleet a person starts needs one registration; anyone can register one
+# under a key of their own, so an address creates only a few a minute.
+[[ratelimits]]
+name = "REGISTRATIONS"
+namespace_id = "1002"
+simple = { limit = 10, period = 60 }
