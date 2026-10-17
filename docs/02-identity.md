@@ -205,38 +205,55 @@ The page:
    base64url, `f` 16 lowercase hex characters, and `l` a label (1–64 scalar values
    without `/ \ { }`, a control character or a bidirectional control). For `o=c`, `n` is a label too, at most once,
    and `beam` when absent. Other keys are ignored. With no fragment the page is beam's
-   homepage: what beam is, machines joined by beams whose packets move only without
-   `prefers-reduced-motion: reduce`, to start in n10 Desktop, `beam init` or `beam join`,
-   and links to the repository and n10.is. Any other fragment that is not a request gets
+   start screen: “Connect this machine”, with `beam init` first, `beam join` under
+   “Joining an existing fleet?”, and generic guidance under “Using an app with beam?”.
+   It has no client branding, navigation, illustration or animation. The exact fragment
+   `#compat` opens standalone compatibility help without a ceremony, passkey prompt or
+   slot write. It hides the start instructions and opens the compatibility disclosure.
+   Any other fragment that is not a request gets
    "This link is incomplete or invalid." instead, without the homepage. Neither has a
    button or writes the slot. A request shows its heading and explanation, then **Action**, **Machine**
    (`l`) and **Machine fingerprint** (`f` in groups of four, as `beam status` prints a
-   peerId; never the fleet's), "Continue only if you started this request just now.
-   Compare the action, machine name and machine fingerprint with n10 Desktop or your
-   terminal." and that requests expire after five minutes. Names are rendered as text.
+   peerId; never the fleet's). Above the details, at body size: “Compare these details
+   with the terminal or app where you started.” Before approval: “Continue only if you
+   started this request and all three details match. If anything differs, cancel the
+   request.” Requests expire after five minutes. Names are rendered as text.
 
    | `o` | Heading | Action | Button |
    |---|---|---|---|
-   | `c` | Step 1 of 2 · Create your fleet passkey | Create fleet passkey for “{n}” | Create passkey |
-   | `a` | Authorize {l} | Add “{l}” to fleet | Authorize machine |
-   | `r` | Remove {l} from your fleet | Remove “{l}” from fleet | Authorize removal, marked destructive |
+   | `c` | Create your fleet passkey | Create fleet passkey for “{n}” | Create passkey |
+   | `a` | Authorize “{l}” | Add “{l}” to fleet | Authorize machine |
+   | `r` | Remove “{l}” from your fleet | Remove “{l}” from fleet | Authorize removal, marked destructive |
 
+   Create explains “Step 1 of 2. Save a passkey, then return to the machine where you
+   started for the second prompt.” There is no separate step label above the heading.
    `o=a` is init's second ceremony, a join and a re-join alike; the page cannot tell them
    apart and does not guess. The **Action** values are the ones n10 Desktop and `beam`
    ([07](07-cli.md)) show beside the link, so the owner compares like with like.
 2. Checks the browser before any prompt. None of the checks writes the slot:
    - WebAuthn: a secure context, `PublicKeyCredential`, `navigator.credentials.create`
-     and `get`. Without them there is no button.
+     and `get`. Without them there is no approval button. The heading is “This browser
+     cannot use passkeys.” with “Open this link in an up-to-date browser to continue.”
    - Sealing: it imports `k` and seals a disposable plaintext to it (step 4), which
      exercises X25519 generation, export and derivation, HMAC and AES-GCM; an import
-     alone proves too little. Without X25519 in Web Crypto the page says so, names the
-     browsers that have it, and offers no button and no cancel: it could write nothing.
+     alone proves too little. Without sealing the heading is “This browser cannot complete
+     the request.” with “Open this link in a supported browser. To cancel or restart,
+     return to the machine where you started.” There is no approval or cancel: it could
+     write nothing. This single recovery message also covers both requirements missing.
+     Precise requirements belong in compatibility help.
    - PRF: `PublicKeyCredential.getClientCapabilities()`, waited on for three seconds,
      its `extension:prf` read exactly. `true`, or unknown (no method, no key, not a
      boolean, a throw, no answer in time), enables the button. `false` holds it back
      behind an explicit **Try anyway**: it describes the browser, not the passkey
      provider, and an extension or a provider can bring PRF the browser does not report.
      `isUserVerifyingPlatformAuthenticatorAvailable()` is no PRF test and is not asked.
+
+   Blocked states show recovery under their own heading, primary **Copy link**, and
+   collapsed **Request details**. The PRF-false state instead says, above **Try anyway**:
+   “This browser reports that the required PRF feature is unavailable. Your passkey
+   provider may still support it. You can try; beam will check the result.” Beside the
+   action: “Or copy this link to another browser.” Compatibility help has a short
+   explanation and expandable browser/provider entries, retaining unverified qualifiers.
 
    Wherever it can seal the page offers **Cancel request**, which writes `cancelled`;
    it always offers **Copy link**.
@@ -249,7 +266,12 @@ The page:
    no PRF output from `create` is used. `NotAllowedError` and a cancel are `cancelled`
    (the browser does not tell the owner's cancel from a timeout or no eligible
    passkey); any other exception, a null credential's among them, is `failed`. One
-   result is written however a cancel and the call race.
+   result is written however a cancel and the call race. During the prompt the live
+   instruction directly under the heading is “Create the passkey in your passkey manager.”
+   for create, or “Choose your fleet passkey in the passkey prompt.” for authorize/revoke.
+   Comparison instructions disappear once submission begins; cancel stays while available.
+   Preflight says “Checking whether this browser can continue…”. Delivery says
+   “Sending your response. Keep this page open.”
 4. Builds the result, `result=…` followed, for `ok`, by the call's output:
    `credentialId`, `clientDataJSON` and, for `create`, `attestationObject`; for `get`,
    `authenticatorData`, `signature` and `prf` (`prf.results.first`), each unpadded
@@ -265,7 +287,9 @@ sealed = HPKE base mode, single shot (RFC 9180):
          = enc (32 bytes) ‖ ciphertext
 ```
 
-5. Says what happened, and offers no retry on the slot: the originating machine makes the
+5. Replaces the approval form with the result, keeping the action, machine and fingerprint
+   in collapsed **Request details**. Compatibility help stays available below the result.
+   Says what happened, and offers no retry on the slot: the originating machine makes the
    next request. The technical details, collapsed, give the result code (with the
    missing PRF field, or the exception's name) and the delivery's HTTP status apart.
    The page writes every result, `cancelled` and `failed` included, so the daemon ends
@@ -278,14 +302,31 @@ sealed = HPKE base mode, single shot (RFC 9180):
    | `201`, `ok`, `o=c` | Passkey created. One more step. (the second prompt comes from the originating machine, as a new link) |
    | `201`, `ok`, `o=a` | Approval sent. |
    | `201`, `ok`, `o=r` | Revocation approval sent. |
-   | `201`, `prf-unsupported` | This passkey did not provide WebAuthn PRF. (with the compatibility table open) |
+   | `201`, `prf-unsupported` | This passkey could not complete the request. (with compatibility help open) |
    | `201`, `cancelled` | Passkey request cancelled or not allowed. |
    | `201`, `failed` | The passkey request failed. |
    | `409` | This request was already answered. ([01](01-model.md), The relayed result) |
    | `429` | Too many requests. |
    | no response in 20 s | Could not confirm delivery. (the answer may have arrived; nothing is sent again) |
-   | any other status | beam.n10.is did not accept the answer (HTTP {status}). |
+   | any other status | beam could not accept the response. (HTTP status in Technical details) |
    | sealing failed after the call | Could not encrypt the answer. (nothing was sent) |
+
+   Delivered success has a separate foreground instruction below the outcome heading:
+
+   | Operation | Instruction | Secondary guidance |
+   |---|---|---|
+   | Create | Return to the machine where you started. | Open its new link or scan its new QR code. Use the same passkey to authorize {l}. |
+   | Authorize | Return to {l} to check the result. | If you joined an existing fleet, compare its fleet fingerprint with a machine already in that fleet. |
+   | Revoke | Return to the machine where you started to check that removal completed. | Publication and acknowledgement status belongs in Technical details. |
+
+   Each successful delivery also says “This page cannot confirm completion.” as secondary
+   copy. All delivered results say “You can close this tab.” There is no Return button.
+   PRF failure says “Return to the machine where you started and request a new link. Try a
+   browser and passkey provider that support beam's required PRF feature.” Authorize/revoke
+   prominently say “Use the same fleet passkey; a new passkey creates a different fleet.” Create says “A passkey may have been saved,
+   but fleet creation is not complete.” Diagnostics stay in Technical details.
+   Other HTTP rejection recovery says “Return to the machine where you started. If the
+   request is still waiting, cancel it there, then start a fresh request.”
 
 The daemon opens the sealed result with `sk` and the same `info`. A ciphertext that
 does not open ends the ceremony `ceremony-state`, as does a plaintext that is not a

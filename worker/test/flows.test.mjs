@@ -1,190 +1,23 @@
-// docs/02 Ceremonies, the page's side: public/index.html in Chromium under its
-// own _headers, a virtual authenticator for the WebAuthn calls, and the slot
-// route answered here, each write opened with the daemon's key so a test sees
-// the result the page sealed. Browser capabilities the authenticator cannot
-// vary are replaced before the page loads. Run with node --test; it needs
-// `npx playwright install chromium`.
+// Browser flows under the real page CSP, with an isolated virtual passkey and slot.
 import assert from "node:assert/strict";
-import { createDecipheriv, createHmac, createPublicKey, diffieHellman, generateKeyPairSync, randomBytes } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import { after, before, describe, it } from "node:test";
-import { chromium } from "playwright";
-
-const pub = new URL("../public/", import.meta.url);
-const body = await readFile(new URL("index.html", pub), "utf8");
-const headers = Object.fromEntries(
-  (await readFile(new URL("_headers", pub), "utf8"))
-    .split("\n")
-    .filter((l) => /^\s+\S/.test(l))
-    .map((l) => [l.slice(0, l.indexOf(":")).trim(), l.slice(l.indexOf(":") + 1).trim()]),
-);
-
+import { startBrowser, stopBrowser, request, load, sent, text, visible, settle } from "./page-harness.mjs";
 const b64 = (b) => Buffer.from(b).toString("base64url");
-
-// open is the daemon's HPKE open (docs/02): DHKEM(X25519, HKDF-SHA256),
-// HKDF-SHA256, AES-128-GCM, info "beam-ceremony:v1" ‖ slot.
-function open(key, slot, sealed) {
-  const cat = (...p) => Buffer.concat(p.map((x) => (typeof x === "string" ? Buffer.from(x) : Buffer.from(x))));
-  const u16 = (n) => [n >> 8, n & 255];
-  const kem = cat("KEM", u16(0x20)), suite = cat("HPKE", u16(0x20), u16(1), u16(1));
-  const mac = (k, d) => createHmac("sha256", k).update(d).digest();
-  const extract = (s, salt, label, ikm) => mac(salt.length ? salt : Buffer.alloc(32), cat("HPKE-v1", s, label, ikm));
-  const expand = (s, prk, label, info, n) => mac(prk, cat(u16(n), "HPKE-v1", s, label, info, [1])).subarray(0, n);
-  const enc = sealed.subarray(0, 32);
-  const dh = diffieHellman({ privateKey: key.privateKey, publicKey: createPublicKey({ key: { kty: "OKP", crv: "X25519", x: b64(enc) }, format: "jwk" }) });
-  const shared = expand(kem, extract(kem, [], "eae_prk", dh), "shared_secret", cat(enc, Buffer.from(key.k, "base64url")), 32);
-  const context = cat([0], extract(suite, [], "psk_id_hash", []), extract(suite, [], "info_hash", cat("beam-ceremony:v1", slot)));
-  const secret = extract(suite, shared, "secret", []);
-  const d = createDecipheriv("aes-128-gcm", expand(suite, secret, "key", context, 16), expand(suite, secret, "base_nonce", context, 12));
-  d.setAuthTag(sealed.subarray(sealed.length - 16));
-  return new URLSearchParams(Buffer.concat([d.update(sealed.subarray(32, sealed.length - 16)), d.final()]).toString());
-}
-
-// request is a ceremony's fragment as the daemon writes it, keys sorted.
-function request(o, extra = {}) {
-  const { publicKey, privateKey } = generateKeyPairSync("x25519");
-  const k = publicKey.export({ format: "jwk" }).x;
-  const f = { o, s: b64(randomBytes(16)), k, c: b64(randomBytes(32)), l: "buildbox", f: "b7f39a210c4e55d1", ...(o === "c" ? { n: "beam" } : {}), ...extra };
-  const frag = new URLSearchParams(Object.entries(f).filter(([, v]) => v !== undefined).sort(([a], [b]) => (a < b ? -1 : 1))).toString();
-  return { url: "https://beam.n10.is/#" + frag, slot: f.s, key: { privateKey, k } };
-}
-
-// Replacements run before the page, in its realm. Each is off unless the
-// test's options name it; calls counts the WebAuthn calls the page makes.
-function replace(o) {
-  window.__calls = 0;
-  window.__violations = [];
-  addEventListener("securitypolicyviolation", (e) => window.__violations.push(e.violatedDirective));
-  const cc = CredentialsContainer.prototype;
-  for (const name of ["create", "get"]) {
-    const real = cc[name];
-    Object.defineProperty(cc, name, {
-      configurable: true,
-      value(...args) {
-        window.__calls++;
-        const opts = args[0] || {};
-        if (o.credential === "null") return Promise.resolve(null);
-        if (o.credential?.startsWith("prf:")) {
-          // the real credential, its PRF output cut to this many bytes
-          return real.apply(this, args).then((cred) => {
-            const results = cred.getClientExtensionResults();
-            results.prf.results.first = results.prf.results.first.slice(0, Number(o.credential.slice(4)));
-            cred.getClientExtensionResults = () => results;
-            return cred;
-          });
-        }
-        if (o.credential?.startsWith("throw:")) return Promise.reject(new DOMException("replaced", o.credential.slice(6)));
-        if (o.credential === "hang") {
-          return new Promise((_, reject) => opts.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))));
-        }
-        return real.apply(this, args);
-      },
-    });
-  }
-  if (o.webauthn === false) delete window.PublicKeyCredential;
-  if (o.caps !== undefined && window.PublicKeyCredential) {
-    const caps = {
-      true: () => Promise.resolve({ "extension:prf": true }),
-      false: () => Promise.resolve({ "extension:prf": false }),
-      odd: () => Promise.resolve({ "extension:prf": "true" }),
-      absent: () => Promise.resolve({}),
-      throws: () => Promise.reject(new DOMException("no", "NotSupportedError")),
-      hangs: () => new Promise(() => {}),
-    }[o.caps];
-    if (caps) PublicKeyCredential.getClientCapabilities = caps;
-    else delete PublicKeyCredential.getClientCapabilities;
-  }
-  if (o.x25519 !== undefined) {
-    // x25519 is how many X25519 key generations succeed; later ones fail.
-    const gen = SubtleCrypto.prototype.generateKey;
-    let left = o.x25519;
-    SubtleCrypto.prototype.generateKey = function (alg, ...rest) {
-      if ((alg?.name ?? alg) === "X25519" && left-- <= 0) return Promise.reject(new DOMException("no X25519", "NotSupportedError"));
-      return gen.call(this, alg, ...rest);
-    };
-  }
-}
-
-let browser;
-before(async () => {
-  browser = await chromium.launch();
-});
-after(async () => {
-  await browser?.close();
-});
-
-// load opens the page at url in a fresh browser context, with a virtual
-// authenticator (prf: whether it does PRF; present: whether it answers
-// without a touch) and the slot route answering slot, which is a status or
-// "abort" for a request that gets no response, "hang" for one never answered.
-async function load(url, o = {}) {
-  const context = await browser.newContext({ reducedMotion: o.motion ?? "no-preference", colorScheme: o.scheme ?? "light" });
-  const page = await context.newPage();
-  page.setDefaultTimeout(8000);
-  const cdp = await context.newCDPSession(page);
-  await cdp.send("WebAuthn.enable");
-  await cdp.send("WebAuthn.addVirtualAuthenticator", {
-    options: {
-      protocol: "ctap2", transport: "internal", hasResidentKey: true, hasUserVerification: true, isUserVerified: true,
-      hasPrf: o.prf ?? true, automaticPresenceSimulation: true,
-    },
-  });
-  const posts = [];
-  await page.route("https://beam.n10.is/**", async (route) => {
-    const u = new URL(route.request().url());
-    if (u.pathname === "/") return route.fulfill({ status: 200, contentType: "text/html; charset=utf-8", headers, body });
-    if (u.pathname.startsWith("/v1/slots/") && route.request().method() === "POST") {
-      posts.push({ path: u.pathname, body: JSON.parse(route.request().postData()) });
-      const slot = o.slot ?? 201;
-      if (slot === "abort") return route.abort("connectionreset");
-      if (slot === "hang") return; // never answered
-      return route.fulfill({ status: slot, contentType: "application/json", body: slot === 201 ? "{}" : '{"error":"x"}' });
-    }
-    return route.fulfill({ status: 404 });
-  });
-  if (o.passkey) {
-    // a passkey for beam.n10.is already on the authenticator, as a get needs
-    await page.goto("https://beam.n10.is/");
-    await page.evaluate(async () => {
-      await navigator.credentials.create({ publicKey: {
-        rp: { id: "beam.n10.is", name: "beam" }, user: { id: new Uint8Array(16), name: "beam", displayName: "beam" },
-        challenge: new Uint8Array(32), pubKeyCredParams: [{ type: "public-key", alg: -7 }],
-        authenticatorSelection: { residentKey: "required", userVerification: "required" }, extensions: { prf: {} },
-      } });
-    });
-    await page.goto("about:blank");
-  }
-  await page.addInitScript(replace, o);
-  await page.goto(url);
-  const calls = () => page.evaluate(() => window.__calls);
-  return { page, posts, calls, close: () => context.close() };
-}
-
-// sent is the one result the page wrote, opened.
-function sent(req, posts) {
-  assert.equal(posts.length, 1, "one slot write");
-  assert.equal(posts[0].path, "/v1/slots/" + req.slot);
-  return open(req.key, req.slot, Buffer.from(posts[0].body.sealed, "base64url"));
-}
-
-const text = async (page, sel) => (await page.locator(sel).textContent())?.trim();
-const visible = (page, name) => page.getByRole("button", { name, exact: true }).isVisible();
-
-// settle waits for the page's terminal result and returns its heading and
-// body.
-async function settle(page) {
-  await page.locator("#result:not([hidden])").waitFor();
-  return [await text(page, "#result-heading"), await text(page, "#result-body")];
-}
+before(startBrowser);
+after(stopBrowser);
 
 describe("the ceremony page, without a request", () => {
   it("is beam's homepage and offers no passkey", async () => {
     const t = await load("https://beam.n10.is/");
-    assert.equal(await text(t.page, "h1"), "beam pools your machines into a fleet");
+    assert.equal(await text(t.page, "h1"), "Connect this machine");
     assert.ok(await t.page.locator("#home").isVisible());
-    assert.ok(await t.page.getByRole("img", { name: "Three machines joined by beams, packets running both ways" }).isVisible());
-    assert.equal(await t.page.getByRole("link", { name: "n10" }).getAttribute("href"), "https://n10.is");
-    assert.equal(await t.page.getByRole("link", { name: "open source" }).getAttribute("href"), "https://github.com/notaharness/beam");
+    assert.equal(await text(t.page, "#create-command"), "beam init");
+    assert.doesNotMatch(await t.page.locator("body").innerText(), /n10|connected anywhere/i);
+    await t.page.getByText("Joining an existing fleet?", { exact: true }).click();
+    assert.ok(await t.page.getByText("beam join", { exact: true }).isVisible());
+    await t.page.getByText("Using an app with beam?", { exact: true }).click();
+    assert.match(await t.page.locator("#home").innerText(), /Start the create or join request in that app/);
     assert.equal(await t.page.getByRole("alert").count(), 0);
     assert.equal(await t.page.getByRole("button").count(), 0);
     assert.equal(await t.page.locator("details#compat").isVisible(), false);
@@ -193,34 +26,38 @@ describe("the ceremony page, without a request", () => {
     await t.close();
   });
 
-  // WCAG 1.4.11: the beams are the picture, so each lane holds 3:1 against the page.
+  it("opens standalone compatibility help without a ceremony", async () => {
+    const t = await load("https://beam.n10.is/#compat");
+    assert.ok(await t.page.locator("#compat").isVisible());
+    assert.equal(await t.page.locator("#compat").evaluate((d) => d.open), true);
+    assert.equal(await t.page.getByRole("alert").count(), 0);
+    assert.equal(await t.page.locator("#home").isVisible(), false);
+    assert.equal(await t.page.locator("#summary").isVisible(), false);
+    assert.equal(await t.page.getByRole("button").count(), 0);
+    await t.page.getByText("Safari", { exact: true }).click();
+    assert.ok(await t.page.getByText("For this page use Safari 18.4 or later.", { exact: false }).isVisible());
+    assert.equal(await t.calls(), 0);
+    assert.equal(t.posts.length, 0);
+    assert.deepEqual(await t.page.evaluate(() => window.__violations), []);
+    await t.close();
+  });
+
   for (const scheme of ["light", "dark"]) {
-    it(`draws its beams at 3:1 or more against the page in ${scheme} mode`, async () => {
-      const t = await load("https://beam.n10.is/", { scheme });
-      const [lane, page, opacity] = await t.page.locator("#home .lane").first().evaluate((e) => {
-        const s = getComputedStyle(e);
-        return [s.stroke, getComputedStyle(document.body).backgroundColor, s.opacity];
-      });
-      const luminance = (rgb) => {
-        const [r, g, b] = rgb.match(/\d+/g).map((v) => v / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
-        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
-      };
-      const [hi, lo] = [luminance(lane), luminance(page)].sort((a, b) => b - a);
-      assert.equal(opacity, "1");
-      assert.ok((hi + 0.05) / (lo + 0.05) >= 3, `${lane} on ${page}`);
+    it(`keeps the action, comparison and help usable at phone width in ${scheme}`, async () => {
+      const t = await load(request("a", { l: "long-machine-name-".repeat(3) }).url, { scheme });
+      await t.page.setViewportSize({ width: 390, height: 844 });
+      await t.page.getByRole("button", { name: "Authorize machine" }).waitFor();
+      assert.equal(await t.page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      assert.doesNotMatch(await t.page.locator("body").innerText(), /n10|connected anywhere/i);
+      assert.equal(await t.page.locator("#fingerprint").innerText(), "b7f3 9a21 0c4e 55d1");
+      assert.ok((await t.page.locator("#go").boundingBox()).height >= 44);
+      await t.page.getByText("Passkey compatibility", { exact: true }).click();
+      assert.ok(await t.page.getByText("Browser PRF support detected.", { exact: false }).count());
+      assert.equal(await t.page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
       await t.close();
     });
   }
 
-  for (const [motion, animation] of [["no-preference", "beam"], ["reduce", "none"]]) {
-    it(`moves its beams' packets ${animation === "none" ? "not at all" : "along them"} under prefers-reduced-motion: ${motion}`, async () => {
-      const t = await load("https://beam.n10.is/", { motion });
-      const names = await t.page.locator("#home .packet").evaluateAll((all) => all.map((e) => getComputedStyle(e).animationName));
-      assert.ok(names.length > 0);
-      assert.deepEqual([...new Set(names)], [animation]);
-      await t.close();
-    });
-  }
 });
 
 describe("the ceremony page, given an invalid request", () => {
@@ -261,7 +98,7 @@ describe("the ceremony page, given an invalid request", () => {
       const req = request(change.o ?? "a", change);
       const t = await load(req.url);
       assert.equal(await text(t.page, "[role=alert] h1"), "This link is incomplete or invalid.");
-      assert.equal(await text(t.page, "[role=alert] #explain"), "Return to n10 Desktop or your terminal and start again for a fresh link.");
+      assert.equal(await text(t.page, "[role=alert] #explain"), "Return to the terminal or app where you started and request a fresh link.");
       assert.equal(await t.page.locator("#home").isVisible(), false);
       assert.ok(await t.page.locator("details#compat").isVisible());
       assert.equal(await t.page.getByRole("button").count(), 0);
@@ -281,7 +118,7 @@ describe("the ceremony page, given an invalid request", () => {
 
   it("ignores a parameter it does not know", async () => {
     const t = await load(request("a").url + "&z=1");
-    assert.equal(await text(t.page, "h1"), "Authorize buildbox");
+    assert.equal(await text(t.page, "h1"), "Authorize “buildbox”");
     assert.equal(await t.page.locator("#home").isVisible(), false);
     assert.ok(await t.page.locator("details#compat").isVisible());
     await t.close();
@@ -289,21 +126,21 @@ describe("the ceremony page, given an invalid request", () => {
 
   it("accepts a label of 64 characters beyond the BMP", async () => {
     const t = await load(request("a", { l: "😀".repeat(64) }).url);
-    assert.equal(await text(t.page, "h1"), "Authorize " + "😀".repeat(64));
+    assert.equal(await text(t.page, "#machine"), "😀".repeat(64));
     await t.close();
   });
 });
 
 describe("the ceremony page, given a request", () => {
   const ready = [
-    ["c", "Step 1 of 2 · Create your fleet passkey",
-      "Save a passkey for homelab at beam.n10.is. This creates the fleet’s credential. A second prompt will authorize buildbox and unlock its encrypted directory.",
+    ["c", "Create your fleet passkey",
+      "Step 1 of 2. Save a passkey, then return to the machine where you started for the second prompt.",
       "Create fleet passkey for “homelab”", "Create passkey", { n: "homelab" }],
-    ["a", "Authorize buildbox",
-      "Use your fleet’s passkey to sign this machine’s membership and unlock the encrypted directory. If you just created a fleet passkey, this is step 2 of 2.",
+    ["a", "Authorize “buildbox”",
+      "Use your fleet’s passkey to add this machine. If you just created it, this is step 2 of 2.",
       "Add “buildbox” to fleet", "Authorize machine", {}],
-    ["r", "Remove buildbox from your fleet",
-      "Use your fleet’s passkey to permanently revoke this machine identity. Offline machines learn when they reconnect.",
+    ["r", "Remove “buildbox” from your fleet",
+      "Permanently revoke this machine identity with your fleet’s passkey. Offline machines learn when they reconnect.",
       "Remove “buildbox” from fleet", "Authorize removal", {}],
   ];
   for (const [o, heading, explain, action, button, extra] of ready) {
@@ -314,7 +151,7 @@ describe("the ceremony page, given a request", () => {
       assert.deepEqual(await t.page.locator("#summary dt").allTextContents(), ["Action", "Machine", "Machine fingerprint"]);
       assert.deepEqual(await t.page.locator("#summary dd").allTextContents(), [action, "buildbox", "b7f3 9a21 0c4e 55d1"]);
       assert.equal(await text(t.page, "#safety"),
-        "Continue only if you started this request just now. Compare the action, machine name and machine fingerprint with n10 Desktop or your terminal.");
+        "Continue only if you started this request and all three details match. If anything differs, cancel the request.");
       assert.equal(await text(t.page, "#expiry"), "Requests expire after five minutes. The originating machine shows whether this request is still active.");
       await t.page.getByRole("button", { name: button, exact: true }).waitFor();
       assert.ok(await t.page.getByRole("button", { name: button }).isEnabled());
@@ -333,14 +170,14 @@ describe("the ceremony page, given a request", () => {
 
   it("renders a label as text, never markup", async () => {
     const t = await load(request("a", { l: "<img src=x onerror=alert(1)>" }).url);
-    assert.equal(await text(t.page, "h1"), "Authorize <img src=x onerror=alert(1)>");
+    assert.equal(await text(t.page, "#machine"), "<img src=x onerror=alert(1)>");
+    assert.equal(await text(t.page, "h1"), "Authorize “<img src=x onerror=alert(1)>”");
     assert.equal(await t.page.locator("main img").count(), 0);
     await t.close();
   });
 
   it("names the fleet beam when the create link names none", async () => {
     const t = await load(request("c", { n: undefined }).url);
-    assert.match(await text(t.page, "#explain"), /^Save a passkey for beam at beam\.n10\.is\./);
     assert.equal(await text(t.page, "#action"), "Create fleet passkey for “beam”");
     await t.close();
   });
@@ -352,9 +189,12 @@ describe("the ceremony page's checks before any prompt", () => {
   it("says a browser without WebAuthn cannot run the request, and offers no prompt", async () => {
     const req = request("a");
     const t = await load(req.url, { webauthn: false });
-    await t.page.getByRole("alert").filter({ hasText: "This browser cannot run a WebAuthn passkey request. Open this link in an up-to-date browser." }).waitFor();
+    await t.page.getByRole("alert").filter({ hasText: "This browser cannot use passkeys." }).waitFor();
     assert.equal(await button(t.page).count(), 0);
     assert.ok(await visible(t.page, "Copy link"));
+    assert.equal(await t.page.locator("#summary").isVisible(), false);
+    assert.equal(await t.page.locator("#safety").isVisible(), false);
+    assert.equal(await t.page.locator("#copy").getAttribute("class"), "");
     await t.page.getByRole("button", { name: "Cancel request" }).click();
     assert.equal(sent(req, t.posts).get("result"), "cancelled");
     await t.close();
@@ -364,16 +204,44 @@ describe("the ceremony page's checks before any prompt", () => {
     const req = request("a");
     const t = await load(req.url, { x25519: 0 });
     await t.page.getByRole("alert").filter({
-      hasText: "This browser cannot encrypt beam’s answer. It needs X25519 in Web Crypto. Use Safari 18.4+, Chrome 133+, or Firefox 130+; passkey PRF support is also required.",
+      hasText: "This browser cannot complete the request.",
     }).waitFor();
-    assert.match(await text(t.page, "[role=alert]"), /Return to the originating machine to cancel or restart\.$/);
+    assert.match(await text(t.page, "[role=alert]"), /To cancel or restart, return to the machine where you started\.$/);
     assert.equal(await button(t.page).count(), 0);
     assert.equal(await t.page.getByRole("button", { name: "Cancel request" }).count(), 0);
     assert.ok(await visible(t.page, "Copy link"));
+    assert.equal(await t.page.locator("#summary").isVisible(), false);
+    assert.equal(await t.page.locator("#safety").isVisible(), false);
+    assert.equal(await t.page.locator("#copy").getAttribute("class"), "");
     assert.equal(t.posts.length, 0);
     assert.equal(await t.calls(), 0);
     await t.close();
   });
+
+  it("gives one recovery when passkeys and encryption are both unavailable", async () => {
+    const t = await load(request("a").url, { webauthn: false, x25519: 0 });
+    await t.page.locator("#intro.blocked").waitFor();
+    assert.equal(await text(t.page, "h1"), "This browser cannot complete the request.");
+    assert.equal(await text(t.page, "#explain"), "Open this link in a supported browser. To cancel or restart, return to the machine where you started.");
+    assert.equal(await t.page.getByRole("button", { name: "Cancel request" }).count(), 0);
+    assert.equal(await t.page.locator("#summary").isVisible(), false);
+    await t.page.getByText("Request details", { exact: true }).click();
+    assert.equal(await text(t.page, "#machine"), "buildbox");
+    assert.equal(t.posts.length, 0);
+    await t.close();
+  });
+
+  for (const op of ["c", "a", "r"]) {
+    it(`moves the live instruction above details for o=${op}`, async () => {
+      const t = await load(request(op).url, { credential: "hang" });
+      await t.page.locator("#go:enabled").click();
+      assert.equal(await text(t.page, "#intro #progress"), op === "c" ? "Create the passkey in your passkey manager." : "Choose your fleet passkey in the passkey prompt.");
+      assert.equal(await t.page.locator("#compare").isVisible(), false);
+      assert.equal(await t.page.locator("#safety").isVisible(), false);
+      assert.ok(await visible(t.page, "Cancel request"));
+      await t.close();
+    });
+  }
 
   it("copies the link", async () => {
     const req = request("a");
@@ -397,7 +265,7 @@ describe("the ceremony page's checks before any prompt", () => {
       const t = await load(request("a").url, { caps });
       const copy = caps === "true" ? "Browser PRF support detected. Your selected passkey provider must support PRF too."
         : "This browser cannot confirm PRF support in advance. You can try; beam will check the selected passkey’s result.";
-      await t.page.getByRole("status").filter({ hasText: copy }).waitFor({ timeout: 6000 });
+      await t.page.waitForFunction((copy) => document.getElementById("capability").textContent === copy, copy, { timeout: 6000 });
       assert.ok(await button(t.page).isEnabled());
       assert.equal(await t.page.getByRole("button", { name: "Try anyway" }).count(), 0);
       await t.close();
@@ -407,15 +275,15 @@ describe("the ceremony page's checks before any prompt", () => {
   it("holds back approval in a browser that reports no PRF, until Try anyway", async () => {
     const req = request("a");
     const t = await load(req.url, { caps: "false", passkey: true });
-    await t.page.getByRole("alert").filter({ hasText: "This browser reports that WebAuthn PRF is unavailable. Choose a supported browser before continuing." }).waitFor();
-    assert.ok(await button(t.page).isDisabled());
+    await t.page.locator("#problem").filter({ hasText: "This browser reports that the required PRF feature is unavailable. Your passkey provider may still support it. You can try; beam will check the result." }).waitFor();
+    assert.equal(await button(t.page).count(), 0);
     assert.ok(await t.page.locator("details#compat").isVisible());
-    assert.ok(await t.page.locator("details#compat").evaluate((d) => d.open));
-    assert.equal(await text(t.page, "#anyway-note"), "Your provider may handle passkeys separately from the browser. beam still requires a valid PRF result.");
+    assert.equal(await t.page.locator("details#compat").evaluate((d) => d.open), false);
+    assert.equal(await text(t.page, "#anyway-note"), "Or copy this link to another browser.");
     assert.equal(await t.calls(), 0);
     assert.equal(t.posts.length, 0, "a false preflight writes nothing by itself");
     await t.page.getByRole("button", { name: "Try anyway" }).click();
-    assert.deepEqual(await settle(t.page), ["Approval sent.", "Return to buildbox to check whether it joined. beam still needs to verify the answer and finish directory work. After joining, compare the fleet fingerprint with a machine already in your fleet."]);
+    assert.deepEqual(await settle(t.page), ["Approval sent.", "Return to buildbox to check the result."]);
     assert.equal(sent(req, t.posts).get("result"), "ok");
     assert.equal(await t.page.getByRole("alert").count(), 0, "the preflight's alert is gone once overridden");
     await t.close();
@@ -437,7 +305,7 @@ describe("the ceremony page's passkey calls", () => {
     const t = await load(req.url);
     await t.page.getByRole("button", { name: "Create passkey" }).click();
     assert.deepEqual(await settle(t.page), ["Passkey created. One more step.",
-      "Return to n10 Desktop or your terminal. Open the new link or scan the new QR code, then use this same passkey to authorize buildbox. This page cannot open the second step."]);
+      "Return to the machine where you started."]);
     const f = sent(req, t.posts);
     assert.equal(f.get("result"), "ok");
     for (const k of ["credentialId", "clientDataJSON", "attestationObject"]) assert.ok(f.get(k), k);
@@ -448,12 +316,16 @@ describe("the ceremony page's passkey calls", () => {
     assert.equal(await t.page.locator("#result").getAttribute("role"), "status");
     assert.equal(await t.page.getByRole("button").count(), 0, "no same-slot retry");
     assert.deepEqual(await t.page.evaluate(() => window.__violations), []);
+    assert.equal(await t.page.locator("#intro").isVisible(), false);
+    assert.equal(await t.page.locator("#summary").isVisible(), false);
+    await t.page.getByText("Request details", { exact: true }).click();
+    assert.ok(await t.page.locator("#summary").isVisible());
     await t.close();
   });
 
   for (const [o, heading, body] of [
-    ["a", "Approval sent.", "Return to buildbox to check whether it joined. beam still needs to verify the answer and finish directory work. After joining, compare the fleet fingerprint with a machine already in your fleet."],
-    ["r", "Revocation approval sent.", "Return to your originating machine to check that the revocation completed and see its publication and acknowledgement status."],
+    ["a", "Approval sent.", "Return to buildbox to check the result."],
+    ["r", "Revocation approval sent.", "Return to the machine where you started to check that removal completed."],
   ]) {
     it(`signs o=${o} with the passkey and sends its 32-byte PRF output`, async () => {
       const req = request(o);
@@ -480,12 +352,22 @@ describe("the ceremony page's passkey calls", () => {
     await t.close();
   });
 
+  it("qualifies the fleet check and separates handoff from completion", async () => {
+    const t = await load(request("a").url, { passkey: true });
+    await t.page.getByRole("button", { name: "Authorize machine" }).click();
+    await settle(t.page);
+    assert.equal(await text(t.page, "#result-body"), "Return to buildbox to check the result.");
+    assert.equal(await text(t.page, "#result-secondary"), "If you joined an existing fleet, compare its fleet fingerprint with a machine already in that fleet. This page cannot confirm completion.");
+    assert.equal(await text(t.page, "#result-close"), "You can close this tab.");
+    await t.close();
+  });
+
   it("reports prf-unsupported when a create leaves PRF disabled", async () => {
     const req = request("c");
     const t = await load(req.url, { prf: false });
     await t.page.getByRole("button", { name: "Create passkey" }).click();
-    assert.deepEqual(await settle(t.page), ["This passkey did not provide WebAuthn PRF.",
-      "beam needs PRF to derive its encrypted directory key. The browser, OS and selected passkey provider must support it. Return to your machine and start a fresh request using a supported combination."]);
+    assert.deepEqual(await settle(t.page), ["This passkey could not complete the request.",
+      "Return to the machine where you started and request a new link. Try a browser and passkey provider that support beam's required PRF feature."]);
     assert.equal(await text(t.page, "#result-extra"), "A passkey may have been saved, but fleet creation is not complete.");
     assert.ok(await t.page.locator("details#compat").isVisible());
     assert.ok(await t.page.locator("details#compat").evaluate((d) => d.open));
@@ -498,7 +380,7 @@ describe("the ceremony page's passkey calls", () => {
     const req = request("r");
     const t = await load(req.url, { prf: false, passkey: true });
     await t.page.getByRole("button", { name: "Authorize removal" }).click();
-    assert.equal((await settle(t.page))[0], "This passkey did not provide WebAuthn PRF.");
+    assert.equal((await settle(t.page))[0], "This passkey could not complete the request.");
     assert.equal(await text(t.page, "#result-extra"), "Use the same fleet passkey; a new passkey creates a different fleet.");
     assert.match(await text(t.page, "#technical-text"), /prf\.results\.first/);
     const f = sent(req, t.posts);
@@ -511,7 +393,7 @@ describe("the ceremony page's passkey calls", () => {
     const req = request("a");
     const t = await load(req.url, { passkey: true, credential: "prf:16" });
     await t.page.getByRole("button", { name: "Authorize machine" }).click();
-    assert.equal((await settle(t.page))[0], "This passkey did not provide WebAuthn PRF.");
+    assert.equal((await settle(t.page))[0], "This passkey could not complete the request.");
     assert.equal(sent(req, t.posts).get("result"), "prf-unsupported");
     await t.close();
   });
@@ -520,7 +402,7 @@ describe("the ceremony page's passkey calls", () => {
     const req = request("a");
     const t = await load(req.url, { credential: "hang" });
     await t.page.getByRole("button", { name: "Authorize machine" }).click();
-    await t.page.getByRole("status").filter({ hasText: "Waiting for your fleet passkey…" }).waitFor();
+    await t.page.getByRole("status").filter({ hasText: "Choose your fleet passkey in the passkey prompt." }).waitFor();
     await t.page.getByRole("button", { name: "Cancel request" }).click();
     assert.deepEqual(await settle(t.page), ["Passkey request cancelled or not allowed.",
       "The browser did not return a passkey. You may have cancelled, the prompt may have expired, or no eligible passkey was available. Return to your machine to try again with a fresh link."]);
@@ -575,9 +457,9 @@ describe("the ceremony page's delivery", () => {
     ["abort", "Could not confirm delivery.",
       "Check the originating machine before starting again: it may have received your answer. If it is still waiting, cancel there and start a fresh request."],
     [429, "Too many requests.",
-      "beam.n10.is did not accept this answer. Wait a minute, then cancel the pending request on the originating machine and start again."],
-    [500, "beam.n10.is did not accept the answer (HTTP 500).", "Return to the originating machine and start a fresh request."],
-    [404, "beam.n10.is did not accept the answer (HTTP 404).", "Return to the originating machine and start a fresh request."],
+      "beam did not accept this answer. Wait a minute, then cancel the pending request on the originating machine and start again."],
+    [500, "beam could not accept the response.", "Return to the machine where you started. If the request is still waiting, cancel it there, then start a fresh request."],
+    [404, "beam could not accept the response.", "Return to the machine where you started. If the request is still waiting, cancel it there, then start a fresh request."],
   ];
   // Each result against the slot answers that must not be read as it (a
   // 409, no response); the others need only one.
