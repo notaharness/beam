@@ -70,7 +70,7 @@ current step heading. Automatic progress never steals focus from another applica
 | Another verified `peer.new` / peer snapshot | That identity is known here; connection state separately | No change |
 
 Create is two prompts, not one long WebAuthn request. Desktop knows which journey it started.
-The browser’s `o=a` serves init step 2, join and re-join equally: title **Authorize {machine}**,
+The browser’s `o=a` serves init step 2, join and re-join equally: title **Authorize this machine**,
 with “If you just created it, this is step 2 of 2.” Never show an unconditional
 “2 of 2” there. Shared task terms are **Save a passkey** and **Add this machine**; retain
 the action labels and security semantics. The create heading has a separate “Step 1 of 2”
@@ -92,11 +92,17 @@ Both surfaces show an identical comparison block, derived from the ceremony URL:
 - **Machine**: target label; aliases do not replace the signed label here.
 - **Machine fingerprint**: first 16 hex characters, grouped in fours. Backend comparisons use full IDs.
 
-The browser shows: “Continue only if you started this request just now. Compare the action,
-machine name and machine fingerprint with the terminal or app where you started.” Desktop shows:
+The browser says above the comparison: “Compare these details with the terminal or app where you started.” Just before approval: “Continue only if you started this request and all three details match. If anything differs, cancel the request.” Keep **Cancel request**, with no checkbox. Desktop shows:
 “Check the action, machine name and machine fingerprint on the page.” A mismatch means do not
 approve; cancel on the origin and inspect the request. Machine and fleet fingerprints are
 separately labelled; the fleet fingerprint is never presented as the machine fingerprint.
+
+Browser state hierarchy:
+
+- Blocked states own the heading and put recovery immediately below it. The comparison is collapsed under **Request details**; **Copy link** is primary. Cancel is unavailable without encryption.
+- Waiting instructions sit directly below the heading: create says “Create the passkey in your passkey manager.”; authorize/revoke say “Choose your fleet passkey in the passkey prompt.” Sending says “Sending your response. Keep this page open.” Preflight says “Checking whether this browser can continue…”. Obsolete comparison instructions disappear once submission begins; keep cancel while available.
+- Delivered states keep the outcome heading, then a separate foreground return instruction. Secondary copy includes “This page cannot confirm completion.” All delivered results add “You can close this tab.” No fake Return button. Request and technical details use tight collapsed disclosures.
+- Compatibility help starts with a short explanation, then expandable browser/provider entries with unverified qualifiers retained. PRF diagnostics belong under **Technical details**.
 
 ### Create a fleet
 
@@ -105,9 +111,9 @@ separately labelled; the fleet fingerprint is never presented as the machine fin
 | Choose | First run: “Your machines, connected anywhere”; **Create a fleet** / **Join a fleet**. Create form: **Machine name**, **Fleet name**, “Shown in your passkey manager.” | No request: “Connect this machine”. “Start in the terminal on the machine you want to connect.” **Create a fleet** / `beam init`. **Joining an existing fleet?** reveals `beam join`. No ceremony action. | No request yet. Name validation follows docs/02; retain invalid input, use defaults for blank input in production. |
 | Explain | “Save one passkey for your fleet, then use it to add this machine. Expect two passkey prompts.” **Continue** starts `init.start` + `init.wait`. | No change until link opens. | Starting/preparing network has its own status; do not show a stale link. |
 | Prompt 1 | “1 of 2 · Save a passkey”; “Next · browser or phone”; “Save the passkey there. Come back here for the second link.” Comparison block, **Open in browser**, **Copy link**, QR, **Cancel request**. | “Step 1 of 2” / “Create your fleet passkey”; “Save a passkey, then use it to add this machine in a second prompt.” **Create passkey**. | Open browser when URL arrives, as today. QR is the same URL byte for byte; no different phone flow. |
-| Prompt 1 delivered | Remain on step 1 until second `ceremony` event. | “Passkey created. One more step.” / “Open the new link or scan the new QR code from your terminal or app. Use the same passkey to add this machine.” | Acknowledges creation and delivery only. First tab is finished; it cannot open or redirect to step 2. |
-| Prompt 2 | On second event: “2 of 2 · Add this machine”. “Use the passkey you just saved.” Replace the old URL and QR; open new URL. If still on phone, return and scan the **new** QR. | New page: “Authorize laptop”. “Use your fleet’s passkey. If you just created it, this is step 2 of 2.” **Authorize machine**. | Never reuse first URL; no back button that restarts its slot. |
-| Prompt 2 delivered | Waiting, then “Finishing setup…” only when `publishing` arrives. | “Approval sent.” / “Return to the machine where you started. Check whether laptop joined. Then compare its fleet fingerprint with a machine already in your fleet.” | Browser explains it cannot confirm the result. No success checkmark for membership. |
+| Prompt 1 delivered | Remain on step 1 until second `ceremony` event. | “Passkey created. One more step.” / “Return to the machine where you started.” / “Open its new link or scan its new QR code. Use the same passkey to authorize laptop.” | Acknowledges creation and delivery only. First tab is finished; it cannot open or redirect to step 2. |
+| Prompt 2 | On second event: “2 of 2 · Add this machine”. “Use the passkey you just saved.” Replace the old URL and QR; open new URL. If still on phone, return and scan the **new** QR. | New page: “Authorize this machine”. “Use your fleet’s passkey. If you just created it, this is step 2 of 2.” **Authorize machine**. | Never reuse first URL; no back button that restarts its slot. |
+| Prompt 2 delivered | Waiting, then “Finishing setup…” only when `publishing` arrives. | “Approval sent.” / “Return to laptop to check the result.” / “If you joined an existing fleet, compare its fleet fingerprint with a machine already in that fleet.” | Browser says “This page cannot confirm completion.” and “You can close this tab.” No success checkmark for membership. |
 | Complete | Only `init.wait` success: close dialog, announce “Fleet created”, show local row, and “Your other machines will appear here.” **Add a machine** via Fleet +. | Remains “Approval sent.” Can close this tab. | Publication status is independent of membership. Pending notice persists after dialog closes. |
 
 The no-request page continues: “Open the link beam gives you, or scan its QR code with your
@@ -136,7 +142,7 @@ available. Do not poll the remote directory for a progress signal.
 | Step | Joining Desktop | Existing Desktop | Browser |
 | --- | --- | --- | --- |
 | Prepare | **Join a fleet**, **Machine name**. “Use the passkey for your existing fleet. This takes one passkey prompt.” | Add instructions or Fleet overview. | Homepage until URL opens. |
-| Authorize | `join.start` / `join.wait`; “Add this machine”; comparison + open/copy/QR. “Use your fleet’s passkey there. Come back here to see the result.” | “Waiting for a new machine…”; no fictional signing progress. | “Authorize {machine}”; **Authorize machine**; one `get`, using existing passkey. |
+| Authorize | `join.start` / `join.wait`; “Add this machine”; comparison + open/copy/QR. “Use your fleet’s passkey there. Come back here to see the result.” | “Waiting for a new machine…”; no fictional signing progress. | “Authorize this machine”; **Authorize machine**; one `get`, using existing passkey. |
 | Delivered / processing | “Finding machines…” on `reading directory`; “Finishing setup…” on `publishing`. | Still waiting unless a new verified member is actually observed. | “Approval sent.” Return to origin. |
 | Joined | `join.wait` success: “Check fleet fingerprint”. “This machine joined. Before using remote connections, compare with a machine already in your fleet: Fleet … → Copy fleet fingerprint.” Show grouped **Fleet fingerprint**, **Matches** / **Doesn’t match**. | Show fingerprint in Add instructions or Fleet …; new row only from peer data. | Remains terminal. |
 | Match | Dismiss comparison, keep rows and publication status. | Normal Fleet. | Can close. |
@@ -154,8 +160,8 @@ checks the expected root without asking the page to identify the fleet.
 | Step | Originating Desktop | Browser | Reflection |
 | --- | --- | --- | --- |
 | Confirm | Target row → **Revoke access…**. “Revoke access to {machine}?” Target fingerprint. “This permanently revokes this machine identity. Files and programs remain. Offline machines learn when they reconnect. Reset cannot restore revoked access.” **Revoke access** / **Cancel**. | No request yet. | Resolve by full ID; duplicate labels are not sufficient. |
-| Approve | `revoke.start` / `revoke.wait`; focused dialog with removal comparison; **Cancel request**. | “Remove {machine} from your fleet”; identical Action. **Authorize removal** with destructive treatment. | Browser explains permanent revocation and offline propagation. |
-| Delivered | Still waiting; then “Updating machines…” on `notifying peers`, “Finishing setup…” on `publishing`. | “Revocation approval sent.” / “Return to the machine where you started.” / “Check that removal completed there. You can also see publication and acknowledgement status.” | Never call it revoked on slot delivery. |
+| Approve | `revoke.start` / `revoke.wait`; focused dialog with removal comparison; **Cancel request**. | “Remove this machine from your fleet”; identical Action. **Authorize removal** with destructive treatment. | Browser explains permanent revocation and offline propagation. |
+| Delivered | Still waiting; then “Updating machines…” on `notifying peers`, “Finishing setup…” on `publishing`. | “Revocation approval sent.” / “Return to the machine where you started to check that removal completed.” / “This page cannot confirm completion.” / “You can close this tab.” Publication and acknowledgement status is in Technical details. | Never call it revoked on slot delivery. |
 | Complete | Wait success closes dialog; row “Revoked”; announce “Access revoked here”. “Acknowledged by {n} peers. Offline peers learn when they reconnect.” Publication **Published** or pending notice. | Remains “Revocation approval sent.” | `acknowledgedBy` is result-time evidence, not a live all-devices counter. No undo. |
 
 A revoked identity cannot rejoin after fleet reset. Returning requires a new node key and peer
@@ -185,18 +191,18 @@ slot write. No same-slot retry after any terminal delivery attempt, including lo
 | Condition | Browser copy / action | Desktop copy / action |
 | --- | --- | --- |
 | Invalid fragment | “This link is incomplete or invalid.” / “Return to the terminal or app where you started and request a fresh link.” No approval/cancel/slot write. | Do not guess its cause from silence; current request may still wait. |
-| Missing WebAuthn | “This browser cannot use passkeys.” Copy link; no approval. Cancellation only if sealing works. | Still waiting; can cancel and start fresh. |
-| Missing X25519 / preflight sealing | “This browser cannot encrypt the answer.” Explain browser requirement; Copy link; no approval or cancellation write. | Still waiting; cancel here if changing request. |
+| Missing WebAuthn | “This browser cannot use passkeys.” / “Open this link in an up-to-date browser to continue.” Primary **Copy link**; request details collapsed; no approval. Cancellation only if sealing works. | Still waiting; can cancel and start fresh. |
+| Missing X25519 / preflight sealing | “This browser cannot complete the request.” / “Open this link in a supported browser. To cancel or restart, return to the machine where you started.” Primary **Copy link**; request details collapsed; precise requirements in compatibility help. Both missing uses this single recovery. No approval or cancellation write. | Still waiting; cancel here if changing request. |
 | PRF capability unknown | Permit approval; do not claim provider support. | Wait normally. |
-| Browser reports PRF false | Explain provider may handle it separately; explicit **Try anyway**, then approval; Copy link / Cancel when seal-capable. | Wait normally. |
-| PRF missing from result | “This passkey did not provide WebAuthn PRF.” Compatibility disclosure opens; return for fresh request. For create: “A passkey may have been saved, but fleet creation is not complete.” For join/revoke: “Use the same fleet passkey; a new passkey creates a different fleet.” | `prf-unsupported`: same explanation and **Passkey help**; fresh request using compatible browser/provider. |
+| Browser reports PRF false | “This browser reports that the required PRF feature is unavailable. Your passkey provider may still support it. You can try; beam will check the result.” Neutral copy above **Try anyway**, with “Or copy this link to another browser.” beside it. Copy link / Cancel when seal-capable. | Wait normally. |
+| PRF missing from result | “This passkey could not complete the request.” / “Return to the machine where you started and request a new link. Try a browser and passkey provider that support beam's required PRF feature.” Compatibility disclosure opens; diagnostics stay under Technical details. For create: “A passkey may have been saved, but fleet creation is not complete.” For join/revoke: prominent “Use the same fleet passkey.” | `prf-unsupported`: same explanation and **Passkey help**; fresh request using compatible browser/provider. |
 | Cancel / NotAllowedError | “Passkey request cancelled or not allowed.” Explain cancel, timeout or no eligible passkey; do not infer which. | On `ceremony-cancelled`: “Passkey request cancelled. No further approval is pending for this request.” Fresh request. |
 | Other WebAuthn failure/null credential | “The passkey request failed.” Return for fresh request; sealed `failed`. | `bad-assertion` explains failed/unverifiable answer, not presumed PRF failure. |
 | HTTP 201 | Appropriate delivered heading, even when result is cancelled/failed. | Only its wait result determines success/failure. |
 | HTTP 409 | “This request was already answered.” Check origin; if it enrolled without your approval, reset there. Reset cannot undo revocation. | May get `ceremony-state`; inspect status, then new request. No claim that compromise is established. |
 | No response within 20s | “Could not confirm delivery.” Check origin before retry; if still waiting cancel there. Nothing is replayed. | May still finish. Re-read status on reconnect; do not start a duplicate automatically. |
 | HTTP 429 | “Too many requests.” Wait a minute, then cancel at origin and start fresh. | No invented browser error event; may still be waiting. |
-| Other HTTP rejection | “beam.n10.is did not accept the answer (HTTP {status}).” Return to origin. | Cancel still-pending operation before fresh start. |
+| Other HTTP rejection | “beam could not accept the response.” / “Return to the machine where you started. If the request is still waiting, cancel it there, then start a fresh request.” HTTP status is in Technical details. | Cancel still-pending operation before fresh start. |
 | Sealing fails after prompt | “Could not encrypt the answer.” “Nothing was sent from this attempt.” | Cancel at origin; use supported browser for fresh request. |
 | Five-minute expiry | Page cannot establish expiry; retain generic lifetime guidance. | `ceremony-timeout`: “This passkey request expired after five minutes.” **Start a fresh request**. |
 | Wrong passkey | Page may still say Approval sent. | `wrong-passkey`: “This passkey does not unlock the expected fleet. Choose the original fleet passkey.” |
