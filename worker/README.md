@@ -22,7 +22,17 @@ BEAM_WORKER_URL=http://127.0.0.1:8799 go test -tags "$(cat ../build-tags.txt),be
 
 ## Deploy
 
-Done once, from this directory, on the account that holds the `n10.is` zone:
+A release deploys the worker: job `worker` of `.github/workflows/release.yml` runs
+`wrangler d1 execute beam --remote --file schema.sql`, whose statements are all `IF NOT
+EXISTS`, then `wrangler deploy` (CONTRIBUTING.md, "Releasing"). It runs in the GitHub
+environment `cloudflare`, deployable only from `v*` tags, whose secret
+`CLOUDFLARE_API_TOKEN` is a custom token with Account / Workers Scripts / Edit, Account /
+D1 / Edit, Account / Account Settings / Read on the account, and Zone / Workers Routes /
+Edit, Zone / Zone / Read on `n10.is`, and whose variable `CLOUDFLARE_ACCOUNT_ID` is the
+account's id.
+
+The worker and its database were created once, from this directory, on the account that
+holds the `n10.is` zone:
 
 ```sh
 npx wrangler login
@@ -31,6 +41,5 @@ npx wrangler d1 execute beam --remote --file schema.sql
 npx wrangler deploy                   # attaches the beam.n10.is custom domain
 ```
 
-Later deploys re-run the `schema.sql` step above, whose statements are all `IF NOT
-EXISTS`, then `npx wrangler deploy`. The D1 database `beam` (`7e0d3382-8f3d-45a9-bf67-b341360650da`, WEUR) and the worker
+The D1 database `beam` (`7e0d3382-8f3d-45a9-bf67-b341360650da`, WEUR) and the worker
 `beam` with its `beam.n10.is` custom domain were created this way on 2026-09-23.
