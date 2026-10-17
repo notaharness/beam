@@ -182,7 +182,7 @@ describe("the ceremony page, without a request", () => {
     const t = await load("https://beam.n10.is/");
     assert.equal(await text(t.page, "h1"), "beam pools your machines into a fleet");
     assert.ok(await t.page.locator("#home").isVisible());
-    assert.ok(await t.page.getByRole("img", { name: "Three machines joined by beams, packets running both ways" }).isVisible());
+    assert.ok(await t.page.getByRole("img", { name: "Two machines joined by a beam, packets running both ways" }).isVisible());
     assert.equal(await t.page.getByRole("link", { name: "n10" }).getAttribute("href"), "https://n10.is");
     assert.equal(await t.page.getByRole("link", { name: "open source" }).getAttribute("href"), "https://github.com/notaharness/beam");
     assert.equal(await t.page.getByRole("alert").count(), 0);
@@ -193,11 +193,12 @@ describe("the ceremony page, without a request", () => {
     await t.close();
   });
 
-  // WCAG 1.4.11: the beams are the picture, so each lane holds 3:1 against the page.
+  // WCAG 1.4.11: the beam is the picture. Its lanes are a translucent track;
+  // the packets on them are drawn at full strength and hold 3:1 against the page.
   for (const scheme of ["light", "dark"]) {
-    it(`draws its beams at 3:1 or more against the page in ${scheme} mode`, async () => {
+    it(`draws its beam's packets at 3:1 or more against the page in ${scheme} mode`, async () => {
       const t = await load("https://beam.n10.is/", { scheme });
-      const [lane, page, opacity] = await t.page.locator("#home .lane").first().evaluate((e) => {
+      const [lane, page, opacity] = await t.page.locator("#home .packet").first().evaluate((e) => {
         const s = getComputedStyle(e);
         return [s.stroke, getComputedStyle(document.body).backgroundColor, s.opacity];
       });
@@ -212,12 +213,12 @@ describe("the ceremony page, without a request", () => {
     });
   }
 
-  for (const [motion, animation] of [["no-preference", "beam"], ["reduce", "none"]]) {
-    it(`moves its beams' packets ${animation === "none" ? "not at all" : "along them"} under prefers-reduced-motion: ${motion}`, async () => {
+  for (const [motion, animations] of [["no-preference", ["beam", "beam-back"]], ["reduce", ["none"]]]) {
+    it(`moves its beam's packets ${motion === "reduce" ? "not at all" : "both ways"} under prefers-reduced-motion: ${motion}`, async () => {
       const t = await load("https://beam.n10.is/", { motion });
       const names = await t.page.locator("#home .packet").evaluateAll((all) => all.map((e) => getComputedStyle(e).animationName));
-      assert.ok(names.length > 0);
-      assert.deepEqual([...new Set(names)], [animation]);
+      assert.equal(names.length, 2);
+      assert.deepEqual([...new Set(names)], animations);
       await t.close();
     });
   }
