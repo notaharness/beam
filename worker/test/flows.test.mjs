@@ -98,7 +98,7 @@ describe("the ceremony page, given an invalid request", () => {
 
   it("ignores a parameter it does not know", async () => {
     const t = await load(request("a").url + "&z=1");
-    assert.equal(await text(t.page, "h1"), "Authorize buildbox");
+    assert.equal(await text(t.page, "h1"), "Authorize this machine");
     assert.equal(await t.page.locator("#home").isVisible(), false);
     assert.ok(await t.page.locator("details#compat").isVisible());
     await t.close();
@@ -106,7 +106,7 @@ describe("the ceremony page, given an invalid request", () => {
 
   it("accepts a label of 64 characters beyond the BMP", async () => {
     const t = await load(request("a", { l: "😀".repeat(64) }).url);
-    assert.equal(await text(t.page, "h1"), "Authorize " + "😀".repeat(64));
+    assert.equal(await text(t.page, "#machine"), "😀".repeat(64));
     await t.close();
   });
 });
@@ -116,10 +116,10 @@ describe("the ceremony page, given a request", () => {
     ["c", "Create your fleet passkey",
       "Step 1 of 2. Save a passkey, then return to the machine where you started for the second prompt.",
       "Create fleet passkey for “homelab”", "Create passkey", { n: "homelab" }],
-    ["a", "Authorize buildbox",
+    ["a", "Authorize this machine",
       "Use your fleet’s passkey to add this machine. If you just created it, this is step 2 of 2.",
       "Add “buildbox” to fleet", "Authorize machine", {}],
-    ["r", "Remove buildbox from your fleet",
+    ["r", "Remove this machine from your fleet",
       "Permanently revoke this machine identity with your fleet’s passkey. Offline machines learn when they reconnect.",
       "Remove “buildbox” from fleet", "Authorize removal", {}],
   ];
@@ -131,7 +131,7 @@ describe("the ceremony page, given a request", () => {
       assert.deepEqual(await t.page.locator("#summary dt").allTextContents(), ["Action", "Machine", "Machine fingerprint"]);
       assert.deepEqual(await t.page.locator("#summary dd").allTextContents(), [action, "buildbox", "b7f3 9a21 0c4e 55d1"]);
       assert.equal(await text(t.page, "#safety"),
-        "Continue only if you started this request just now. Compare the action, machine name and machine fingerprint with the terminal or app where you started.");
+        "Continue only if you started this request and all three details match. If anything differs, cancel the request.");
       assert.equal(await text(t.page, "#expiry"), "Requests expire after five minutes. The originating machine shows whether this request is still active.");
       await t.page.getByRole("button", { name: button, exact: true }).waitFor();
       assert.ok(await t.page.getByRole("button", { name: button }).isEnabled());
@@ -150,7 +150,7 @@ describe("the ceremony page, given a request", () => {
 
   it("renders a label as text, never markup", async () => {
     const t = await load(request("a", { l: "<img src=x onerror=alert(1)>" }).url);
-    assert.equal(await text(t.page, "h1"), "Authorize <img src=x onerror=alert(1)>");
+    assert.equal(await text(t.page, "#machine"), "<img src=x onerror=alert(1)>");
     assert.equal(await t.page.locator("main img").count(), 0);
     await t.close();
   });
@@ -168,9 +168,12 @@ describe("the ceremony page's checks before any prompt", () => {
   it("says a browser without WebAuthn cannot run the request, and offers no prompt", async () => {
     const req = request("a");
     const t = await load(req.url, { webauthn: false });
-    await t.page.getByRole("alert").filter({ hasText: "This browser cannot run a WebAuthn passkey request. Open this link in an up-to-date browser." }).waitFor();
+    await t.page.getByRole("alert").filter({ hasText: "This browser cannot use passkeys." }).waitFor();
     assert.equal(await button(t.page).count(), 0);
     assert.ok(await visible(t.page, "Copy link"));
+    assert.equal(await t.page.locator("#summary").isVisible(), false);
+    assert.equal(await t.page.locator("#safety").isVisible(), false);
+    assert.equal(await t.page.locator("#copy").getAttribute("class"), "");
     await t.page.getByRole("button", { name: "Cancel request" }).click();
     assert.equal(sent(req, t.posts).get("result"), "cancelled");
     await t.close();
@@ -180,16 +183,44 @@ describe("the ceremony page's checks before any prompt", () => {
     const req = request("a");
     const t = await load(req.url, { x25519: 0 });
     await t.page.getByRole("alert").filter({
-      hasText: "This browser cannot encrypt beam’s answer. It needs X25519 in Web Crypto. Use Safari 18.4+, Chrome 133+, or Firefox 130+; passkey PRF support is also required.",
+      hasText: "This browser cannot complete the request.",
     }).waitFor();
-    assert.match(await text(t.page, "[role=alert]"), /Return to the originating machine to cancel or restart\.$/);
+    assert.match(await text(t.page, "[role=alert]"), /To cancel or restart, return to the machine where you started\.$/);
     assert.equal(await button(t.page).count(), 0);
     assert.equal(await t.page.getByRole("button", { name: "Cancel request" }).count(), 0);
     assert.ok(await visible(t.page, "Copy link"));
+    assert.equal(await t.page.locator("#summary").isVisible(), false);
+    assert.equal(await t.page.locator("#safety").isVisible(), false);
+    assert.equal(await t.page.locator("#copy").getAttribute("class"), "");
     assert.equal(t.posts.length, 0);
     assert.equal(await t.calls(), 0);
     await t.close();
   });
+
+  it("gives one recovery when passkeys and encryption are both unavailable", async () => {
+    const t = await load(request("a").url, { webauthn: false, x25519: 0 });
+    await t.page.locator("#intro.blocked").waitFor();
+    assert.equal(await text(t.page, "h1"), "This browser cannot complete the request.");
+    assert.equal(await text(t.page, "#explain"), "Open this link in a supported browser. To cancel or restart, return to the machine where you started.");
+    assert.equal(await t.page.getByRole("button", { name: "Cancel request" }).count(), 0);
+    assert.equal(await t.page.locator("#summary").isVisible(), false);
+    await t.page.getByText("Request details", { exact: true }).click();
+    assert.equal(await text(t.page, "#machine"), "buildbox");
+    assert.equal(t.posts.length, 0);
+    await t.close();
+  });
+
+  for (const op of ["c", "a", "r"]) {
+    it(`moves the live instruction above details for o=${op}`, async () => {
+      const t = await load(request(op).url, { credential: "hang" });
+      await t.page.locator("#go:enabled").click();
+      assert.equal(await text(t.page, "#intro #progress"), op === "c" ? "Create the passkey in your passkey manager." : "Choose your fleet passkey in the passkey prompt.");
+      assert.equal(await t.page.locator("#compare").isVisible(), false);
+      assert.equal(await t.page.locator("#safety").isVisible(), false);
+      assert.ok(await visible(t.page, "Cancel request"));
+      await t.close();
+    });
+  }
 
   it("copies the link", async () => {
     const req = request("a");
@@ -223,15 +254,15 @@ describe("the ceremony page's checks before any prompt", () => {
   it("holds back approval in a browser that reports no PRF, until Try anyway", async () => {
     const req = request("a");
     const t = await load(req.url, { caps: "false", passkey: true });
-    await t.page.getByRole("alert").filter({ hasText: "This browser reports that WebAuthn PRF is unavailable. Choose a supported browser before continuing." }).waitFor();
+    await t.page.locator("#problem").filter({ hasText: "This browser reports that the required PRF feature is unavailable. Your passkey provider may still support it. You can try; beam will check the result." }).waitFor();
     assert.equal(await button(t.page).count(), 0);
     assert.ok(await t.page.locator("details#compat").isVisible());
-    assert.ok(await t.page.locator("details#compat").evaluate((d) => d.open));
-    assert.equal(await text(t.page, "#anyway-note"), "Your provider may handle passkeys separately from the browser. beam still requires a valid PRF result.");
+    assert.equal(await t.page.locator("details#compat").evaluate((d) => d.open), false);
+    assert.equal(await text(t.page, "#anyway-note"), "Or copy this link to another browser.");
     assert.equal(await t.calls(), 0);
     assert.equal(t.posts.length, 0, "a false preflight writes nothing by itself");
     await t.page.getByRole("button", { name: "Try anyway" }).click();
-    assert.deepEqual(await settle(t.page), ["Approval sent.", "Return to buildbox to check whether it joined. This page cannot confirm the result. After joining, compare its fleet fingerprint with a machine already in your fleet."]);
+    assert.deepEqual(await settle(t.page), ["Approval sent.", "Return to buildbox to check the result."]);
     assert.equal(sent(req, t.posts).get("result"), "ok");
     assert.equal(await t.page.getByRole("alert").count(), 0, "the preflight's alert is gone once overridden");
     await t.close();
@@ -253,7 +284,7 @@ describe("the ceremony page's passkey calls", () => {
     const t = await load(req.url);
     await t.page.getByRole("button", { name: "Create passkey" }).click();
     assert.deepEqual(await settle(t.page), ["Passkey created. One more step.",
-      "Return to the machine where you started. Open its new link or scan its new QR code, then use the same passkey to authorize buildbox. This page cannot open the second step."]);
+      "Return to the machine where you started."]);
     const f = sent(req, t.posts);
     assert.equal(f.get("result"), "ok");
     for (const k of ["credentialId", "clientDataJSON", "attestationObject"]) assert.ok(f.get(k), k);
@@ -272,8 +303,8 @@ describe("the ceremony page's passkey calls", () => {
   });
 
   for (const [o, heading, body] of [
-    ["a", "Approval sent.", "Return to buildbox to check whether it joined. This page cannot confirm the result. After joining, compare its fleet fingerprint with a machine already in your fleet."],
-    ["r", "Revocation approval sent.", "Return to the machine where you started to check that removal completed and see its publication and acknowledgement status."],
+    ["a", "Approval sent.", "Return to buildbox to check the result."],
+    ["r", "Revocation approval sent.", "Return to the machine where you started to check that removal completed."],
   ]) {
     it(`signs o=${o} with the passkey and sends its 32-byte PRF output`, async () => {
       const req = request(o);
@@ -300,12 +331,22 @@ describe("the ceremony page's passkey calls", () => {
     await t.close();
   });
 
+  it("qualifies the fleet check and separates handoff from completion", async () => {
+    const t = await load(request("a").url, { passkey: true });
+    await t.page.getByRole("button", { name: "Authorize machine" }).click();
+    await settle(t.page);
+    assert.equal(await text(t.page, "#result-body"), "Return to buildbox to check the result.");
+    assert.equal(await text(t.page, "#result-secondary"), "If you joined an existing fleet, compare its fleet fingerprint with a machine already in that fleet. This page cannot confirm completion.");
+    assert.equal(await text(t.page, "#result-close"), "You can close this tab.");
+    await t.close();
+  });
+
   it("reports prf-unsupported when a create leaves PRF disabled", async () => {
     const req = request("c");
     const t = await load(req.url, { prf: false });
     await t.page.getByRole("button", { name: "Create passkey" }).click();
-    assert.deepEqual(await settle(t.page), ["This passkey did not provide WebAuthn PRF.",
-      "beam needs PRF to derive its encrypted directory key. The browser, OS and selected passkey provider must support it. Return to your machine and start a fresh request using a supported combination."]);
+    assert.deepEqual(await settle(t.page), ["This passkey could not complete the request.",
+      "Return to the machine where you started and request a new link. Try a browser and passkey provider that support beam's required PRF feature."]);
     assert.equal(await text(t.page, "#result-extra"), "A passkey may have been saved, but fleet creation is not complete.");
     assert.ok(await t.page.locator("details#compat").isVisible());
     assert.ok(await t.page.locator("details#compat").evaluate((d) => d.open));
@@ -318,8 +359,8 @@ describe("the ceremony page's passkey calls", () => {
     const req = request("r");
     const t = await load(req.url, { prf: false, passkey: true });
     await t.page.getByRole("button", { name: "Authorize removal" }).click();
-    assert.equal((await settle(t.page))[0], "This passkey did not provide WebAuthn PRF.");
-    assert.equal(await text(t.page, "#result-extra"), "Use the same fleet passkey; a new passkey creates a different fleet.");
+    assert.equal((await settle(t.page))[0], "This passkey could not complete the request.");
+    assert.equal(await text(t.page, "#result-extra"), "Use the same fleet passkey.");
     assert.match(await text(t.page, "#technical-text"), /prf\.results\.first/);
     const f = sent(req, t.posts);
     assert.equal(f.get("result"), "prf-unsupported");
@@ -331,7 +372,7 @@ describe("the ceremony page's passkey calls", () => {
     const req = request("a");
     const t = await load(req.url, { passkey: true, credential: "prf:16" });
     await t.page.getByRole("button", { name: "Authorize machine" }).click();
-    assert.equal((await settle(t.page))[0], "This passkey did not provide WebAuthn PRF.");
+    assert.equal((await settle(t.page))[0], "This passkey could not complete the request.");
     assert.equal(sent(req, t.posts).get("result"), "prf-unsupported");
     await t.close();
   });
@@ -340,7 +381,7 @@ describe("the ceremony page's passkey calls", () => {
     const req = request("a");
     const t = await load(req.url, { credential: "hang" });
     await t.page.getByRole("button", { name: "Authorize machine" }).click();
-    await t.page.getByRole("status").filter({ hasText: "Waiting for your fleet passkey…" }).waitFor();
+    await t.page.getByRole("status").filter({ hasText: "Choose your fleet passkey in the passkey prompt." }).waitFor();
     await t.page.getByRole("button", { name: "Cancel request" }).click();
     assert.deepEqual(await settle(t.page), ["Passkey request cancelled or not allowed.",
       "The browser did not return a passkey. You may have cancelled, the prompt may have expired, or no eligible passkey was available. Return to your machine to try again with a fresh link."]);
@@ -396,8 +437,8 @@ describe("the ceremony page's delivery", () => {
       "Check the originating machine before starting again: it may have received your answer. If it is still waiting, cancel there and start a fresh request."],
     [429, "Too many requests.",
       "beam did not accept this answer. Wait a minute, then cancel the pending request on the originating machine and start again."],
-    [500, "beam did not accept the answer (HTTP 500).", "Return to the originating machine and start a fresh request."],
-    [404, "beam did not accept the answer (HTTP 404).", "Return to the originating machine and start a fresh request."],
+    [500, "beam could not accept the response.", "Return to the machine where you started. If the request is still waiting, cancel it there, then start a fresh request."],
+    [404, "beam could not accept the response.", "Return to the machine where you started. If the request is still waiting, cancel it there, then start a fresh request."],
   ];
   // Each result against the slot answers that must not be read as it (a
   // 409, no response); the others need only one.

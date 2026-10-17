@@ -34,7 +34,7 @@ header { margin-bottom: 40px; font-size: 18px; font-weight: 600; letter-spacing:
 h1, h2 { margin: 0 0 16px; font-size: 24px; line-height: 1.3; font-weight: 600; letter-spacing: -.5px; }
 h1:focus, h2:focus { outline: none; }
 p { margin: 0 0 24px; }
-#explain, #result-body { color: var(--muted-foreground); }
+#explain, #result-secondary, #result-close { color: var(--muted-foreground); }
 dl { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; padding: 24px 0; margin: 28px 0 24px; border-block: 1px solid var(--border); }
 dt { color: var(--muted-foreground); font-size: 12px; }
 dd { margin: 0 0 12px; min-width: 0; }
@@ -46,17 +46,21 @@ pre { white-space: pre-wrap; margin: 12px 0 24px; }
 .command code { font-size: 18px; }
 .command-label { margin-bottom: 8px; color: var(--muted-foreground); font-size: 13px; }
 .note { color: var(--muted-foreground); font-size: 12px; }
-#safety { font-size: 13px; }
+#safety, #compare { font-size: 15px; }
 #problem { margin: 24px 0; }
 #problem p { margin-bottom: 12px; }
-#problem p:first-child { color: var(--destructive); }
+
 #result { margin-bottom: 28px; }
-#result-extra { font-size: 13px; }
+#result-extra { font-weight: 600; }
+#result-diagnostics details, #request-details { margin-top: 0; }
+#result-diagnostics details summary, #request-details summary { padding: 10px 0; }
+#intro.blocked #explain { color: var(--foreground); }
 #progress:empty { display: none; }
-#progress { font-size: 13px; margin: 16px 0; }
+#progress { margin: 0 0 24px; }
 .buttons { display: flex; flex-wrap: wrap; gap: 12px; }
 button { font: inherit; min-height: 44px; padding: 8px 16px; border-radius: var(--radius); border: 1px solid transparent; background: var(--primary); color: var(--primary-foreground); cursor: pointer; }
-#go, #anyway { width: 100%; }
+#go, #actions > #copy { width: 100%; }
+#anyway-note { flex: 1; margin: 0; align-self: center; }
 button.secondary { background: transparent; color: var(--muted-foreground); padding-inline: 0; }
 button.secondary:hover { color: var(--foreground); text-decoration: underline; }
 button.danger { background: transparent; border-color: var(--destructive); color: var(--destructive); }
@@ -68,16 +72,10 @@ summary { padding: 16px 0; cursor: pointer; color: var(--muted-foreground); min-
 details p { margin-bottom: 16px; }
 #request-details dl { border: 0; margin: 0; padding: 0 0 16px; }
 #technical-text { font-size: 12px; }
-table { border-collapse: collapse; width: 100%; font-size: 12px; margin: 16px 0; }
-th, td { text-align: left; vertical-align: top; padding: 12px 0; border-top: 1px solid var(--border); }
-th { font-weight: 600; width: 30%; padding-right: 16px; }
 @media (max-width: 480px) {
   body { padding: 32px 24px; }
   header { margin-bottom: 32px; }
   h1, h2 { font-size: 22px; }
-  th, td { display: block; width: 100%; }
-  th { padding-bottom: 4px; }
-  td { padding-top: 0; border-top: 0; }
 }
 </style>
 </head>
@@ -86,9 +84,9 @@ th { font-weight: 600; width: 30%; padding-right: 16px; }
 <header>beam</header>
 <div id="intro">
 <h1 id="heading" tabindex="-1">Connect this machine</h1>
+<p id="progress" role="status"></p>
 <p id="explain">Start in the terminal on the machine you want to connect.</p>
 </div>
-<div id="problem" role="alert" hidden></div>
 <div id="home">
 <p class="command-label">Create a fleet</p>
 <pre class="command"><code id="create-command">beam init</code></pre>
@@ -103,18 +101,19 @@ th { font-weight: 600; width: 30%; padding-right: 16px; }
   <p>Start the create or join request in that app, then open the link it gives you.</p>
 </details>
 </div>
+<p id="compare" hidden>Compare these details with the terminal or app where you started.</p>
 <dl id="summary" hidden>
   <dt>Action</dt><dd id="action"></dd>
   <dt>Machine</dt><dd id="machine"></dd>
   <dt>Machine fingerprint</dt><dd><code id="fingerprint"></code></dd>
 </dl>
-<p id="safety" hidden>Continue only if you started this request just now. Compare the action, machine name and machine fingerprint with the terminal or app where you started.</p>
+<p id="safety" hidden>Continue only if you started this request and all three details match. If anything differs, cancel the request.</p>
+<div id="problem" hidden></div>
 <div id="actions" class="buttons">
   <button id="go" type="button" hidden disabled></button>
   <button id="anyway" type="button" hidden>Try anyway</button>
+<p id="anyway-note" class="note" hidden>Or copy this link to another browser.</p>
 </div>
-<p id="anyway-note" class="note" hidden>Your provider may handle passkeys separately from the browser. beam still requires a valid PRF result.</p>
-<p id="progress" role="status"></p>
 <div id="utilities" class="buttons utilities">
   <button id="cancel" type="button" class="secondary" hidden>Cancel request</button>
   <button id="copy" type="button" class="secondary" hidden>Copy link</button>
@@ -124,7 +123,11 @@ th { font-weight: 600; width: 30%; padding-right: 16px; }
   <h2 id="result-heading" tabindex="-1"></h2>
   <p id="result-body"></p>
   <p id="result-extra" hidden></p>
-  <details id="request-details" hidden><summary>Request details</summary></details>
+  <p id="result-secondary" hidden></p>
+  <p id="result-close" hidden>You can close this tab.</p>
+</section>
+<details id="request-details" hidden><summary>Request details</summary></details>
+<section id="result-diagnostics" hidden>
   <details>
     <summary>Technical details</summary>
     <pre id="technical-text"></pre>
@@ -133,20 +136,21 @@ th { font-weight: 600; width: 30%; padding-right: 16px; }
 <details id="compat" hidden>
 <summary>Passkey compatibility</summary>
 <p id="capability" class="note" role="status"></p>
-<p>beam needs WebAuthn PRF, not just ordinary passkeys. PRF derives the key that encrypts your fleet directory. Support depends on the browser, operating system, passkey provider and sometimes the way a security key connects. The ceremony page checks browser capabilities, then verifies the selected passkey result.</p>
+<p>beam needs WebAuthn PRF to derive its encrypted directory key. Your browser and passkey provider must support it.</p>
+<p>This page also needs X25519 in Web Crypto: Safari 18.4+, Chrome 133+, or Firefox 130+. Passkey PRF support is a separate requirement.</p>
 <p>This is what vendors document, not a matrix beam has tested end to end. The browser’s encryption support and the passkey provider’s PRF support are separate requirements; unsupported or unverified combinations are not promised to work.</p>
-<table>
-<tr><th scope="row">Safari</th><td>For this page use Safari 18.4 or later. Safari 18.0 PRF support alone is insufficient.</td></tr>
-<tr><th scope="row">Apple Passwords, iCloud Keychain</th><td>Use updated Apple software. iOS/iPadOS 18.4+ with Safari 18.4+ is the page’s practical baseline; macOS Safari 18.4+ also needs a compatible provider. <strong>Unverified:</strong> the oldest supported macOS and provider pairing, and whether Apple’s fix for PRF over a phone (hybrid) has shipped.</td></tr>
-<tr><th scope="row">Firefox</th><td>Firefox 139+ on desktop has the browser features. Your passkey provider must still supply PRF. Firefox 130 alone is not enough to promise PRF. <strong>Unverified:</strong> Firefox on Android and iOS.</td></tr>
-<tr><th scope="row">Chrome</th><td>Chrome 133+ meets the encryption baseline. PRF must still be confirmed for your provider. <strong>Unverified:</strong> the first Chrome release with PRF, and Google Password Manager’s PRF support by operating system and version.</td></tr>
-<tr><th scope="row">1Password for iOS</th><td>1Password for iOS 8.10.74+ adds provider PRF support on iOS 18. This page also needs Safari/iOS 18.4+ for X25519.</td></tr>
-<tr><th scope="row">1Password browser extension (beta 2.26.1), Android (beta 8.10.38)</th><td>PRF was introduced in these beta versions; earliest stable versions are <strong>unverified</strong> here. Update your provider and use the result check.</td></tr>
-<tr><th scope="row">Security keys, YubiKey</th><td>Use a PRF-capable FIDO2 key with a browser/OS that exposes it. A key supporting hmac-secret alone does not guarantee WebAuthn PRF. <strong>Unverified:</strong> firmware and operating system minimums.</td></tr>
-<tr><th scope="row">Windows Hello</th><td><strong>Unverified.</strong> Browser support does not imply Windows Hello support.</td></tr>
-<tr><th scope="row">Bitwarden, Proton Pass, other providers</th><td><strong>Unverified.</strong> A provider that unlocks its own vault with PRF may still not return PRF for beam’s passkey.</td></tr>
-<tr><th scope="row">Edge, Samsung Internet</th><td><strong>Unverified.</strong> Chrome’s version numbers do not carry over; this page checks at runtime.</td></tr>
-</table>
+
+<details><summary>Safari</summary><p>For this page use Safari 18.4 or later. Safari 18.0 PRF support alone is insufficient.</p></details>
+<details><summary>Apple Passwords, iCloud Keychain</summary><p>Use updated Apple software. iOS/iPadOS 18.4+ with Safari 18.4+ is the page’s practical baseline; macOS Safari 18.4+ also needs a compatible provider. <strong>Unverified:</strong> the oldest supported macOS and provider pairing, and whether Apple’s fix for PRF over a phone (hybrid) has shipped.</p></details>
+<details><summary>Firefox</summary><p>Firefox 139+ on desktop has the browser features. Your passkey provider must still supply PRF. Firefox 130 alone is not enough to promise PRF. <strong>Unverified:</strong> Firefox on Android and iOS.</p></details>
+<details><summary>Chrome</summary><p>Chrome 133+ meets the encryption baseline. PRF must still be confirmed for your provider. <strong>Unverified:</strong> the first Chrome release with PRF, and Google Password Manager’s PRF support by operating system and version.</p></details>
+<details><summary>1Password for iOS</summary><p>1Password for iOS 8.10.74+ adds provider PRF support on iOS 18. This page also needs Safari/iOS 18.4+ for X25519.</p></details>
+<details><summary>1Password browser extension (beta 2.26.1), Android (beta 8.10.38)</summary><p>PRF was introduced in these beta versions; earliest stable versions are <strong>unverified</strong> here. Update your provider and use the result check.</p></details>
+<details><summary>Security keys, YubiKey</summary><p>Use a PRF-capable FIDO2 key with a browser/OS that exposes it. A key supporting hmac-secret alone does not guarantee WebAuthn PRF. <strong>Unverified:</strong> firmware and operating system minimums.</p></details>
+<details><summary>Windows Hello</summary><p><strong>Unverified.</strong> Browser support does not imply Windows Hello support.</p></details>
+<details><summary>Bitwarden, Proton Pass, other providers</summary><p><strong>Unverified.</strong> A provider that unlocks its own vault with PRF may still not return PRF for beam’s passkey.</p></details>
+<details><summary>Edge, Samsung Internet</summary><p><strong>Unverified.</strong> Chrome’s version numbers do not carry over; this page checks at runtime.</p></details>
+
 </details>
 </main>
 <script>
@@ -232,13 +236,13 @@ th { font-weight: 600; width: 30%; padding-right: 16px; }
   const ready = {
     c: { heading: "Create your fleet passkey",
       explain: "Step 1 of 2. Save a passkey, then return to the machine where you started for the second prompt.",
-      button: "Create passkey", waiting: "Waiting for your passkey manager to create the passkey…" },
-    a: { heading: `Authorize ${label}`,
+      button: "Create passkey", waiting: "Create the passkey in your passkey manager." },
+    a: { heading: "Authorize this machine",
       explain: "Use your fleet’s passkey to add this machine. If you just created it, this is step 2 of 2.",
-      button: "Authorize machine", waiting: "Waiting for your fleet passkey…" },
-    r: { heading: `Remove ${label} from your fleet`,
+      button: "Authorize machine", waiting: "Choose your fleet passkey in the passkey prompt." },
+    r: { heading: "Remove this machine from your fleet",
       explain: "Permanently revoke this machine identity with your fleet’s passkey. Offline machines learn when they reconnect.",
-      button: "Authorize removal", waiting: "Waiting for your fleet passkey to sign the revocation…" },
+      button: "Authorize removal", waiting: "Choose your fleet passkey in the passkey prompt." },
   }[o];
   put("heading", ready.heading);
   put("explain", ready.explain);
@@ -247,19 +251,19 @@ th { font-weight: 600; width: 30%; padding-right: 16px; }
   put("fingerprint", req.fingerprint.replace(/(.{4})(?=.)/g, "$1 "));
   put("go", ready.button);
   if (o === "r") $("go").classList.add("danger");
-  show("summary", "safety", "expiry");
+  show("summary", "compare", "safety", "expiry");
 
   // The terminal states (docs/02, Ceremonies): a heading, what to do, and
   // for some a line more.
   const DELIVERED = {
     ok: {
-      c: ["Passkey created. One more step.", `Return to the machine where you started. Open its new link or scan its new QR code, then use the same passkey to authorize ${label}. This page cannot open the second step.`],
-      a: ["Approval sent.", `Return to ${label} to check whether it joined. This page cannot confirm the result. After joining, compare its fleet fingerprint with a machine already in your fleet.`],
-      r: ["Revocation approval sent.", "Return to the machine where you started to check that removal completed and see its publication and acknowledgement status."],
+      c: ["Passkey created. One more step.", "Return to the machine where you started."],
+      a: ["Approval sent.", `Return to ${label} to check the result.`],
+      r: ["Revocation approval sent.", "Return to the machine where you started to check that removal completed."],
     }[o],
-    "prf-unsupported": ["This passkey did not provide WebAuthn PRF.",
-      "beam needs PRF to derive its encrypted directory key. The browser, OS and selected passkey provider must support it. Return to your machine and start a fresh request using a supported combination.",
-      o === "c" ? "A passkey may have been saved, but fleet creation is not complete." : "Use the same fleet passkey; a new passkey creates a different fleet."],
+    "prf-unsupported": ["This passkey could not complete the request.",
+      "Return to the machine where you started and request a new link. Try a browser and passkey provider that support beam's required PRF feature.",
+      o === "c" ? "A passkey may have been saved, but fleet creation is not complete." : "Use the same fleet passkey."],
     cancelled: ["Passkey request cancelled or not allowed.",
       "The browser did not return a passkey. You may have cancelled, the prompt may have expired, or no eligible passkey was available. Return to your machine to try again with a fresh link."],
     failed: ["The passkey request failed.", "The browser could not complete the request. Return to your machine and try a fresh request."],
@@ -276,7 +280,7 @@ th { font-weight: 600; width: 30%; padding-right: 16px; }
 
   // finish shows a terminal state and ends the page's part: no retry on this slot.
   function finish([heading, body, extra], error, technical) {
-    hide("intro", "safety", "expiry", "problem", "capability", "actions", "utilities");
+    hide("intro", "compare", "safety", "expiry", "problem", "capability", "actions", "utilities");
     $("request-details").append($("summary"));
     show("request-details");
     put("progress", "");
@@ -286,7 +290,7 @@ th { font-weight: 600; width: 30%; padding-right: 16px; }
     put("result-extra", extra || "");
     $("result-extra").hidden = !extra;
     put("technical-text", technical);
-    show("result");
+    show("result", "result-diagnostics");
     $("result-heading").focus();
   }
 
@@ -296,8 +300,8 @@ th { font-weight: 600; width: 30%; padding-right: 16px; }
   async function deliver([result, fields, why]) {
     if (settled) return;
     settled = true;
-    hide("go", "anyway", "anyway-note", "cancel", "copy");
-    put("progress", "Sending the encrypted answer to your machine…");
+    hide("go", "anyway", "anyway-note", "cancel", "copy", "compare", "safety", "explain");
+    put("progress", "Sending your response. Keep this page open.");
     const passkey = "Passkey result: " + result + (why ? ` (${why})` : "");
     let sealed;
     try {
@@ -313,9 +317,18 @@ th { font-weight: 600; width: 30%; padding-right: 16px; }
     const technical = `${passkey}\nDelivery: ${status ? "HTTP " + status : "no response"}`;
     if (status === 201) {
       if (result === "prf-unsupported") $("compat").open = true;
-      return finish(DELIVERED[result], result !== "ok", technical);
+      finish(DELIVERED[result], result !== "ok", technical);
+      show("result-close");
+      if (result === "ok") {
+        const next = o === "c" ? `Open its new link or scan its new QR code. Use the same passkey to authorize ${label}.`
+          : o === "a" ? "If you joined an existing fleet, compare its fleet fingerprint with a machine already in that fleet." : "";
+        put("result-secondary", [next, "This page cannot confirm completion."].filter(Boolean).join(" "));
+        show("result-secondary");
+        if (o === "r") put("technical-text", technical + "\nCheck publication and acknowledgement status on the machine where you started.");
+      }
+      return;
     }
-    finish(UNDELIVERED[status] || [`beam did not accept the answer (HTTP ${status}).`, "Return to the originating machine and start a fresh request."], true, technical);
+    finish(UNDELIVERED[status] || ["beam could not accept the response.", "Return to the machine where you started. If the request is still waiting, cancel it there, then start a fresh request."], true, technical);
   }
 
   // The WebAuthn calls (docs/02). Each returns [result, fields, why].
@@ -353,7 +366,7 @@ th { font-weight: 600; width: 30%; padding-right: 16px; }
   function approve() {
     controller = new AbortController();
     $("go").disabled = true;
-    hide("anyway", "anyway-note", "problem");
+    hide("anyway", "anyway-note", "problem", "compare", "safety", "explain");
     put("progress", ready.waiting);
     (o === "c" ? create : get)(controller.signal)
       .catch((e) => [e && (e.name === "NotAllowedError" || e.name === "AbortError") ? "cancelled" : "failed", {}, e && e.name])
@@ -398,24 +411,30 @@ th { font-weight: 600; width: 30%; padding-right: 16px; }
     $("problem").replaceChildren(...lines.map((line) => Object.assign(document.createElement("p"), { textContent: line })));
     show("problem");
   };
-  put("progress", "Checking this browser…");
+  put("progress", "Checking whether this browser can continue…");
   (async () => {
     let prfSupport;
     [pkR, prfSupport] = await Promise.all([sealer(), webauthn ? prf() : undefined]);
     put("progress", "");
     show("copy");
-    const noWebAuthn = "This browser cannot run a WebAuthn passkey request. Open this link in an up-to-date browser.";
-    if (!pkR) {
-      return problem(...(webauthn ? [] : [noWebAuthn]), "This browser cannot encrypt beam’s answer. It needs X25519 in Web Crypto. Use Safari 18.4+, Chrome 133+, or Firefox 130+; passkey PRF support is also required.",
-        "Return to the originating machine to cancel or restart.");
+    if (pkR) show("cancel");
+    if (!pkR || !webauthn) {
+      put("heading", !pkR ? "This browser cannot complete the request." : "This browser cannot use passkeys.");
+      put("explain", !pkR ? "Open this link in a supported browser. To cancel or restart, return to the machine where you started."
+        : "Open this link in an up-to-date browser to continue.");
+      $("intro").classList.add("blocked");
+      $("intro").setAttribute("role", "alert");
+      hide("compare", "safety", "expiry");
+      $("request-details").append($("summary"));
+      show("request-details");
+      $("actions").append($("copy"));
+      $("copy").classList.remove("secondary");
+      return;
     }
-    show("cancel");
-    if (!webauthn) return problem(noWebAuthn);
     show("go");
     if (prfSupport === false) {
       hide("go");
-      problem("This browser reports that WebAuthn PRF is unavailable. Choose a supported browser before continuing.");
-      $("compat").open = true;
+      problem("This browser reports that the required PRF feature is unavailable. Your passkey provider may still support it. You can try; beam will check the result.");
       return show("anyway", "anyway-note");
     }
     put("capability", prfSupport ? "Browser PRF support detected. Your selected passkey provider must support PRF too."
