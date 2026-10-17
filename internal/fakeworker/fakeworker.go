@@ -122,7 +122,7 @@ func (w *Worker) register(rw http.ResponseWriter, r *http.Request) {
 	}
 	pk, err1 := unb64(req.CredentialPublicKey)
 	token, err2 := unb64(req.ReadToken)
-	if err1 != nil || err2 != nil || len(token) != 32 || req.CredentialID == "" {
+	if err1 != nil || err2 != nil || len(token) != 32 || req.CredentialID == "" || !identity.CanonicalKey(pk) {
 		fail(rw, http.StatusBadRequest, "params")
 		return
 	}
