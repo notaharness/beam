@@ -3,6 +3,7 @@
 package cli_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -486,6 +487,19 @@ func TestLongSocketPath(t *testing.T) {
 	m := &machine{dir: filepath.Join(beamDir(t), strings.Repeat("d", 100))}
 	if r := m.beam("", "status"); r.code != 1 || !strings.Contains(r.err, "socket path too long") || !strings.Contains(r.err, "BEAM_SOCKET") {
 		t.Errorf("status: %+v", r)
+	}
+}
+
+// docs/06: a socket path another user owns, with nothing listening, is
+// refused by name on the command line, not only in the spawned daemon's log.
+func TestForeignSocketPath(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root owns /dev/null")
+	}
+	vars := []string{"BEAM_CONFIG_DIR=" + beamDir(t), "BEAM_SOCKET=/dev/null", "HOME=" + os.Getenv("HOME"), "PATH=" + os.Getenv("PATH")}
+	var out, errb bytes.Buffer
+	if code := cli.Main([]string{"status"}, vars, strings.NewReader(""), &out, &errb); code != 1 || !strings.Contains(errb.String(), "belongs to another user") {
+		t.Errorf("status: %d, %q", code, errb.String())
 	}
 }
 

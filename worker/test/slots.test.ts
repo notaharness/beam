@@ -3,6 +3,7 @@ import { isoBase64URL } from "@simplewebauthn/server/helpers";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import schema from "../schema.sql?raw";
 import worker from "../src/index";
+import { freshWindow } from "./window";
 
 const b64 = (b: Uint8Array) => isoBase64URL.fromBuffer(new Uint8Array(b));
 const random = (n: number) => crypto.getRandomValues(new Uint8Array(n));
@@ -157,6 +158,7 @@ describe("docs/09 slots", () => {
   it("allows 120 writes and 120 reads a minute per client address, counted apart", async () => {
     const c = client();
     const s = await slot();
+    await freshWindow();
     const reads = [];
     for (let i = 0; i < 121; i++) reads.push((await c.read(s.id, random(32))).status);
     expect(reads.slice(0, 119).every((code) => code === 401)).toBe(true);
@@ -166,5 +168,5 @@ describe("docs/09 slots", () => {
     expect(writes.slice(0, 119).every((code) => code === 201)).toBe(true);
     expect(writes[120]).toBe(429);
     expect((await client().write((await slot()).id, b64(random(10)))).status).toBe(201);
-  }, 30_000); // 243 requests, which a slow runner takes over the default 5 s for
+  }, 45_000); // up to 15 s for a fresh window, then 243 requests, which a slow runner takes over 5 s for
 });
