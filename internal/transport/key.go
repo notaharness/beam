@@ -74,6 +74,11 @@ func raw(k key.NodePublic) [32]byte {
 // AddressKey returns the node key an address reaches. It refuses an address
 // that does not parse or carries no pre-shared key.
 func AddressKey(address string) ([32]byte, error) {
+	return addressKey(address, devDERP)
+}
+
+// addressKey is AddressKey.
+func addressKey(address string, _ bool) ([32]byte, error) {
 	ci, err := tailcat.ParseAddr(tailcat.Addr(address))
 	if err != nil {
 		return [32]byte{}, err

@@ -93,3 +93,30 @@ func mustMap(t *testing.T, r *tailcfg.DERPRegion) []byte {
 	}
 	return b
 }
+
+// docs/03 "DERP": outside beamtest builds an address whose region has a node
+// InsecureForTests reaches no one, whether a member entry or a dial names it.
+func TestAddressKeyOutsideTests(t *testing.T) {
+	relay, err := devderp.Start(logger.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(relay.Close)
+	secure := *relay.Region
+	secure.Nodes = []*tailcfg.DERPNode{{Name: "d1", RegionID: 1, HostName: "derp.example", DERPPort: 443}}
+	for _, tc := range []struct {
+		name string
+		key  *Key
+		dev  bool
+		ok   bool
+	}{
+		{"the dev DERP, in a beamtest build", NewKey(relay.Region), true, true},
+		{"the dev DERP, outside one", NewKey(relay.Region), false, false},
+		{"a relay with TLS, outside one", NewKey(&secure), false, true},
+	} {
+		k, err := addressKey(tc.key.Address(), tc.dev)
+		if ok := err == nil && k == tc.key.NodePublic(); ok != tc.ok {
+			t.Errorf("%s: %x, %v", tc.name, k, err)
+		}
+	}
+}
