@@ -154,6 +154,10 @@ func TestValidText(t *testing.T) {
 		{"", false},
 		{"a/b", false}, {`a\b`, false}, {"a{", false}, {"a}", false},
 		{"tab\t", false}, {"del\x7f", false}, {"c1\u0085", false},
+		// bidirectional controls: a label must display as its bytes read
+		{"rlo\u202egpj.exe", false}, {"lre\u202a", false}, {"lri\u2066", false},
+		{"pdi\u2069", false}, {"rlm\u200f", false}, {"alm\u061c", false},
+		{"zwj\u200d", true}, // a format character, but not a bidi control
 		{"\xff", false},
 	} {
 		if got := ValidLabel(tc.s); got != tc.ok {
