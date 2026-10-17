@@ -5,6 +5,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http/httptest"
 	"os"
 	"os/signal"
@@ -34,9 +35,15 @@ func runTestkit(e *env) int {
 		return e.fail(err)
 	}
 	defer relay.Close()
-	worker := httptest.NewServer(fakeworker.New())
+	// Every request's context ends when the kit does, so a slot read, which
+	// waits up to 25 s, ends then too, however late its connection came;
+	// closing the connections first would miss one accepted after it.
+	served, shutdown := context.WithCancel(context.Background())
+	worker := httptest.NewUnstartedServer(fakeworker.New())
+	worker.Config.BaseContext = func(net.Listener) context.Context { return served }
+	worker.Start()
 	defer func() {
-		worker.CloseClientConnections() // a slot read waits up to 25 s
+		shutdown()
 		worker.Close()
 	}()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
