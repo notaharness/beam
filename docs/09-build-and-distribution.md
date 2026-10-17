@@ -148,7 +148,7 @@ no browser takes a response for anything but JSON.
 ### Ceremony page headers
 
 ```
-Content-Security-Policy: default-src 'none'; script-src 'sha256-…'; style-src 'sha256-…'; connect-src https://beam.n10.is/v1/slots/
+Content-Security-Policy: default-src 'none'; script-src 'sha256-…'; style-src 'sha256-…'; connect-src https://beam.n10.is/v1/slots/; base-uri 'none'; form-action 'none'
 Referrer-Policy: no-referrer
 X-Frame-Options: DENY
 Cache-Control: public, max-age=300
@@ -157,7 +157,9 @@ Cache-Control: public, max-age=300
 The page is a static asset (`worker/public/`) and these headers live in its `_headers`;
 a worker test recomputes the hashes, and the page's flows run in Chromium under them,
 failing on any policy violation. `connect-src` names the slot route's path prefix,
-not `'self'`: the page can write a slot and reach nothing else. A deploy that adds a
+not `'self'`: the page can write a slot and reach nothing else. `base-uri` and
+`form-action`, which `default-src` does not cover, are `'none'`: the page sets no base
+URL and posts no form. A deploy that adds a
 table runs `schema.sql` against the remote database first (`worker/README.md`). Deploy is `wrangler deploy` from `worker/` with
 Hermann's Cloudflare account, `beam.n10.is` a custom domain of the worker;
 `worker/README.md` has the commands.
