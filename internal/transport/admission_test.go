@@ -1,3 +1,5 @@
+//go:build beamtest
+
 package transport
 
 import (
