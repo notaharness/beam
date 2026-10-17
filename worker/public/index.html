@@ -60,6 +60,8 @@ pre { white-space: pre-wrap; margin: 12px 0 24px; }
 .buttons { display: flex; flex-wrap: wrap; gap: 12px; }
 button { font: inherit; min-height: 44px; padding: 8px 16px; border-radius: var(--radius); border: 1px solid transparent; background: var(--primary); color: var(--primary-foreground); cursor: pointer; }
 #go, #actions > #copy { width: 100%; }
+#copy { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+#copy svg { width: 16px; height: 16px; flex: none; }
 #anyway-note { flex: 1; margin: 0; align-self: center; }
 button.secondary { background: transparent; color: var(--muted-foreground); padding-inline: 0; }
 button.secondary:hover { color: var(--foreground); text-decoration: underline; }
@@ -116,7 +118,7 @@ details p { margin-bottom: 16px; }
 </div>
 <div id="utilities" class="buttons utilities">
   <button id="cancel" type="button" class="secondary" hidden>Cancel request</button>
-  <button id="copy" type="button" class="secondary" hidden>Copy link</button>
+  <button id="copy" type="button" class="secondary" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4"/></svg><span>Copy link</span></button>
 </div>
 <p id="expiry" class="note" hidden>Requests expire after five minutes. The originating machine shows whether this request is still active.</p>
 <section id="result" hidden>
