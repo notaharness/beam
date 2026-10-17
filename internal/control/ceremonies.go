@@ -201,7 +201,8 @@ func (d *daemon) pushAcked(e *enrolment, r identity.Record) int {
 }
 
 // opFleetReset is beam fleet reset (docs/02). It ends the ceremony under way,
-// and one already past its ceremony commits nothing.
+// and one already past its ceremony commits nothing. It answers the peer id
+// it removed, for the fleet to revoke once the machine re-joins.
 func opFleetReset(d *daemon, _ *clientConn, r request) (any, error) {
 	if r.Confirm != "reset" {
 		return nil, fail("params", `confirm must be "reset"`)
@@ -209,5 +210,13 @@ func opFleetReset(d *daemon, _ *clientConn, r request) (any, error) {
 	d.enrolling.Lock()
 	defer d.enrolling.Unlock()
 	d.endFlow()
-	return struct{}{}, d.unenroll(true)
+	var res struct {
+		PeerID string `json:"peerId,omitempty"`
+	}
+	d.mu.Lock()
+	if d.en != nil {
+		res.PeerID = d.en.fleet.Entry.PeerID
+	}
+	d.mu.Unlock()
+	return res, d.unenroll(true)
 }

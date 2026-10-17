@@ -186,8 +186,9 @@ details p { margin-bottom: 16px; }
       return null; // not base64 at all
     }
   };
-  // name is a label's rule (docs/02): 1–64 scalar values, none of / \ { } or a control.
-  const name = (s) => [...s].length >= 1 && [...s].length <= 64 && !/[\/\\{}\u0000-\u001f\u007f-\u009f]/.test(s);
+  // name is a label's rule (docs/02): 1–64 scalar values, none of / \ { }, a control
+  // or a bidirectional control.
+  const name = (s) => [...s].length >= 1 && [...s].length <= 64 && !/[\/\\{}\u0000-\u001f\u007f-\u009f\p{Bidi_Control}]/u.test(s);
 
   // parse reads the fragment's request, or null for one that is not one.
   function parse(fragment) {

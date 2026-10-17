@@ -105,10 +105,16 @@ func runFleet(e *env) int {
 		fmt.Fprintln(e.stderr, "not reset")
 		return 1
 	}
-	if err := e.call("fleet.reset", map[string]any{"confirm": "reset"}, nil); err != nil {
+	var res struct {
+		PeerID string `json:"peerId"`
+	}
+	if err := e.call("fleet.reset", map[string]any{"confirm": "reset"}, &res); err != nil {
 		return e.fail(err)
 	}
-	fmt.Fprintln(e.stdout, "fleet state removed; this machine keeps its key. Run beam init or beam join.")
+	fmt.Fprintln(e.stdout, "fleet state and this machine's key removed; its next beam init or beam join makes a new one.")
+	if res.PeerID != "" {
+		fmt.Fprintf(e.stdout, "after a join into the same fleet, revoke the old identity from a machine in it: beam revoke %s\n", res.PeerID)
+	}
 	return 0
 }
 
@@ -135,20 +141,11 @@ func (e *env) ceremony(op string, params map[string]any, first string, out any) 
 	if err := c.Call(op+".start", params, &start); err != nil {
 		return err
 	}
-	e.show(start.CeremonyURL, first)
-	c.OnEvent = func(ev control.Event) {
-		var data struct {
-			CeremonyURL string `json:"ceremonyUrl"`
-			Stage       string `json:"stage"`
-		}
-		switch {
-		case json.Unmarshal(ev.Data, &data) != nil:
-		case ev.Name == "ceremony":
-			e.show(data.CeremonyURL, "sign")
-		case ev.Name == "stage":
-			fmt.Fprintln(e.stdout, data.Stage)
-		}
+	if err := e.show(start.CeremonyURL, first); err != nil {
+		_ = c.Call("ceremony.cancel", nil, nil) // the error says what happened
+		return err
 	}
+	c.OnEvent = e.progress
 	err = c.Call(op+".wait", nil, out)
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.As(err, new(net.Error)) {
 		return interrupted{err}
@@ -156,11 +153,34 @@ func (e *env) ceremony(op string, params map[string]any, first string, out any) 
 	return err
 }
 
+// progress shows a waiting ceremony's events: its stages, and the URL of a
+// second ceremony.
+func (e *env) progress(ev control.Event) {
+	var data struct {
+		CeremonyURL string `json:"ceremonyUrl"`
+		Stage       string `json:"stage"`
+	}
+	switch {
+	case json.Unmarshal(ev.Data, &data) != nil:
+	case ev.Name == "ceremony":
+		if err := e.show(data.CeremonyURL, "sign"); err != nil {
+			fmt.Fprintln(e.stderr, err)
+		}
+	case ev.Name == "stage":
+		fmt.Fprintln(e.stdout, data.Stage)
+	}
+}
+
 // show shows a ceremony's URL: as a QR code for a phone when stdout is a
 // terminal, then as text, the fallback, on every output; and opens the
-// browser when there is one (docs/07).
-func (e *env) show(ceremonyURL, kind string) {
-	fmt.Fprintf(e.stdout, "waiting for your passkey (%s)\n%s", kind, summary(ceremonyURL))
+// browser when there is one (docs/07). It shows nothing of a URL that is not
+// a request on the ceremony page, whatever answered on the socket.
+func (e *env) show(ceremonyURL, kind string) error {
+	req, err := request(ceremonyURL)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(e.stdout, "waiting for your passkey (%s)\n%s", kind, summary(req))
 	if f, ok := e.stdout.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
 		_ = drawQR(e.stdout, ceremonyURL) // the URL follows either way
 	}
@@ -168,6 +188,28 @@ func (e *env) show(ceremonyURL, kind string) {
 	if browser := e.browser(); browser != "" {
 		_ = exec.Command(browser, ceremonyURL).Start() // the URL is printed
 	}
+	return nil
+}
+
+// request is what a ceremony URL asks for (docs/02, Ceremonies). A URL that
+// is not printable ASCII, not on the ceremony page, or not a request is
+// refused, whatever answered on the socket.
+func request(ceremonyURL string) (url.Values, error) {
+	frag, ok := strings.CutPrefix(ceremonyURL, ceremony.Page+"#")
+	f, err := url.ParseQuery(frag)
+	if !ok || err != nil || strings.IndexFunc(ceremonyURL, func(r rune) bool { return r <= ' ' || r > '~' }) >= 0 || !wellFormed(f) {
+		return nil, fmt.Errorf("internal: the daemon answered with a ceremony URL that is not a request on %s", ceremony.Page)
+	}
+	return f, nil
+}
+
+// wellFormed reports whether a ceremony URL's fragment names a known action,
+// a machine by label and fingerprint (16 lowercase hex characters), and for
+// a create the fleet.
+func wellFormed(f url.Values) bool {
+	fp, o := f.Get("f"), f.Get("o")
+	return actions[o] != "" && identity.ValidLabel(f.Get("l")) && len(fp) == 16 && strings.Trim(fp, "0123456789abcdef") == "" &&
+		(o != ceremony.Create || identity.ValidLabel(f.Get("n")))
 }
 
 // browser is the command that opens a URL here, or "" on a machine without
@@ -200,15 +242,17 @@ func publication(p any) string {
 	return "Saved on this machine. Directory publication is pending; beam will retry while it runs."
 }
 
-// summary is what a ceremony approves, read from its URL, as the page shows
-// it (docs/07).
-func summary(ceremonyURL string) string {
-	u, _ := url.Parse(ceremonyURL)
-	f, _ := url.ParseQuery(u.Fragment)
-	action := map[string]string{
-		ceremony.Create: "Create fleet passkey for “" + f.Get("n") + "”",
-		ceremony.Add:    "Add “" + f.Get("l") + "” to fleet",
-		ceremony.Remove: "Remove “" + f.Get("l") + "” from fleet",
-	}[f.Get("o")]
+// actions are the Action lines of the ceremonies, by the fragment's o.
+var actions = map[string]string{ceremony.Create: "Create fleet passkey for “%s”", ceremony.Add: "Add “%s” to fleet",
+	ceremony.Remove: "Remove “%s” from fleet"}
+
+// summary is what a ceremony approves, read from its URL's fragment, as the
+// page shows it (docs/07).
+func summary(f url.Values) string {
+	name := f.Get("l")
+	if f.Get("o") == ceremony.Create {
+		name = f.Get("n")
+	}
+	action := fmt.Sprintf(actions[f.Get("o")], name)
 	return fmt.Sprintf("Action               %s\nMachine              %s\nMachine fingerprint  %s\n", action, f.Get("l"), identity.Fingerprint(f.Get("f")))
 }

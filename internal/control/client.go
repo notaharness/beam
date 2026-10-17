@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net"
 	"os"
@@ -42,8 +43,13 @@ func Connect(p Paths, env []string) (*Client, error) {
 	if err == nil {
 		return c, nil
 	}
-	if !errors.Is(err, syscall.ECONNREFUSED) && !errors.Is(err, fs.ErrNotExist) {
+	// Nothing listens: no file, a stale socket, or a file that is no socket,
+	// which Linux refuses as ECONNREFUSED and macOS as ENOTSOCK.
+	if !errors.Is(err, syscall.ECONNREFUSED) && !errors.Is(err, syscall.ENOTSOCK) && !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
+	}
+	if err := owned(p.Socket); err != nil {
+		return nil, err // the daemon it would spawn refuses the path too; say why here
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -60,13 +66,51 @@ func Connect(p Paths, env []string) (*Client, error) {
 	return nil, errors.Join(spawnErr, err)
 }
 
-// Dial connects to the daemon at p if one listens.
+// Dial connects to the daemon at p if one listens there and it runs as this
+// user.
 func Dial(p Paths) (*Client, error) {
-	c, err := net.Dial("unix", p.Socket)
+	c, err := dial(p.Socket, os.Getuid())
 	if err != nil {
 		return nil, err
 	}
 	return newClient(c), nil
+}
+
+// dial connects to path if a process of uid listens there: every client
+// connection, control or attach, is checked (docs/06).
+func dial(path string, uid int) (net.Conn, error) {
+	c, err := net.Dial("unix", path)
+	if err != nil {
+		return nil, err
+	}
+	if err := listenedBy(c.(*net.UnixConn), uid); err != nil {
+		c.Close()
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return c, nil
+}
+
+// listenedBy refuses a connection whose listener runs as another user than
+// uid (docs/06): where BEAM_SOCKET names a shared directory, whoever listens
+// there is not this user's daemon. It asks the kernel about the connection,
+// so neither the path's owner nor a socket swapped in after a check counts.
+func listenedBy(c *net.UnixConn, uid int) error {
+	raw, err := c.SyscallConn()
+	if err != nil {
+		return err
+	}
+	var peer int
+	var credErr error
+	if err := raw.Control(func(fd uintptr) { peer, credErr = peerUID(int(fd)) }); err != nil {
+		return err
+	}
+	if credErr != nil {
+		return credErr
+	}
+	if peer != uid {
+		return fmt.Errorf("listened on by another user (uid %d): %w", peer, fs.ErrPermission)
+	}
+	return nil
 }
 
 func newClient(c net.Conn) *Client {
@@ -143,7 +187,7 @@ func (c *Client) Next() (Event, error) {
 // Attach opens the attach connection for a reserved stream; frames follow in
 // both directions.
 func Attach(p Paths, streamID string) (*stream.Conn, error) {
-	c, err := net.Dial("unix", p.Socket)
+	c, err := dial(p.Socket, os.Getuid())
 	if err != nil {
 		return nil, err
 	}

@@ -30,11 +30,12 @@ export class Authenticator {
   }
 
   // assert signs a get over challenge, by default for beam with user
-  // presence (0x01) and verification (0x04); as overrides one of them.
-  async assert(challenge: Uint8Array, flags = 0x05, as: { type?: string; origin?: string; rpId?: string } = {}): Promise<Assertion> {
-    const { type = "webauthn.get", origin = "https://beam.n10.is", rpId = "beam.n10.is" } = as;
+  // presence (0x01) and verification (0x04), not cross-origin; as overrides
+  // one of them.
+  async assert(challenge: Uint8Array, flags = 0x05, as: { type?: string; origin?: string; rpId?: string; crossOrigin?: boolean } = {}): Promise<Assertion> {
+    const { type = "webauthn.get", origin = "https://beam.n10.is", rpId = "beam.n10.is", crossOrigin = false } = as;
     const authData = new Uint8Array([...(await sha256(new TextEncoder().encode(rpId))), flags, 0, 0, 0, 0]);
-    const clientData = new TextEncoder().encode(JSON.stringify({ type, challenge: b64(challenge), origin, crossOrigin: false }));
+    const clientData = new TextEncoder().encode(JSON.stringify({ type, challenge: b64(challenge), origin, crossOrigin }));
     const signed = new Uint8Array([...authData, ...(await sha256(clientData))]);
     const p1363 = new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, this.keys.privateKey, signed));
     return { credentialId: this.credentialId, clientDataJSON: b64(clientData), authenticatorData: b64(authData), signature: b64(der(p1363)) };

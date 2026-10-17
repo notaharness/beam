@@ -41,6 +41,32 @@ func (c Credential) FleetID() string {
 	return hex.EncodeToString(h[:])
 }
 
+// es256Key and ed25519Key are the bytes of a COSE key as CTAP2 encodes it,
+// around its coordinates: {1: 2, 3: -7, -1: 1, -2: x, -3: y} and
+// {1: 1, 3: -8, -1: 6, -2: x}.
+var (
+	es256Key   = [][]byte{{0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21, 0x58, 0x20}, {0x22, 0x58, 0x20}}
+	ed25519Key = [][]byte{{0xa4, 0x01, 0x01, 0x03, 0x27, 0x20, 0x06, 0x21, 0x58, 0x20}}
+)
+
+// CanonicalKey reports whether pk is an ES256 or Ed25519 COSE key as CTAP2
+// encodes it, with no other entry: the one encoding of its public key, so
+// that the key names one fleet (docs/02, fleetId).
+func CanonicalKey(pk []byte) bool {
+	return layout(pk, es256Key) || layout(pk, ed25519Key)
+}
+
+// layout reports whether b is the parts of l, each followed by 32 bytes.
+func layout(b []byte, l [][]byte) bool {
+	for _, part := range l {
+		if !bytes.HasPrefix(b, part) || len(b) < len(part)+32 {
+			return false
+		}
+		b = b[len(part)+32:]
+	}
+	return len(b) == 0
+}
+
 // Verify checks a record (docs/02, "The membership entry"). For a member,
 // revoked reports whether its peer id has a stored revocation.
 func (c Credential) Verify(r Record, revoked func(peerID string) bool) error {
@@ -101,7 +127,8 @@ func sameID(a, b string) bool {
 }
 
 // VerifyAssertion checks a get assertion over challenge for this relying
-// party with user verification, ignoring the sign count.
+// party with user presence and verification, not cross-origin, ignoring the
+// sign count.
 func (c Credential) VerifyAssertion(a *Assertion, challenge []byte) error {
 	raw := func(s string) []byte {
 		b, _ := base64.RawURLEncoding.DecodeString(s)
@@ -123,5 +150,5 @@ func (c Credential) VerifyAssertion(a *Assertion, challenge []byte) error {
 		return err
 	}
 	return p.Verify(base64.RawURLEncoding.EncodeToString(challenge), RPID, "", []string{Origin}, nil, nil,
-		protocol.TopOriginDefaultVerificationMode, false, true, false, c.PublicKey, protocol.SignaturePolicy{})
+		protocol.TopOriginDefaultVerificationMode, false, true, true, c.PublicKey, protocol.SignaturePolicy{})
 }

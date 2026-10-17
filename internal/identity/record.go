@@ -40,17 +40,23 @@ type Assertion struct {
 	Signature         string `json:"signature"`
 }
 
-// ParseRecord decodes a record. It refuses JSON that has no canonical form
-// (duplicate keys, numbers that are not safe integers) and fields a record
-// does not have, so every parsed record has a statement.
+// MaxRecord bounds a record's JSON: one that the directory could not hold in
+// a blob is no record (docs/09, 8 KiB per blob).
+const MaxRecord = 8 << 10
+
+// ParseRecord decodes a record. It refuses JSON over MaxRecord, fields a
+// record does not have, and JSON that has no canonical form (duplicate keys,
+// numbers that are not safe integers), so every parsed record has a
+// statement. Size and shape come first: a record arrives in a hello before
+// anything is verified, and canonicalising copies nested values at each level.
 func ParseRecord(data []byte) (Record, error) {
-	if _, err := Canonical(data); err != nil {
-		return Record{}, BadEntry
-	}
 	var r Record
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.DisallowUnknownFields()
-	if err := d.Decode(&r); err != nil {
+	if len(data) > MaxRecord || d.Decode(&r) != nil {
+		return Record{}, BadEntry
+	}
+	if _, err := Canonical(data); err != nil {
 		return Record{}, BadEntry
 	}
 	return r, nil
@@ -127,7 +133,8 @@ func ValidPeerID(s string) bool {
 }
 
 // ValidText reports whether s is min to max Unicode scalar values with none of
-// / \ { } or a control character: the rule for labels and topics.
+// / \ { }, a control character or a bidirectional control: the rule for
+// labels and topics.
 func ValidText(s string, min, max int) bool {
 	if !utf8.ValidString(s) {
 		return false
@@ -136,7 +143,7 @@ func ValidText(s string, min, max int) bool {
 		return false
 	}
 	for _, r := range s {
-		if r == '/' || r == '\\' || r == '{' || r == '}' || unicode.IsControl(r) {
+		if r == '/' || r == '\\' || r == '{' || r == '}' || unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) {
 			return false
 		}
 	}

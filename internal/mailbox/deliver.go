@@ -13,12 +13,19 @@ type Ack struct {
 }
 
 // Accept is the receiver's step for one envelope from peer, addressed to
-// self: it is stored, and high_seq raised, before the ack says accepted.
+// self: it is stored, and high_seq raised, before the ack says accepted. What
+// is stored is the envelope as checked, encoded again: the bytes that arrived
+// may spell a key twice, or in another case, and say something else to a
+// reader that decodes JSON otherwise than Go does.
 func Accept(st *store.Store, peer, self string, b []byte, now int64) Ack {
 	e, reason := parse(b, peer, self)
+	var checked []byte
+	if reason == "" {
+		checked, reason = e.Marshal()
+	}
 	if reason == "" {
 		var err error
-		if reason, err = st.Receive(peer, e.Seq, e.ID, e.Topic, b, now); err != nil {
+		if reason, err = st.Receive(peer, e.Seq, e.ID, e.Topic, checked, now); err != nil {
 			reason = StorageFailure
 		}
 	}

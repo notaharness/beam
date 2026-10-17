@@ -49,14 +49,15 @@ the work, and docs/09 describes it. A release is a bump, a tag and a push of the
 2. Bump: pick the version after the last tag (`git describe --tags --abbrev=0 main`),
    `vX.Y.Z-beta.N` for a beta or `vX.Y.Z` for a release. The tag is the version;
    nothing in the repository carries it.
-3. `git tag vX.Y.Z main && git push origin vX.Y.Z`. Job `release` checks the tag is
-   canonical semver, builds the four binaries and the four of the test kit, packs the five
+3. `git tag vX.Y.Z main && git push origin vX.Y.Z`. Job `worker`, in the `cloudflare`
+   environment, applies `worker/schema.sql` to the D1 database and deploys the worker
+   to `beam.n10.is`. Then job `release` checks the tag is canonical semver, builds the four binaries and the four of the test kit, packs the five
    npm packages, checks npm would publish each at the binary's version, and creates the
    GitHub release with all eight and `SHA256SUMS`. Job `publish`, in the `npm`
    environment, checks that npm takes the workflow as every package's trusted publisher
    (and lets it move `latest`, for a beta while `LATEST_FOLLOWS_BETA` is on), then
    publishes the four platform packages and `@notaharness/beam`, with provenance.
-4. Check: `gh release view vX.Y.Z`; `npm view @notaharness/beam dist-tags`; and on a
+4. Check: `gh release view vX.Y.Z`; `curl -sI https://beam.n10.is/`; `npm view @notaharness/beam dist-tags`; and on a
    machine without beam, `npx @notaharness/beam@X.Y.Z version` prints `X.Y.Z`.
 
 A tag with a prerelease, `v0.2.0-beta.1`, makes a GitHub prerelease and publishes every
@@ -73,13 +74,18 @@ before `latest` has moved, move it by hand (`npm dist-tag add
 After a change to `release.yml` or to a trusted publisher, rehearse from `main` before
 the next tag, with the next, unpublished version (npm's dry run refuses one it has):
 `gh workflow run release.yml -f version=vX.Y.Z`, then `gh run watch`. The whole
-workflow runs without a GitHub release or an npm publish, and checks that npm takes it
-as every package's trusted publisher. For a beta while `LATEST_FOLLOWS_BETA` is on, it
+workflow runs without a worker deploy, a GitHub release or an npm publish: `worker`
+applies the schema to a local D1 and runs `wrangler deploy --dry-run`, and `publish`
+checks that npm takes the workflow as every package's trusted publisher. For a beta while `LATEST_FOLLOWS_BETA` is on, it
 also adds and removes the throwaway dist-tag `release-check` on every package.
 
 When a job fails part-way:
 
-- `release` failed: nothing is public but the tag. Fix the cause, delete the tag
+- `worker` failed: nothing is public but the tag, and the worker that was live still
+  is. Fix the cause (the token, say) and re-run the failed job,
+  `gh run rerun <run-id> --failed`; a fix to the worker's code needs the next version.
+- `release` failed: nothing is public but the tag and the worker, which serves the
+  binaries already installed. Fix the cause, delete the tag
   (`git push origin :refs/tags/vX.Y.Z && git tag -d vX.Y.Z`) and tag again.
 - The GitHub release exists and `publish` failed before publishing anything: fix the
   cause (npm authentication, say) and re-run the failed job,
