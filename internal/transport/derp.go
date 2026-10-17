@@ -24,7 +24,7 @@ type DERPMapCache interface {
 // while its region is one of the map's, else k's node key on the region that
 // answers fastest; a nil k is a new node key.
 func HomeKey(ctx context.Context, mapURL string, cache DERPMapCache, k *Key) (*Key, error) {
-	dm, err := tailcat.FetchDERPMap(ctx, tailcat.DERPMapURL(mapURL), tailcat.DERPMapCache(cache))
+	dm, err := fetchMap(ctx, mapURL, cache, devDERP)
 	if err != nil {
 		return nil, err
 	}
@@ -42,6 +42,11 @@ func HomeKey(ctx context.Context, mapURL string, cache DERPMapCache, k *Key) (*K
 		return NewKey(dm.Regions[id]), nil
 	}
 	return k.OnRegion(dm.Regions[id]), nil
+}
+
+// fetchMap fetches the DERP map at mapURL.
+func fetchMap(ctx context.Context, mapURL string, cache DERPMapCache, _ bool) (*tailcfg.DERPMap, error) {
+	return tailcat.FetchDERPMap(ctx, tailcat.DERPMapURL(mapURL), tailcat.DERPMapCache(cache))
 }
 
 // on reports whether k's region is, exactly, one of dm's.
